@@ -30,7 +30,7 @@ and simulation, not physical firmware conformance or calibration.
 | REQ-004 / derived | Simulator and faults/warmup/transitions | TEST-004 all models, virtual clock, lost acknowledgments | PASS | [E015](records/RECORDS.md#e015) |
 | REQ-005 / derived | Bounded telemetry, errors, freshness, source | TEST-005 lifecycle, 1000 samples, clock/source changes | PASS | [E015](records/RECORDS.md#e015) |
 | REQ-006 / derived | Cache-only Dash and streaming CLI | TEST-006 blocked acquisition, callbacks, real browser, JS | PASS | [E014](records/RECORDS.md#e014), [E015](records/RECORDS.md#e015) |
-| REQ-007 / derived | Packaging, examples and software quality | TEST-007 lint/type/build/archive/install/runner | PASS | [E015](records/RECORDS.md#e015) |
+| REQ-007 / derived | Packaging, examples and software quality | TEST-007 lint/type/build/archive/install/runner and CI | PASS | [E015](records/RECORDS.md#e015), [E016](records/RECORDS.md#e016) |
 | REQ-008 / derived | Operating docs and validation procedure | TEST-008 source review, links, current screenshots | PASS | [E013](records/RECORDS.md#e013), [E014](records/RECORDS.md#e014) |
 | REQ-009 / explicit | Entire phase hardware-free | TEST-009 patched constructors/discovery and fake streams | PASS | [E015](records/RECORDS.md#e015) |
 | REQ-010 / future derived | Physical behavior/calibration | TEST-010 later operator-approved procedure | UNTESTED | [Procedure](HARDWARE_VALIDATION.md); outside phase |
@@ -46,9 +46,9 @@ Node 24.19.0. [validation.json](records/validation.json) records current hashes,
 results and environment; [requirements-validated.txt](records/requirements-validated.txt)
 records exact Python dependencies. Current browser rendering/server-loss PASS (E014).
 
-Published baseline 48c0cbd passed all six Windows/Linux Python 3.11-3.13 CI jobs
-([E012](records/RECORDS.md#e012)). That run is baseline evidence; current changes
-have the local integrated evidence above until their own remote results arrive.
+Current source commit c895060 passed all six Windows/Linux Python 3.11-3.13 CI
+jobs ([E016](records/RECORDS.md#e016)). Its committed source matches the E015
+candidate hashes. Later evidence-only commits leave that source unchanged.
 Original manual and framework hashes verified. Upstream remains untouched.
 
 ## Limits and next action
@@ -61,8 +61,8 @@ from simulator policies. No automatic replay, service/calibration API or GUI wri
 
 The user's latest instruction authorizes completing all independent software work;
 the earlier commit/push authorization applies to this same target repository.
-Preserve this candidate and evidence in Git, verify its CI results, then retain the
-hardware-free boundary. Read PROJECT.md, AGENTS.md and STATE.md on resume; new
+Candidate and current CI evidence are preserved in Git. Retain the hardware-free
+boundary; no additional software action is pending. Read PROJECT.md, AGENTS.md and STATE.md on resume; new
 software requirements or failures reopen development and invalidate affected evidence.
 Temporary simulator server/browser are closed. No port was enumerated or opened.
 

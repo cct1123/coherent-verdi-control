@@ -309,3 +309,19 @@ current browser evidence E014. E013 regressions and package omission are resolve
 Bearing: Supersedes E011 for changed software. All hardware-independent requirements
 have current PASS evidence; physical protocol/calibration remain UNTESTED. Remote
 matrix results from E012 apply only to the published baseline until a new run finishes.
+
+
+## E016
+
+Date: 2026-09-10T01:00:49Z (GitHub run completion).
+Kind / scope: Final source cross-platform CI acceptance; TEST-007 / REQ-001..009.
+Candidate: Git c8950609eab0ca6e34bf1bd63a547b141fd315e1; all 47 committed candidate
+file hashes match E015. Evidence-only checkpoint/report edits leave source unchanged.
+Method: Push reviewed candidate, read run and every job conclusion through GitHub API.
+Result: PASS, all six jobs: Ubuntu and Windows, each with Python 3.11, 3.12 and 3.13.
+Every job completed lint, formatting, strict typing, 135 tests, build, both examples,
+source archive/isolated wheel installation smoke and Node watchdog checks. No hardware.
+Artifact: [CI run 34423561052](https://github.com/cct1123/coherent-verdi-control/actions/runs/34423561052).
+Bearing: Supersedes E012 for current software; closes remote matrix uncertainty.
+All software/simulator requirements now have current local and CI PASS evidence.
+Physical protocol and calibration remain UNTESTED and outside authorized scope.

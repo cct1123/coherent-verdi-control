@@ -68,8 +68,10 @@ Local configuration: Windows 11/Python 3.12.14, Node 24.19.0;
 [exact Python dependencies](../records/requirements-validated.txt). Run
 `python scripts/validate.py` after installing `.[dev,serial,gui]` and Node 22+.
 Use `VERDI_NODE` for an explicit Node executable when it is not on PATH.
-The published baseline passed the Windows/Linux Python 3.11-3.13 CI matrix (E012);
-current source requires its own remote run. [STATE.md](../STATE.md) maps acceptance.
+Current source commit **c895060** passed every job in the Windows/Linux Python
+3.11-3.13 [CI matrix](https://github.com/cct1123/coherent-verdi-control/actions/runs/34423561052)
+([E016](../records/RECORDS.md#e016)). Evidence-only commits preserve the exact
+validated source hashes. [STATE.md](../STATE.md) maps acceptance.
 
 ## Remaining physical scope
 
