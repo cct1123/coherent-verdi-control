@@ -1,4 +1,4 @@
-"""TEST-003/009: actual serial adapter, exclusively using byte-stream fakes."""
+"""TEST-003/009: serial framing and cleanup using byte-stream fakes only."""
 
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
@@ -53,6 +53,22 @@ class FakeStream:
 
 def transport(stream, **kwargs):
     return SerialTransport(stream, SerialConfig("FAKE-ONLY", **kwargs))
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"port": ""},
+        {"port": "loop://"},
+        {"port": "FAKE", "baudrate": 19200.0},
+        {"port": "FAKE", "baudrate": 115200},
+        {"port": "FAKE", "timeout_s": float("inf")},
+        {"port": "FAKE", "max_response_bytes": True},
+    ],
+)
+def test_serial_configuration_rejects_unsupported_values(kwargs):
+    with pytest.raises(ValueError):
+        SerialConfig(**kwargs)
 
 
 def test_fragmented_bytes_and_passive_lifecycle():
@@ -177,3 +193,62 @@ def test_factory_configuration_without_hardware(monkeypatch):
         "rts": False,
         "explicit_port": "FAKE-ONLY",
     }
+
+
+@pytest.mark.parametrize(
+    "failure,cleanup_fails",
+    [
+        (OSError("fake open failure"), False),
+        (KeyboardInterrupt("fake open interrupted"), False),
+        (KeyboardInterrupt("fake open interrupted"), True),
+    ],
+)
+def test_failed_open_closes_handle_and_preserves_primary_error(monkeypatch, failure, cleanup_fails):
+    closed = []
+
+    class FailingSerial:
+        def __init__(self, **kwargs):
+            pass
+
+        def open(self):
+            raise failure
+
+        def close(self):
+            closed.append(True)
+            if cleanup_fails:
+                raise OSError("fake cleanup failure")
+
+    monkeypatch.setattr(serial, "Serial", FailingSerial)
+    expected = TransportError if isinstance(failure, OSError) else KeyboardInterrupt
+    with pytest.raises(
+        expected, match="could not open" if isinstance(failure, OSError) else str(failure)
+    ) as caught:
+        open_serial(SerialConfig("FAKE-ONLY"), hardware_allowed=True)
+    assert closed == [True]
+    if cleanup_fails:
+        assert "fake cleanup failure" in caught.value.__notes__[0]
+
+
+@pytest.mark.parametrize("failure", [OSError("fake close failure"), KeyboardInterrupt()])
+def test_failed_close_disables_io_but_allows_cleanup_retry(failure):
+    class ClosingStream:
+        close_count = 0
+
+        def close(self):
+            self.close_count += 1
+            if self.close_count == 1:
+                raise failure
+
+    stream = ClosingStream()
+    transport = SerialTransport(stream, SerialConfig("FAKE-ONLY"))
+    controller = VerdiController(transport, ControllerConfig(Model.V5))
+    expected = TransportError if isinstance(failure, OSError) else KeyboardInterrupt
+    with pytest.raises(expected, match="close failed" if isinstance(failure, OSError) else None):
+        controller.close()
+    with pytest.raises(ConnectionUnusable):
+        controller.power_w()
+    with pytest.raises(ConnectionUnusable):
+        transport.exchange(b"?P\r\n")
+    controller.close()
+    controller.close()
+    assert stream.close_count == 2

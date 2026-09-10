@@ -14,32 +14,15 @@ the worker, then close the controller. Communication close issues no device
 commands. A surrounding application must separately implement its authorized
 hardware shutdown policy.
 
-```mermaid
-flowchart LR
-    A[Application / CLI] --> C[VerdiController]
-    G[Dash browsers] --> T[Shared TelemetryService cache]
-    T --> C
-    C --> P[Protocol catalog / parsers]
-    P --> X[Injected Transport]
-    X --> S[In-memory simulator]
-    X -. Later approved validation .-> R[SerialTransport / pySerial]
-    R -.-> V[Physical Verdi: UNTESTED]
-```
+See the [architecture diagram](../README.md#architecture). Protocol functions parse
+bytes; the controller directly owns a serial or simulated transport. Dash supplies
+the Plotly runtime and receives plain figure dictionaries from cached telemetry.
 
 ## API and errors
 
-The core library has no third-party runtime dependencies and provides type hints
-plus `py.typed`. `ControllerConfig` and returned dataclasses are immutable.
-Use enum `Model.V2`, `.V5`, or `.V6`; the manual provides no automatic model query.
-Set a lower `power_limit_w` to enforce a site-specific software ceiling.
-
-- `status()` gives laser/key/shutter states, W, A, °C, LBO servo and active faults.
-- `diagnostics()` gives software version, component operating hours and fault history.
-- `query(Query.X)` provides all documented reads. Return types follow the catalog;
-  unspecified-unit/composite responses stay strings. Unknown positive faults stay visible.
-- `set_power_w`, `standby`, `enable_laser`, `set_shutter`, `set_echo` and `set_prompt`
-  are explicit operations requiring `allow_writes=True`. Setpoint rounding is
-  four decimal places and both input and rounded values must respect the ceiling.
+The [API reference](API.md) lists immutable configurations, units, methods and
+exceptions. Select the model explicitly and use a lower `power_limit_w` when needed;
+the manual provides no automatic model-discovery query.
 
 Catch `VerdiError` at the application boundary. `DeviceError` retains the
 instruction and device reply. `ResponseTimeout`/`TransportError` mean that an

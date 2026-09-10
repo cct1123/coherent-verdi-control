@@ -469,3 +469,120 @@ PASS for 12 source modules. The 51 candidate file hashes still match E021 exactl
 its full build/install/GUI acceptance remains applicable. Only checkpoint/report
 and durable evidence changed during this pruning pass. Physical validation remains
 UNTESTED; publishing the software grants no permission to access hardware.
+
+## E023
+
+Date: 2026-09-10, aggressive simplification after Git 34b5c37.
+Kind / scope: User-authorized reduction of scaffolding while preserving behavior;
+TEST-002..009 / REQ-002..009. No physical access authorized or performed.
+Method: Map runtime imports, public uses, validation flow and all test functions;
+audit abstractions against current correctness, ownership, safety and reuse needs.
+Changes:
+
+- Controller query decoding and value parsing now share one failure path. Removed
+  `_number`/`_integer` conversion wrappers; status builds named fields directly,
+  retaining query order and computing duration after all 14 reads. The new virtual
+  timing regression proves the full 1.75 s fixture duration is included.
+- Removed duplicate cached model metadata from telemetry and its redundant worker
+  loop branch. Configuration remains immutable, sample/error history bounded, and
+  snapshot access still uses no serial transaction lock. Allowed baud values now
+  have one definition shared by configuration validation and protocol parsing.
+- Dash callbacks produce plain figure dictionaries, replacing graph-object builder
+  calls and removing the redundant direct Plotly constraint/type-check override.
+  Dash supplies Plotly itself. Merged identical error/offline CSS declarations.
+- Consolidated tests by protocol, transport, controller/simulator, telemetry and
+  clients: seven fragmented files replaced by two subsystem files, net five fewer.
+  Combined duplicate test factories/fakes and one duplicate close-failure case;
+  preserved regression assertions. Fixed Windows-default decoding of an em dash
+  introduced during the merge. Subsystem checks then passed. Total test count
+  returns to 145 with the new acquisition-duration regression.
+- Merged GUI install smoke into install_smoke.py. One clean environment verifies
+  the dependency-free core, then installs GUI/serial extras for isolated callback
+  checks. Removed the external `--extras` mode and duplicate environment setup.
+  Narrowed the subprocess helper to its actual cwd argument, with bounded execution
+  and visible failure output. CI now invokes the same validator used locally.
+- Removed an obsolete acceptance condition pinning ignored `prompt log.txt` to a
+  historic checksum. The first full run passed all executable checks, source
+  consistency and authoritative manual/framework hashes, but failed solely because
+  this unrelated local reference had changed since the earlier run. It is neither
+  a source input nor a clean-clone requirement; its contents remain untouched.
+  Current local reference SHA-256: 9de6c1fc9b7506ed5fdffc104651ddd5948d33d8e17cc0ceee2e028f372aee01.
+- Updated the architecture diagram to show controller-owned I/O and pure protocol
+  functions, removed its duplicate and repeated API summaries from integration
+  docs, and executed all six remaining documentation Python snippets successfully.
+
+Incremental controller/protocol/telemetry/client checks: 116 PASS before the timing
+case, then controller checks 36 PASS. Lint/format/typing PASS. An isolated validator
+test attempt encountered sandbox denial on the host temporary directory; the final
+pipeline uses workspace temporary fixtures. Final complete acceptance follows E025.
+
+## D006
+
+Date: 2026-09-10.
+Decision: Keep one controller owning either serial or simulated transport, pure
+protocol functions, immutable public models/errors, and one bounded telemetry worker
+borrowed by GUI clients. Keep public imports/signatures and documented CLI behavior.
+These isolate the actual vendor/I/O boundary, prevent competing serial owners and
+preserve fault/recovery contracts. Retain deterministic clocks, finite/range guards,
+failure poisoning, cleanup retries, safety-shutter semantics, typed query catalog,
+JSON serialization reused by CLI/examples, packaging and durable evidence.
+Remove wrappers, duplicate state/configuration, duplicate validation orchestration
+and audit-round test fragmentation. Do not add replacement frameworks or break
+actively used interfaces merely to reduce module count. No upstream template edit.
+
+## E024
+
+Date: 2026-09-10, simulator browser check after GUI simplification.
+Kind / scope: TEST-006/008 browser rendering and server-loss behavior.
+Method: Launch simulator-only loopback Dash, inspect actual rendered/accessibility
+state and live console, capture full-page image; stop server, wait beyond watchdog
+deadline and inspect/capture stale state.
+Result: PASS. Both plain-dictionary traces, W/UTC axes, 1 W live simulator data,
+thermal fields, configured model, servo/state/shutter and source label render.
+No live browser console warnings/errors. After server stop, SERVER UPDATE LOST
+appears, LIVE is hidden, and displayed values are dimmed and labeled stale.
+Updated [live](../docs/images/simulator-dashboard.png) and
+[offline](../docs/images/simulator-server-offline.png) screenshots. Server/tab closed.
+This supersedes E020 for the changed figure implementation. No hardware accessed.
+
+## E025
+
+Date: 2026-09-10T04:03:18.050817+00:00.
+Kind / scope: Complete simplification acceptance; TEST-001..009 / REQ-001..009.
+Candidate: `4606c649bd71fcd27cb750365f11310beb4d4360f0b0b7b2e8305ecd543c738e`.
+Method: `python scripts/validate.py` with workspace temporary fixtures and Node
+24.19.0; Windows/Python 3.12.14. Entirely hardware-free.
+Result: 145 tests PASS (1.48 s), 95% statement coverage, no skips/warnings.
+Ruff lint/format PASS, strict mypy PASS (12 modules), pip consistency PASS,
+wheel/sdist builds and archive completeness PASS, CLI and both examples PASS.
+Isolated core installation/entrypoint/assets/examples/missing-extra behavior PASS;
+GUI/serial extras then installed in the same clean environment and installed HTTP
+callbacks/known and unknown faults/error/recovery/history bounds PASS. Resolved
+versions: Dash 4.4.1, Plotly 7.0.0, pySerial 3.5. Development GUI/browser uses
+Plotly 6.9.0. Node watchdog startup/expiry/recovery PASS. All 45 source-file hashes
+unchanged during validation; supplied manual and pinned framework hashes match.
+Current screenshots/browser evidence E024; documentation snippets E023.
+Artifacts: [manifest/build hashes](validation.json), local validation.log/JUnit.
+Reduction relative to 34b5c37: code files under src/tests/scripts 30 → 24 (−20%);
+Python/JS/CSS lines 3,339 → 3,218 (−121, −3.6%). Excludes docs/workflow/records.
+Final pruning review retained only current public, hardware, lifecycle, testing,
+packaging and reproducibility boundaries described in D006 and the report.
+Bearing: Supersedes E021/E022 for current source. Software validation PASS;
+simulator validation PASS; physical Verdi validation UNTESTED. No remaining
+independent software work under this cleanup request; hardware review gate retained.
+
+## E026
+
+Date: 2026-09-10T04:08:14+00:00, publication review after E025.
+Kind / scope: Review/prune/commit/push of the simplified candidate; TEST-002..009.
+Authorization: User requested "review, prune. commit, push."
+Method: Review runtime reductions, consolidated regression suites, merged clean
+installation flow, CI delegation, documentation and excluded local artifacts.
+Result: No new actionable runtime defect or further justified source deletion.
+Retain the six-file/121-line reduction and all meaningful regression coverage.
+Publication checks: 145 tests PASS (0.83 s), Ruff lint/format PASS, strict mypy PASS
+for 12 source modules. All 45 candidate hashes exactly match E025; its complete
+build/install/GUI evidence remains current. Public exports unchanged; diff checks
+PASS. Fetched origin and confirmed no branch divergence before publication.
+Only checkpoint/evidence prose changed during this review. No hardware access;
+physical Verdi validation remains UNTESTED and publication grants no hardware approval.

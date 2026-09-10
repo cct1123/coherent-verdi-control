@@ -28,7 +28,7 @@ The core API and simulator have no third-party runtime dependencies. Install
 optional capabilities only when needed:
 
 ```sh
-python -m pip install -e ".[gui]"            # Dash + Plotly
+python -m pip install -e ".[gui]"            # Dash (includes Plotly)
 python -m pip install -e ".[serial]"         # Adapter dependency, no connection
 python -m pip install -e ".[dev,serial,gui]" # Development and adapter testing
 ```
@@ -150,10 +150,9 @@ flowchart LR
     API[Python application / CLI] --> C[VerdiController]
     D[Dash monitoring clients] --> T[One TelemetryService / bounded cache]
     T --> C
-    C --> P[Documented protocol / typed parsing]
-    P --> X[Injected Transport]
-    X --> S[Deterministic in-memory simulator]
-    X -. explicit later opt-in .-> R[pySerial adapter]
+    C --> P[Protocol encoding / typed parsing]
+    C --> S[SimulatedTransport]
+    C -. explicit later opt-in .-> R[SerialTransport / pySerial]
     R -. physical validation pending .-> V[Verdi laser]
 ```
 
@@ -179,14 +178,14 @@ python examples/async_integration.py
 The validation script runs pytest with coverage, lint, formatting, strict typing,
 package builds, examples, dependency consistency, source/input checks, source
 archive completeness, an isolated wheel-install smoke test and the JavaScript
-watchdog regression. Separate clean environments check both the dependency-free
-core and installed GUI/serial extras, including real Dash HTTP callbacks and
-packaged assets. The extras check needs access to the configured pip registry
+watchdog regression. One clean environment first checks the dependency-free core,
+then installs GUI/serial extras and checks Dash HTTP callbacks and packaged assets.
+The extras check needs access to the configured pip registry
 or its cache. Node.js 22 or later must be on PATH; `VERDI_NODE` may name an
 explicit Node executable. Results and source hashes go to
 `records/validation.json`, `records/validation.log` and `records/junit.xml`.
 Only the current JSON manifest is versioned; logs/XML are generated locally and
-CI publishes its test results as artifacts.
+CI runs this same validator and publishes its evidence as artifacts.
 Tests prohibit real serial opens and discovery; adapter tests inject byte streams.
 The CI workflow declares Windows/Linux and Python 3.11–3.13; only environments
 actually run have PASS evidence. Current tested versions are in

@@ -49,7 +49,6 @@ def create_app(service: TelemetryService) -> Any:
     Monitoring-only by design. Use the API for authorized operations. Serve on
     loopback or behind your lab's authenticated proxy; do not use debug/reloader.
     """
-    import plotly.graph_objects as go
     from dash import Dash, Input, Output, dcc, html
 
     app = Dash(__name__, assets_folder=str(Path(__file__).with_name("assets")))
@@ -153,35 +152,42 @@ def create_app(service: TelemetryService) -> Any:
     def refresh(_tick: int) -> tuple[Any, ...]:
         data = dashboard_data(service)
         s = data["status"]
-        figure = go.Figure()
-        figure.add_scatter(
-            x=data["timestamps"],
-            y=data["power_w"],
-            name="Measured power",
-            mode="lines",
-            line={"color": "#65e3cc", "width": 2.5},
-            connectgaps=False,
-        )
-        figure.add_scatter(
-            x=data["timestamps"],
-            y=data["set_power_w"],
-            name="Setpoint",
-            mode="lines",
-            line={"color": "#8999b1", "dash": "dot"},
-            connectgaps=False,
-        )
-        figure.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="#151c28",
-            plot_bgcolor="#151c28",
-            margin={"l": 52, "r": 24, "t": 12, "b": 38},
-            height=290,
-            font={"family": "Segoe UI, sans-serif", "color": "#acb9ce"},
-            yaxis_title="Power / W",
-            xaxis_title="Time (UTC)",
-            legend={"orientation": "h", "y": 1.14},
-            uirevision="verdi-power",
-        )
+        figure = {
+            "data": [
+                {
+                    "type": "scatter",
+                    "x": data["timestamps"],
+                    "y": data[field],
+                    "name": name,
+                    "mode": "lines",
+                    "line": line,
+                    "connectgaps": False,
+                }
+                for field, name, line in (
+                    ("power_w", "Measured power", {"color": "#65e3cc", "width": 2.5}),
+                    ("set_power_w", "Setpoint", {"color": "#8999b1", "dash": "dot"}),
+                )
+            ],
+            "layout": {
+                "paper_bgcolor": "#151c28",
+                "plot_bgcolor": "#151c28",
+                "margin": {"l": 52, "r": 24, "t": 12, "b": 38},
+                "height": 290,
+                "font": {"family": "Segoe UI, sans-serif", "color": "#acb9ce"},
+                "xaxis": {
+                    "title": {"text": "Time (UTC)"},
+                    "gridcolor": "#283442",
+                    "zerolinecolor": "#283442",
+                },
+                "yaxis": {
+                    "title": {"text": "Power / W"},
+                    "gridcolor": "#283442",
+                    "zerolinecolor": "#283442",
+                },
+                "legend": {"orientation": "h", "y": 1.14},
+                "uirevision": "verdi-power",
+            },
+        }
 
         def row(label: str, value: str) -> Any:
             return html.Div([html.Span(label), html.Strong(value)], className="data-row")

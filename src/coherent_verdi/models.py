@@ -5,6 +5,8 @@ from datetime import datetime
 from enum import IntEnum, StrEnum
 from math import isfinite
 
+BAUDRATES = (1200, 2400, 4800, 9600, 19200, 38400, 57600)
+
 
 class Model(StrEnum):
     V2 = "V2"
@@ -62,15 +64,7 @@ class SerialConfig:
     def __post_init__(self) -> None:
         if not isinstance(self.port, str) or not self.port.strip() or "://" in self.port:
             raise ValueError("an explicit native port name is required; discovery/URLs unsupported")
-        if type(self.baudrate) is not int or self.baudrate not in (
-            1200,
-            2400,
-            4800,
-            9600,
-            19200,
-            38400,
-            57600,
-        ):
+        if type(self.baudrate) is not int or self.baudrate not in BAUDRATES:
             raise ValueError("baudrate is not listed in manual Table 5-2")
         finite_range(self.timeout_s, 0.001, 60.0, "timeout_s")
         if type(self.max_response_bytes) is not int or not 16 <= self.max_response_bytes <= 65536:

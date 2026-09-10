@@ -1,7 +1,4 @@
-# Engineering report
-
-Final hardware-free production hardening and human-usability pass: **COMPLETE**.
-The template checkpoint is **AWAITING_HUMAN_REVIEW**.
+# Engineering report — simplification
 
 | Validation scope | Status |
 | --- | --- |
@@ -9,81 +6,88 @@ The template checkpoint is **AWAITING_HUMAN_REVIEW**.
 | Simulator validation | **PASS** |
 | Physical Verdi validation | **UNTESTED** |
 
-## Candidate
+Checkpoint: **AWAITING_HUMAN_REVIEW**. Candidate version 0.1.0, SHA-256
+`4606c649bd71fcd27cb750365f11310beb4d4360f0b0b7b2e8305ecd543c738e`.
+[Validation manifest](../records/validation.json), completed
+2026-09-10T04:03:18.050817+00:00, fingerprints the working-tree source and builds.
+Report/state/history updates are excluded from that fingerprint.
 
-Version **0.1.0**; source-manifest SHA-256:
-`e47efd04594643e98c1778a7400c0a201ffc987cf2d1d24e13f93f585c85a811`.
-[validation.json](../records/validation.json) records source/build hashes, environment
-and results at **2026-09-10T01:19:54.046692+00:00**. State/report/evidence updates are
-excluded from the manifest, which identifies the validated working-tree source,
-docs and screenshots. [STATE.md](../STATE.md) maps requirements to current evidence.
+## Simplified architecture
 
-## System and documentation
+Python clients and CLI call one `VerdiController`. It directly owns a serial or
+simulated transport and calls pure protocol functions for framing/parsing.
+One `TelemetryService` owns polling and bounded history. Dash reads its cache and
+returns plain Plotly figure dictionaries. Local and CI validation use one script.
+See the [architecture diagram and usage](../README.md#architecture),
+[API reference](../docs/API.md) and [integration guide](../docs/INTEGRATION.md).
 
-One typed controller owns serialized Verdi transactions; telemetry publishes a
-bounded immutable cache shared by Dash clients. The library, CLI and simulator
-cover V-2/V-5/V-6. Writes require explicit opt-in, and connection/replacement/close
-send no commands. The internal shutter is a safety shutter, never a modulator.
+## Removed and consolidated
 
-[README](../README.md): installation, Python/CLI/GUI examples, architecture and
-simulator screenshots. [API reference](../docs/API.md) and
-[lab integration](../docs/INTEGRATION.md): units, errors, ownership and deployment.
-[Protocol](../docs/PROTOCOL.md) and [simulator](../docs/SIMULATOR.md): documented
-device behavior and fixture policies. The later physical procedure is linked below.
+| Previous files | Destination |
+| --- | --- |
+| `scripts/gui_smoke.py` | `scripts/install_smoke.py`; one clean core-then-extras environment |
+| `test_client_edge_cases.py`, `test_telemetry_gui_cli.py` | `tests/test_clients.py`, `tests/test_telemetry.py` |
+| `test_hardening.py`, `test_lifecycle_failures.py` | Existing controller/transport suites and telemetry suite |
+| `test_protocol_edge_cases.py`, `test_simulator_acceptance.py` | `tests/test_controller.py` |
+| `test_telemetry_lifecycle_edges.py` | Controller cancellation and telemetry lifecycle suites |
 
-## Review and fixes
+Eliminated two numeric conversion wrappers, duplicate protocol-error handling,
+duplicate cached model state, repeated baud-rate configuration, graph-object
+builder calls, duplicate CSS, test factories/fakes and one redundant close-failure
+case. CI no longer repeats the validator's command list. Installation no longer
+creates two environments or exposes an `--extras` mode; its helper accepts only
+its used cwd argument. Removed an obsolete checksum gate on the ignored local
+prompt log; the log is untouched, and manual/framework integrity checks remain.
+Repeated architecture/API prose was pruned from the integration guide.
 
-The review fixed premature simulator enable during LBO warmup, mutable telemetry
-configuration, failed logging sinks disrupting acquisition, a shutdown lock conflict,
-and cancellation ownership in the async example. Ten new regression cases cover
-these gaps. No automatic recovery writes were introduced. [E019](../records/RECORDS.md#e019)
-records diagnoses, bounded audits and design decisions.
+Removed the direct `plotly>=6,<7` requirement and its typing override. Plotly remains
+Dash's required dependency; it has not been removed from the GUI runtime. The core
+still has zero third-party dependencies. No framework or replacement infrastructure
+was introduced. Details and diagnoses: [E023](../records/RECORDS.md#e023).
 
-The review also checked serial deadlines and poisoned-session recovery, model
-ceilings/units, all 42 documented queries and unknown-fault handling, bounded
-telemetry/freshness, cache-only Dash callbacks and clean installation. No further
-actionable finding remained. [STATE.md](../STATE.md) maps each requirement to its
-tests; E019–E021 retain detailed evidence, including six executed documentation snippets.
+## Size and validation
 
-## Acceptance evidence
+Comparison with Git 34b5c37, counting Python/JS/CSS under src, tests and scripts:
 
-[E021](../records/RECORDS.md#e021): **145 tests PASS**, **95% statement coverage**;
-lint/format, strict typing, dependency consistency, wheel/sdist builds, archive
-completeness, CLI, both examples, clean core/GUI/serial installations, installed
-Dash HTTP smoke and Node watchdog checks PASS. Preserved-input hashes match;
-source was unchanged during validation. No skipped tests or test warnings.
+| Area | Files before → after | Lines before → after |
+| --- | --- | --- |
+| Runtime and assets | 14 → 14 | 1,601 → 1,577 |
+| Tests/support | 12 → 7 | 1,340 → 1,260 |
+| Validation scripts | 4 → 3 | 398 → 381 |
+| Total | **30 → 24 (−20%)** | **3,339 → 3,218 (−121; −3.6%)** |
 
-Fresh browser evidence ([E020](../records/RECORDS.md#e020)) includes the
-[live screenshot](../docs/images/simulator-dashboard.png) and
-[server-loss warning](../docs/images/simulator-server-offline.png). The live browser
-reported no console warnings/errors. Test servers, tabs and temporary install
-resources are closed. No physical port was enumerated or opened.
+These counts exclude documentation, workflow YAML, generated builds and durable
+records. Meaningful regressions were retained; one duplicate test was replaced by
+an acquisition-duration regression verifying all 14 status reads are timed.
 
-Reproduce with `python scripts/validate.py` after installing `.[dev,serial,gui]`
-and Node 22+ (`VERDI_NODE` may specify its executable). Extras installation needs
-the configured pip registry or cache. Current evidence is Windows/Python 3.12.14,
-Node 24.19.0, Dash 4.4.1, Plotly 6.9.0 and pySerial 3.5; exact development dependency
-versions are in [requirements-validated.txt](../records/requirements-validated.txt).
+[E025](../records/RECORDS.md#e025): **145 tests PASS**, **95% statement coverage**,
+Ruff lint/format, strict mypy, dependency consistency, wheel/sdist builds, archive
+completeness, CLI, both examples, isolated core/extras installation, installed Dash
+callbacks and Node watchdog PASS. All six documentation Python snippets passed.
+The 45 candidate file hashes stayed unchanged during validation. Final diff and
+public API review found no remaining actionable software issue.
 
-Earlier c895060 passed six Windows/Linux Python 3.11–3.13
-[CI jobs](https://github.com/cct1123/coherent-verdi-control/actions/runs/34423561052)
-(E016). Those results are historical, not a remote run of this changed candidate.
-The CI workflow retains the matrix and now includes the extras installation check.
+Environment: Windows/Python 3.12.14, Node 24.19.0. Development Plotly is 6.9.0;
+fresh GUI installation passed with Dash 4.4.1 / Plotly 7.0.0 / pySerial 3.5.
+[Current browser evidence](../records/RECORDS.md#e024) verifies rendering and the
+server-loss warning; [live](../docs/images/simulator-dashboard.png) and
+[offline](../docs/images/simulator-server-offline.png) screenshots were refreshed.
+Test servers/tabs are closed. Run `python scripts/validate.py` to reproduce.
 
-## Physical limits and human review
+## Complexity retained deliberately
 
-No independent software task remains. Physical no-fault formatting, echo/prompt
-timing, firmware latency, electrical compatibility, shutter-closed reporting,
-operating limits and calibration remain **UNTESTED**. Model ratings constrain
-software requests; simulator outputs are fixtures. Service/calibration commands
-and GUI writes are excluded. Software/simulator PASS is not physical acceptance.
+- Serial and simulator implementations share a typed transport boundary so tests
+  never need a physical port; the byte-stream contract isolates pySerial.
+- Controller/transport locks, deadlines, failure poisoning and explicit replacement
+  protect untagged RS-232 reply ownership and uncertain write outcomes.
+- Immutable typed models, distinct actionable exceptions, a sourced 42-query catalog
+  and bounded telemetry preserve public APIs, unit checks, diagnostics and freshness.
+- The single telemetry worker prevents GUI clients from owning or polling protocol I/O.
+- Hardware guards, deterministic clocks, regression tests, package entrypoints/assets,
+  reusable JSON serialization, user docs and durable provenance have current uses.
 
-Any later integration requires separately scoped candidate approval under
-[HARDWARE_VALIDATION.md](../HARDWARE_VALIDATION.md), starting with passive open and
-one `?SV` query. That procedure covers raw evidence, further reads, completed LBO
-warmup before controlled enable, write gates, abort/recovery and shutdown.
-Closing software does not change laser/shutter/heater state; follow the manual's
-operator cool-down procedure. The present task stops at human review.
-
-Original inputs and framework revision `724a7f772069d3357ea66dbc4742d25bd874a33e`
-are preserved ([provenance](../records/FRAMEWORK.md)); upstream remains untouched.
+The internal shutter remains a safety shutter, never an experimental modulator.
+Software close sends no state-changing command. No hardware was accessed; firmware
+behavior, electrical compatibility, latency, shutter-closed reporting and calibration
+remain UNTESTED. Later work follows [HARDWARE_VALIDATION.md](../HARDWARE_VALIDATION.md),
+starting with separately approved read-only queries. Upstream template untouched.

@@ -10,7 +10,7 @@ from enum import StrEnum
 from types import MappingProxyType
 
 from .errors import DeviceError, ProtocolError
-from .models import Fault
+from .models import BAUDRATES, Fault
 
 
 class Query(StrEnum):
@@ -71,9 +71,7 @@ QUERY_SPECS = MappingProxyType(
     {
         Query.AVG_CURRENT_AND_DELTA: QuerySpec("5-6", None, "text"),
         Query.BASEPLATE_TEMP: QuerySpec("5-6", "degC"),
-        Query.BAUDRATE: QuerySpec(
-            "5-6", "baud", "enum", (1200, 2400, 4800, 9600, 19200, 38400, 57600)
-        ),
+        Query.BAUDRATE: QuerySpec("5-6", "baud", "enum", BAUDRATES),
         Query.CURRENT: QuerySpec("5-6", "A"),
         Query.DIODE_CURRENT: QuerySpec("5-6", "A"),
         Query.DIODE_HEATSINK_TEMP: QuerySpec("5-6", "degC"),

@@ -44,15 +44,18 @@ class VerdiController:
         with self._lock:
             return self._transport.is_simulated
 
-    def _exchange(self, instruction: str, *, query: bool) -> str:
+    def _exchange(self, instruction: str, query: Query | None = None) -> QueryResult:
         if self._closed or self._failed:
             raise ConnectionUnusable(
                 "controller is closed or needs an explicit transport replacement"
             )
         try:
-            return decode_response(
-                instruction, self._transport.exchange(encode_instruction(instruction)), query=query
+            payload = decode_response(
+                instruction,
+                self._transport.exchange(encode_instruction(instruction)),
+                query=query is not None,
             )
+            return parse_value(query, payload) if query is not None else payload
         except ProtocolError:
             self._failed = True
             raise
@@ -62,74 +65,48 @@ class VerdiController:
         if not isinstance(query, Query):
             raise ValueError("query must be a Query enum member")
         with self._lock:
-            payload = self._exchange(query.value, query=True)
-            try:
-                return parse_value(query, payload)
-            except ProtocolError:
-                self._failed = True
-                raise
-
-    def _number(self, query: Query) -> float:
-        return float(cast(float, self.query(query)))
-
-    def _integer(self, query: Query) -> int:
-        return cast(int, self.query(query))
+            return self._exchange(query.value, query)
 
     def faults(self, *, history: bool = False) -> tuple[Fault, ...]:
         return cast(tuple[Fault, ...], self.query(Query.FAULT_HISTORY if history else Query.FAULTS))
 
     def power_w(self) -> float:
-        return self._number(Query.POWER)
+        return cast(float, self.query(Query.POWER))
 
     def laser_state(self) -> LaserState:
-        return LaserState(self._integer(Query.LASER))
+        return LaserState(cast(int, self.query(Query.LASER)))
 
     def status(self) -> Status:
         with self._lock:
             started = monotonic()
-            timestamp = datetime.now(UTC)
-            state = self.laser_state()
-            key = bool(self._integer(Query.KEYSWITCH))
-            shutter = bool(self._integer(Query.SHUTTER))
-            power = self.power_w()
-            set_power = self._number(Query.SET_POWER)
-            current = self._number(Query.DIODE_CURRENT)
-            diode = self._number(Query.DIODE_TEMP)
-            heatsink = self._number(Query.DIODE_HEATSINK_TEMP)
-            baseplate = self._number(Query.BASEPLATE_TEMP)
-            lbo = self._number(Query.LBO_TEMP)
-            lbo_servo = ServoState(self._integer(Query.LBO_SERVO))
-            etalon = self._number(Query.ETALON_TEMP)
-            vanadate = self._number(Query.VANADATE_TEMP)
-            faults = self.faults()
             return Status(
-                self.config.model,
-                timestamp,
-                monotonic() - started,
-                state,
-                key,
-                shutter,
-                power,
-                set_power,
-                current,
-                diode,
-                heatsink,
-                baseplate,
-                lbo,
-                lbo_servo,
-                etalon,
-                vanadate,
-                faults,
+                model=self.config.model,
+                sampled_at=datetime.now(UTC),
+                laser_state=self.laser_state(),
+                keyswitch_on=bool(self.query(Query.KEYSWITCH)),
+                shutter_open=bool(self.query(Query.SHUTTER)),
+                power_w=self.power_w(),
+                set_power_w=cast(float, self.query(Query.SET_POWER)),
+                diode_current_a=cast(float, self.query(Query.DIODE_CURRENT)),
+                diode_temp_c=cast(float, self.query(Query.DIODE_TEMP)),
+                heatsink_temp_c=cast(float, self.query(Query.DIODE_HEATSINK_TEMP)),
+                baseplate_temp_c=cast(float, self.query(Query.BASEPLATE_TEMP)),
+                lbo_temp_c=cast(float, self.query(Query.LBO_TEMP)),
+                lbo_servo=ServoState(cast(int, self.query(Query.LBO_SERVO))),
+                etalon_temp_c=cast(float, self.query(Query.ETALON_TEMP)),
+                vanadate_temp_c=cast(float, self.query(Query.VANADATE_TEMP)),
+                faults=self.faults(),
                 simulated=self._transport.is_simulated,
+                duration_s=monotonic() - started,
             )
 
     def diagnostics(self) -> Diagnostics:
         with self._lock:
             return Diagnostics(
                 cast(str, self.query(Query.SOFTWARE)),
-                self._number(Query.HEAD_HOURS),
-                self._number(Query.PS_HOURS),
-                self._number(Query.DIODE_HOURS),
+                cast(float, self.query(Query.HEAD_HOURS)),
+                cast(float, self.query(Query.PS_HOURS)),
+                cast(float, self.query(Query.DIODE_HOURS)),
                 self.faults(history=True),
             )
 
@@ -137,7 +114,7 @@ class VerdiController:
         with self._lock:
             if not self.config.allow_writes:
                 raise WritesDisabled("create ControllerConfig with allow_writes=True explicitly")
-            self._exchange(instruction, query=False)
+            self._exchange(instruction)
 
     def set_power_w(self, power_w: float) -> None:
         """Set light regulation, rounded to four decimals; no implicit laser enable."""

@@ -70,7 +70,6 @@ def validate() -> int:
         ("TEST-007 example", ["examples/simulated_session.py"]),
         ("TEST-007 async", ["examples/async_integration.py"]),
         ("TEST-007 install", ["scripts/install_smoke.py"]),
-        ("TEST-007 extras install", ["scripts/install_smoke.py", "--extras"]),
     ]
     commands = [(test_id, [sys.executable, *args]) for test_id, args in commands]
     commands.append(
@@ -110,17 +109,11 @@ def validate() -> int:
     inputs_ok = all(
         hashlib.sha256((ROOT / p).read_bytes()).hexdigest() == sha for p, sha in preserved.items()
     )
-    # This original user reference stays local and is not required in clean clones.
-    prompt_log = ROOT / "prompt log.txt"
-    local_reference_ok = not prompt_log.exists() or hashlib.sha256(
-        prompt_log.read_bytes()
-    ).hexdigest() == ("51b5d310a26027a5a6ec25b0b9416cc1818b2880939c7ab555ef594838a8ba45")
     passed = (
         len(results) == len(commands)
         and all(r["exit_code"] == 0 for r in results)
         and before == after
         and inputs_ok
-        and local_reference_ok
     )
     report = {
         "timestamp_utc": datetime.now(UTC).isoformat(),
@@ -133,8 +126,6 @@ def validate() -> int:
         "candidate_files": after,
         "source_unchanged_during_validation": before == after,
         "preserved_inputs_match": inputs_ok,
-        "local_prompt_log_present": prompt_log.exists(),
-        "local_prompt_log_match_if_present": local_reference_ok,
         "dependencies": {d.metadata["Name"]: d.version for d in distributions()},
         "results": results,
         "build_artifacts": {

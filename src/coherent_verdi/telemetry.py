@@ -33,7 +33,6 @@ class TelemetryService:
         if type(history_size) is not int or not 1 <= history_size <= 100000:
             raise ValueError("history_size must be an integer in [1, 100000]")
         self._controller = controller
-        self._model = controller.config.model
         self._clock = clock
         self._latest_started: float | None = None
         self._last_source: bool | None = None
@@ -72,7 +71,11 @@ class TelemetryService:
                 else None
             )
             return TelemetrySnapshot(
-                self._model, samples, status.simulated if status else None, age, self.interval_s
+                self.controller.config.model,
+                samples,
+                status.simulated if status else None,
+                age,
+                self.interval_s,
             )
 
     @property
@@ -118,8 +121,7 @@ class TelemetryService:
     def _run(self) -> None:
         while not self._stop.is_set():
             self.poll_once()
-            if self._stop.wait(self.interval_s):
-                break
+            self._stop.wait(self.interval_s)
 
     def start(self) -> None:
         with self._lifecycle_lock:

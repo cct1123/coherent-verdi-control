@@ -9,8 +9,7 @@ h1 span { color: #94a3b9; font-weight: 350; }
 .badge { padding: 8px 13px; border: 1px solid #4c817a; border-radius: 6px; color: #8cedd9; background: #152e30; font-size: 12px; letter-spacing: 1px; }
 .statusbar { justify-content: flex-start; font-size: 12px; color: #a6b3c8; margin: 22px 0; }
 .health { color: #65e3cc; font-weight: 700; letter-spacing: 1px; }
-#error:not(:empty) { margin-bottom: 20px; padding: 14px; color: #ffc4ad; border: 1px solid #8f5b50; background: #36221f; border-radius: 8px; }
-#connection-warning:not(:empty) { margin-bottom: 20px; padding: 14px; color: #ffc4ad; border: 1px solid #8f5b50; background: #36221f; border-radius: 8px; }
+#error:not(:empty), #connection-warning:not(:empty) { margin-bottom: 20px; padding: 14px; color: #ffc4ad; border: 1px solid #8f5b50; background: #36221f; border-radius: 8px; }
 .connection-lost .statusbar { visibility: hidden; }
 .connection-lost .tiles, .connection-lost .lower { opacity: 0.5; }
 .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }

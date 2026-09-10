@@ -1,4 +1,4 @@
-"""Exercise built distributions in isolated core or optional-extras environments."""
+"""Exercise built distributions in one clean environment, first core then GUI/serial extras."""
 
 import argparse
 import json
@@ -12,11 +12,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, check=True, capture_output=True, text=True, **kwargs)
+def run(args: list[str], *, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=180)
+    if result.returncode:
+        print(result.stdout + result.stderr)
+        result.check_returncode()
+    return result
 
 
-def main(*, extras: bool = False) -> None:
+def main() -> None:
     wheels = sorted((ROOT / "dist").glob("coherent_verdi_control-*.whl"))
     if len(wheels) != 1:
         raise RuntimeError("build one unambiguous current wheel into dist/ first")
@@ -28,7 +32,6 @@ def main(*, extras: bool = False) -> None:
     required = {
         "scripts/validate.py",
         "scripts/install_smoke.py",
-        "scripts/gui_smoke.py",
         "scripts/test_watchdog.cjs",
         "examples/simulated_session.py",
         "examples/async_integration.py",
@@ -44,11 +47,7 @@ def main(*, extras: bool = False) -> None:
         env_path = Path(directory) / "env"
         venv.EnvBuilder(with_pip=True).create(env_path)
         executable = env_path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        install = [str(executable), "-m", "pip", "install"]
-        install += (
-            [f"{wheels[0]}[serial,gui]"] if extras else ["--no-deps", "--no-index", str(wheels[0])]
-        )
-        run(install)
+        run([str(executable), "-m", "pip", "install", "--no-deps", "--no-index", str(wheels[0])])
         run([str(executable), "-m", "pip", "check"])
         # CWD outside source and isolated mode prove this imports the installed wheel.
         check = run(
@@ -76,29 +75,103 @@ def main(*, extras: bool = False) -> None:
         entrypoint = env_path / ("Scripts/verdi.exe" if os.name == "nt" else "bin/verdi")
         result = json.loads(run([str(entrypoint), "query", "?SV"], cwd=directory).stdout)
         assert result["result"] == "SIMULATOR-0.1"
-        if extras:
-            smoke = run(
-                [str(executable), "-I", str(ROOT / "scripts" / "gui_smoke.py")], cwd=directory
-            )
-            print(smoke.stdout.strip())
-        else:
-            missing_gui = subprocess.run(
-                [str(executable), "-I", "-m", "coherent_verdi", "gui"],
-                cwd=directory,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            assert missing_gui.returncode == 2
-            assert json.loads(missing_gui.stderr)["type"] == "ModuleNotFoundError"
-        print(
-            "PASS: sdist completeness, clean wheel install, entrypoint, CLI, both examples, "
-            f"{'GUI/serial extras installed' if extras else 'optional extras absent'}\n"
-            f"Installed module: {check.stdout.strip()}"
+        missing_gui = subprocess.run(
+            [str(executable), "-I", "-m", "coherent_verdi", "gui"],
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
+        assert missing_gui.returncode == 2
+        assert json.loads(missing_gui.stderr)["type"] == "ModuleNotFoundError"
+        print(f"PASS: isolated core wheel, assets, CLI, examples; {check.stdout.strip()}")
+        run([str(executable), "-m", "pip", "install", f"{wheels[0]}[serial,gui]"])
+        run([str(executable), "-m", "pip", "check"])
+        smoke = run(
+            [str(executable), "-I", str(Path(__file__).resolve()), "--gui-smoke"], cwd=directory
+        )
+        print(smoke.stdout.strip())
+
+
+def gui_smoke() -> None:
+    from importlib.metadata import version
+
+    import serial
+    import serial.tools.list_ports
+
+    from coherent_verdi import (
+        ControllerConfig,
+        Model,
+        SimulatedTransport,
+        TelemetryService,
+        VerdiController,
+    )
+    from coherent_verdi.gui import create_app
+
+    def prohibited(*args: object, **kwargs: object) -> None:
+        raise AssertionError("physical serial access/discovery prohibited in GUI smoke test")
+
+    # Installed adapter dependencies must never turn this check into a hardware test.
+    serial.Serial = prohibited
+    serial.serial_for_url = prohibited
+    serial.tools.list_ports.comports = prohibited
+    serial.tools.list_ports.grep = prohibited
+    sim = SimulatedTransport(Model.V5)
+    with VerdiController(sim, ControllerConfig(Model.V5)) as controller:
+        telemetry = TelemetryService(controller, history_size=2)
+        app = create_app(telemetry)
+        client = app.server.test_client()
+        for path in ("/", "/_dash-layout", "/assets/style.css", "/assets/watchdog.js"):
+            assert client.get(path).status_code == 200, path
+        key = next(iter(app.callback_map))
+        payload = {
+            "output": key,
+            "outputs": [
+                {"id": item.component_id, "property": item.component_property}
+                for item in app.callback_map[key]["output"]
+            ],
+            "inputs": [{"id": "refresh", "property": "n_intervals", "value": 1}],
+            "changedPropIds": ["refresh.n_intervals"],
+            "state": [],
+        }
+
+        def refresh(expected: str) -> dict:
+            before = sim.requests
+            response = client.post("/_dash-update-component", json=payload)
+            assert response.status_code == 200, response.data
+            data = response.get_json()["response"]
+            assert data["health"]["children"] == expected, data
+            assert sim.requests == before, "GUI callback must read only the cache"
+            return data
+
+        refresh("NO DATA")
+        telemetry.poll_once()
+        assert refresh("LIVE")["source"]["children"] == "SIMULATOR"
+        sim.set_faults(5, 999)
+        telemetry.poll_once()
+        fault_view = refresh("LIVE")
+        assert fault_view["laser"]["children"] == "FAULT"
+        assert "999" in str(fault_view["instrument"])
+        sim.inject_timeout()
+        telemetry.poll_once()
+        error_view = refresh("ERROR")
+        assert error_view["laser"]["children"] == "UNKNOWN"
+        assert error_view["power-graph"]["figure"]["data"][0]["y"][-1] is None
+        telemetry.poll_once()
+        refresh("LIVE")
+        assert len(telemetry.history) == 2
+        assert not telemetry.running
+    print(
+        "PASS: installed GUI assets, NO DATA/LIVE/FAULT/ERROR/recovery callbacks, "
+        "bounded cache, no callback acquisition; "
+        f"Dash {version('dash')}, Plotly {version('plotly')}, pySerial {version('pyserial')}"
+    )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--extras", action="store_true", help="install GUI/serial extras from pip")
-    main(extras=parser.parse_args().extras)
+    parser.add_argument("--gui-smoke", action="store_true", help=argparse.SUPPRESS)
+    if parser.parse_args().gui_smoke:
+        gui_smoke()
+    else:
+        main()
