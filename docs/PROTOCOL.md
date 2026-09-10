@@ -99,6 +99,10 @@ inferred from the caller's V5 selection.
    The head shutter is used only as a safety shutter, never periodic modulation.
 5. **Timing and faults:** no plant model, firmware latency bound, physical fault
    response timing, interlock integrity or safety certification follows from tests.
+   Manual p. 4-2 specifies the LBO-not-locked fault for key ON during cold-start
+   warmup. The simulator represents this fault, but retaining a fault latch until
+   a fresh explicit enable after warmup is a conservative fixture policy. Real
+   recovery/latching and any automatic resumption require physical observation.
 
 ## Software references
 

@@ -42,6 +42,7 @@ class SimulatedTransport:
         self._power = 0.0
         self._faults: tuple[int, ...] = ()
         self._history: tuple[int, ...] = ()
+        self._warmup_fault = False
         self._injections: deque[tuple[bytes | Exception, bool]] = deque()
         self._requests: deque[bytes] = deque(maxlen=4096)
 
@@ -59,6 +60,9 @@ class SimulatedTransport:
             if not on:
                 self._laser = LaserState.STANDBY
                 self._shutter = False
+                self._warmup_fault = False
+            elif not self._ready():
+                self._latch_warmup_fault()
 
     def set_faults(self, *codes: int) -> None:
         """Test fixture operation; never synthesizes interlock bypass commands."""
@@ -83,10 +87,23 @@ class SimulatedTransport:
     def _ready(self) -> bool:
         return self._clock() - self._started >= self._warmup_s
 
+    def _latch_warmup_fault(self) -> None:
+        # Manual p.4-2: key ON before LBO operating temperature reports fault 5.
+        self._warmup_fault = True
+        self._history = tuple(dict.fromkeys((*self._history, 5)))
+        self._laser = LaserState.FAULT
+        self._shutter = False
+
+    def _active_faults(self) -> tuple[int, ...]:
+        if self._warmup_fault and not self._ready() and 5 not in self._faults:
+            return (*self._faults, 5)
+        return self._faults
+
     def _query(self, instruction: str) -> str:
         elapsed = max(0.0, self._clock() - self._started)
         ready = self._ready()
-        emitting = self._laser == LaserState.ON and self._shutter and ready and not self._faults
+        faults = self._active_faults()
+        emitting = self._laser == LaserState.ON and self._shutter and ready and not faults
         fraction = 1.0 if not self._warmup_s else min(1.0, elapsed / self._warmup_s)
         # Independent literal query mapping deliberately does not import QUERY_SPECS.
         values: dict[str, str] = {
@@ -110,7 +127,7 @@ class SimulatedTransport:
             "?ESS": "1" if ready else "2",
             "?EST": "50.00",
             "?ET": "50.00",
-            "?F": "&".join(map(str, self._faults)) or "SYSTEM OK",
+            "?F": "&".join(map(str, faults)) or "SYSTEM OK",
             "?FH": "&".join(map(str, self._history)) or "SYSTEM OK",
             "?HH": "100.0",
             "?K": str(int(self._key)),
@@ -153,13 +170,17 @@ class SimulatedTransport:
             if name in ("L", "LASER"):
                 if value:
                     self._history = ()
-                    if self._faults:
+                    if self._key and not self._ready():
+                        self._latch_warmup_fault()
+                    elif self._active_faults():
                         self._laser = LaserState.FAULT
                     elif self._key:
                         self._laser = LaserState.ON
+                        self._warmup_fault = False
                 else:
                     self._laser = LaserState.STANDBY
                     self._shutter = False
+                    self._warmup_fault = False
             elif name in ("S", "SHUTTER"):
                 # Conservative simulation policy; not a claim about rejected hardware writes.
                 self._shutter = value and self._laser == LaserState.ON and self._key

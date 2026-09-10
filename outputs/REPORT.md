@@ -1,67 +1,89 @@
 # Engineering report
 
-Hardware-free scope: **COMPLETE / PASS**. Physical integration remains outside
-this phase; the template checkpoint is AWAITING_HUMAN_REVIEW.
+Final hardware-free production hardening and human-usability pass: **COMPLETE**.
+The template checkpoint is **AWAITING_HUMAN_REVIEW**.
+
+| Validation scope | Status |
+| --- | --- |
+| Software validation | **PASS** |
+| Simulator validation | **PASS** |
+| Physical Verdi validation | **UNTESTED** |
 
 ## Candidate
 
 Version **0.1.0**; source-manifest SHA-256:
-`7b3c7d8cf51378f091fa5adf459c5d3e35df2a223286de01bc04636028199c81`.
-[validation.json](../records/validation.json) records hashes, environment and results
-at **2026-09-10T01:05:40.459186+00:00**. State/report/evidence updates are excluded from the manifest;
-Git identifies the complete revision. [STATE.md](../STATE.md) maps requirements.
+`e47efd04594643e98c1778a7400c0a201ffc987cf2d1d24e13f93f585c85a811`.
+[validation.json](../records/validation.json) records source/build hashes, environment
+and results at **2026-09-10T01:19:54.046692+00:00**. State/report/evidence updates are
+excluded from the manifest, which identifies the validated working-tree source,
+docs and screenshots. [STATE.md](../STATE.md) maps requirements to current evidence.
 
-## System
+## System and documentation
 
-The manual-grounded Verdi V-2/V-5/V-6 library provides typed models, diagnostics,
-an optional serial adapter, simulator, telemetry, CLI and Plotly Dash monitor.
-One controller serializes complete transactions and compound samples. The catalog
-covers all 42 documented queries; operational writes require explicit opt-in.
-Connection, close and replacement send no commands; there is no automatic replay.
+One typed controller owns serialized Verdi transactions; telemetry publishes a
+bounded immutable cache shared by Dash clients. The library, CLI and simulator
+cover V-2/V-5/V-6. Writes require explicit opt-in, and connection/replacement/close
+send no commands. The internal shutter is a safety shutter, never a modulator.
 
-The simulator covers key/fault transitions, virtual-clock warmup, malformed replies,
-timeouts and lost acknowledgments, with synthetic dynamics explicitly documented.
-Telemetry retains bounded immutable snapshots with source identity and monotonic
-age. Dash reads only this cache. CLI streaming flushes each sample and reports
-failure. The internal shutter is a safety shutter, never an experimental modulator.
+[README](../README.md): installation, Python/CLI/GUI examples, architecture and
+simulator screenshots. [API reference](../docs/API.md) and
+[lab integration](../docs/INTEGRATION.md): units, errors, ownership and deployment.
+[Protocol](../docs/PROTOCOL.md) and [simulator](../docs/SIMULATOR.md): documented
+device behavior and fixture policies. The later physical procedure is linked below.
 
-[Installation/API/CLI](../README.md) · [Ownership/lifecycle](../docs/INTEGRATION.md) ·
-[Protocol/uncertainties](../docs/PROTOCOL.md) · [Simulator](../docs/SIMULATOR.md)
+## Review and fixes
 
-## Review and validation
+The review fixed premature simulator enable during LBO warmup, mutable telemetry
+configuration, failed logging sinks disrupting acquisition, a shutdown lock conflict,
+and cancellation ownership in the async example. Ten new regression cases cover
+these gaps. No automatic recovery writes were introduced. [E019](../records/RECORDS.md#e019)
+records diagnoses, bounded audits and design decisions.
 
-The latest review found no new runtime defect. Duplicated test setup and repeated
-handoff prose were pruned; thread-test cleanup now preserves setup failures.
-All assertions and hardware guards remain. See [E017](../records/RECORDS.md#e017).
-Earlier fixes and their diagnoses remain in the durable records.
+The review also checked serial deadlines and poisoned-session recovery, model
+ceilings/units, all 42 documented queries and unknown-fault handling, bounded
+telemetry/freshness, cache-only Dash callbacks and clean installation. No further
+actionable finding remained. [STATE.md](../STATE.md) maps each requirement to its
+tests; E019–E021 retain detailed evidence, including six executed documentation snippets.
 
-Current [E018](../records/RECORDS.md#e018): **135 tests PASS**, **94% coverage**;
+## Acceptance evidence
+
+[E021](../records/RECORDS.md#e021): **145 tests PASS**, **95% statement coverage**;
 lint/format, strict typing, dependency consistency, wheel/sdist builds, archive
-completeness, CLI, both examples, clean no-extras installation and Node watchdog
-checks PASS. Preserved-input hashes match; source was unchanged during validation.
-Runtime code is identical to c895060, whose six Windows/Linux Python 3.11-3.13
-[CI jobs passed](https://github.com/cct1123/coherent-verdi-control/actions/runs/34423561052)
-([E016](../records/RECORDS.md#e016)); E018 covers the pruned tests.
+completeness, CLI, both examples, clean core/GUI/serial installations, installed
+Dash HTTP smoke and Node watchdog checks PASS. Preserved-input hashes match;
+source was unchanged during validation. No skipped tests or test warnings.
 
-Browser rendering/server-loss evidence remains current ([E014](../records/RECORDS.md#e014)):
-[live screenshot](../docs/images/simulator-dashboard.png),
-[offline warning](../docs/images/simulator-server-offline.png). Test resources are closed.
+Fresh browser evidence ([E020](../records/RECORDS.md#e020)) includes the
+[live screenshot](../docs/images/simulator-dashboard.png) and
+[server-loss warning](../docs/images/simulator-server-offline.png). The live browser
+reported no console warnings/errors. Test servers, tabs and temporary install
+resources are closed. No physical port was enumerated or opened.
+
 Reproduce with `python scripts/validate.py` after installing `.[dev,serial,gui]`
-and Node 22+ (`VERDI_NODE` may specify its executable). Local evidence uses
-Windows/Python 3.12.14 and Node 24.19.0; [Python versions](../records/requirements-validated.txt).
+and Node 22+ (`VERDI_NODE` may specify its executable). Extras installation needs
+the configured pip registry or cache. Current evidence is Windows/Python 3.12.14,
+Node 24.19.0, Dash 4.4.1, Plotly 6.9.0 and pySerial 3.5; exact development dependency
+versions are in [requirements-validated.txt](../records/requirements-validated.txt).
 
-## Physical limits and later review
+Earlier c895060 passed six Windows/Linux Python 3.11–3.13
+[CI jobs](https://github.com/cct1123/coherent-verdi-control/actions/runs/34423561052)
+(E016). Those results are historical, not a remote run of this changed candidate.
+The CI workflow retains the matrix and now includes the extras installation check.
 
-No hardware was accessed. Active no-fault formatting, echo/prompt timing, firmware
-latency, electrical compatibility, shutter-closed reporting, operating limits and
-calibration remain UNTESTED. Model ratings are software ceilings; simulator
-outputs are fixtures. Service/calibration commands and GUI writes are excluded.
+## Physical limits and human review
+
+No independent software task remains. Physical no-fault formatting, echo/prompt
+timing, firmware latency, electrical compatibility, shutter-closed reporting,
+operating limits and calibration remain **UNTESTED**. Model ratings constrain
+software requests; simulator outputs are fixtures. Service/calibration commands
+and GUI writes are excluded. Software/simulator PASS is not physical acceptance.
 
 Any later integration requires separately scoped candidate approval under
 [HARDWARE_VALIDATION.md](../HARDWARE_VALIDATION.md), starting with passive open and
-one `?SV` query. That procedure covers evidence, further reads, write gates,
-abort/recovery and shutdown. Closing software does not change laser/shutter/heater
-state; follow the manual's operator cool-down procedure.
+one `?SV` query. That procedure covers raw evidence, further reads, completed LBO
+warmup before controlled enable, write gates, abort/recovery and shutdown.
+Closing software does not change laser/shutter/heater state; follow the manual's
+operator cool-down procedure. The present task stops at human review.
 
 Original inputs and framework revision `724a7f772069d3357ea66dbc4742d25bd874a33e`
 are preserved ([provenance](../records/FRAMEWORK.md)); upstream remains untouched.

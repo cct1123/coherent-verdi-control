@@ -1,5 +1,6 @@
-"""Install built wheel into a fresh environment with no runtime extras; run from any OS."""
+"""Exercise built distributions in isolated core or optional-extras environments."""
 
+import argparse
 import json
 import os
 import subprocess
@@ -15,7 +16,7 @@ def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, check=True, capture_output=True, text=True, **kwargs)
 
 
-def main() -> None:
+def main(*, extras: bool = False) -> None:
     wheels = sorted((ROOT / "dist").glob("coherent_verdi_control-*.whl"))
     if len(wheels) != 1:
         raise RuntimeError("build one unambiguous current wheel into dist/ first")
@@ -27,6 +28,7 @@ def main() -> None:
     required = {
         "scripts/validate.py",
         "scripts/install_smoke.py",
+        "scripts/gui_smoke.py",
         "scripts/test_watchdog.cjs",
         "examples/simulated_session.py",
         "examples/async_integration.py",
@@ -42,7 +44,12 @@ def main() -> None:
         env_path = Path(directory) / "env"
         venv.EnvBuilder(with_pip=True).create(env_path)
         executable = env_path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        run([str(executable), "-m", "pip", "install", "--no-deps", "--no-index", str(wheels[0])])
+        install = [str(executable), "-m", "pip", "install"]
+        install += (
+            [f"{wheels[0]}[serial,gui]"] if extras else ["--no-deps", "--no-index", str(wheels[0])]
+        )
+        run(install)
+        run([str(executable), "-m", "pip", "check"])
         # CWD outside source and isolated mode prove this imports the installed wheel.
         check = run(
             [
@@ -69,12 +76,29 @@ def main() -> None:
         entrypoint = env_path / ("Scripts/verdi.exe" if os.name == "nt" else "bin/verdi")
         result = json.loads(run([str(entrypoint), "query", "?SV"], cwd=directory).stdout)
         assert result["result"] == "SIMULATOR-0.1"
+        if extras:
+            smoke = run(
+                [str(executable), "-I", str(ROOT / "scripts" / "gui_smoke.py")], cwd=directory
+            )
+            print(smoke.stdout.strip())
+        else:
+            missing_gui = subprocess.run(
+                [str(executable), "-I", "-m", "coherent_verdi", "gui"],
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert missing_gui.returncode == 2
+            assert json.loads(missing_gui.stderr)["type"] == "ModuleNotFoundError"
         print(
             "PASS: sdist completeness, clean wheel install, entrypoint, CLI, both examples, "
-            "optional extras absent\n"
+            f"{'GUI/serial extras installed' if extras else 'optional extras absent'}\n"
             f"Installed module: {check.stdout.strip()}"
         )
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--extras", action="store_true", help="install GUI/serial extras from pip")
+    main(extras=parser.parse_args().extras)

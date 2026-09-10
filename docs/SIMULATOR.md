@@ -14,6 +14,9 @@ exercise SEEKING -> LOCKED without sleeping. Default runtime clocks use
 - All 42 query spellings, CR/LF replies, echo and prompt forms, error prefixes.
 - LASER state codes 0/1/2, keyswitch and shutter flags, servo states and fault codes.
 - `L=0` enters STANDBY; `L=1` needs key ON and clears the latched history fixture.
+- Key ON while the simulated LBO is cold reports fault 5 (LBO not locked), as
+  described on manual p. 4-2. `L=1` cannot put the cold laser into ON. Warmup must
+  complete before the nominal key-ON/enable sequence.
 - Clearing an injected active fault does not automatically enable the simulated
   laser. The caller must explicitly request it again.
 - ECHO settings change the following transaction; PROMPT has reversed 0/1 polarity.
@@ -24,6 +27,12 @@ exercise SEEKING -> LOCKED without sleeping. Default runtime clocks use
   undocumented-unit responses and software version are synthetic constants.
 - Warmup uses a simple linear LBO temperature interpolation. It is configurable,
   not a claim about the real warmup duration or thermal response.
+- The cold-start fault's active condition clears when the virtual LBO becomes
+  ready. Its history and FAULT state remain until explicit enable; the shutter
+  stays closed. This conservative latch/re-enable sequence is a **fixture policy**,
+  not a claim about firmware automatic resumption. Key OFF or `L=0` cancels the
+  fixture's warmup-enable attempt; injected faults remain independently controlled
+  by `set_faults()`. An injected fault 5 is never cleared by advancing the clock.
 - Measured power jumps to the setpoint when enabled, warm, fault-free and the
   simulated shutter is open. Otherwise it is zero. No optical noise, overshoot,
   current calibration, actual idle power or rate dynamics are modeled.

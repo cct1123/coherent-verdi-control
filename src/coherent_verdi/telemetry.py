@@ -32,12 +32,12 @@ class TelemetryService:
         finite_range(interval_s, 0.001, 86400, "interval_s")
         if type(history_size) is not int or not 1 <= history_size <= 100000:
             raise ValueError("history_size must be an integer in [1, 100000]")
-        self.controller = controller
+        self._controller = controller
         self._model = controller.config.model
         self._clock = clock
         self._latest_started: float | None = None
         self._last_source: bool | None = None
-        self.interval_s = interval_s
+        self._interval_s = interval_s
         self._history: deque[TelemetrySample] = deque(maxlen=history_size)
         self._history_lock = Lock()
         self._poll_lock = Lock()
@@ -45,6 +45,16 @@ class TelemetryService:
         self._stop = Event()
         self._thread: Thread | None = None
         self._sequence = 0
+
+    @property
+    def controller(self) -> VerdiController:
+        """The borrowed controller; create a new service to change ownership."""
+        return self._controller
+
+    @property
+    def interval_s(self) -> float:
+        """Validated minimum gap between samples; fixed for this service."""
+        return self._interval_s
 
     @property
     def history(self) -> tuple[TelemetrySample, ...]:
@@ -83,7 +93,6 @@ class TelemetryService:
                 # failures, rather than dying and leaving a plausible frozen dashboard.
                 status = None
                 error, error_type = str(exc), type(exc).__name__
-                logger.warning("telemetry sample failed (%s): %s", error_type, error)
             with self._history_lock:
                 # One plotted history must not silently mix simulated and physical
                 # measurements after an explicit transport replacement.
@@ -95,7 +104,16 @@ class TelemetryService:
                 self._sequence += 1
                 sample = TelemetrySample(self._sequence, at, status, error, error_type)
                 self._history.append(sample)
-                return sample
+        # Application logging handlers are external code. Publish first and release
+        # acquisition/cache locks so handlers can inspect the service safely.
+        if sample.error_type is not None:
+            try:
+                logger.warning("telemetry sample failed (%s): %s", error_type, error)
+            except Exception:
+                # The sample retains the original failure even if a logging sink
+                # fails; logging must not terminate the acquisition worker.
+                pass
+        return sample
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -115,13 +133,18 @@ class TelemetryService:
         finite_range(timeout_s, 0.001, 900, "timeout_s")
         with self._lifecycle_lock:
             self._stop.set()
-            if self._thread is not None:
-                self._thread.join(timeout_s)
-                if self._thread.is_alive():
+            thread = self._thread
+        # A worker's logging handler may inspect running while shutdown waits.
+        # Do not hold the lifecycle lock across external worker execution.
+        if thread is not None:
+            thread.join(timeout_s)
+            with self._lifecycle_lock:
+                if thread.is_alive():
                     raise TimeoutError(
                         "telemetry worker still sampling; controller must remain open"
                     )
-                self._thread = None
+                if self._thread is thread:
+                    self._thread = None
 
     def __enter__(self) -> "TelemetryService":
         self.start()

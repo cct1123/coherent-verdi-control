@@ -104,15 +104,16 @@ def test_fault_history_enable_and_key_semantics():
 def test_virtual_warmup_without_sleep():
     clock = [100.0]
     sim, c = controller(clock=lambda: clock[0], warmup_s=10)
-    sim.set_key(True)
-    c.enable_laser()
-    c.set_shutter(open=True)
     c.set_power_w(0.5)
     s = c.status()
     assert s.lbo_servo == ServoState.SEEKING
+    assert s.laser_state == LaserState.STANDBY
     assert s.power_w == 0
     assert s.lbo_temp_c == 25
     clock[0] += 10
+    sim.set_key(True)
+    c.enable_laser()
+    c.set_shutter(open=True)
     s = c.status()
     assert s.lbo_servo == ServoState.LOCKED
     assert s.power_w == 0.5

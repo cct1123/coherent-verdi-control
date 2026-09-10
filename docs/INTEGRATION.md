@@ -73,6 +73,14 @@ age; no last-good value is represented as fresh after failure. History size is
 bounded. The library logs telemetry errors to `coherent_verdi.telemetry` without
 configuring the application's logging handlers.
 
+The controller reference and interval are read-only for each service. Stop the
+service and create a new one to change its controller, model, or polling interval.
+For recovery on the same controller, use its explicit `replace_transport()` API.
+Failed samples enter the cache before logging. Logging handlers may inspect the
+cache or lifecycle without holding up its locks; a failing logging sink cannot
+discard the sample or terminate acquisition. Keep handlers short because they
+still execute synchronously on the thread that attempted the sample.
+
 `snapshot()` returns an immutable `TelemetrySnapshot` of the cache, configured
 model, source kind and sample age without acquiring a controller transaction
 lock. Freshness uses a monotonic clock measured from the polling attempt's start;
@@ -99,6 +107,10 @@ For async applications, see [async_integration.py](../examples/async_integration
 `asyncio.to_thread` prevents blocking the event loop. Canceling the awaiting task
 does not cancel an in-flight serial command; await/drain outstanding work before
 closing the controller. Never interpret cancellation as a physical stop.
+The example keeps the controller context and its sequential reads inside one
+worker function, so that worker retains responsibility for cleanup if its async
+caller is canceled. Application-owned long-lived controllers need the same
+explicit drain-before-close policy.
 
 ## Dash deployment
 

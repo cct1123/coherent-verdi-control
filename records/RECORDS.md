@@ -356,3 +356,116 @@ source unchanged during validation. [Manifest](validation.json) records current 
 Bearing: Supersedes E015 for the pruned test suite; runtime code/assets remain
 unchanged from E016's passing CI candidate. E014 browser evidence remains applicable.
 No new runtime finding. Physical validation/calibration remain UNTESTED.
+
+## E019
+
+Date: 2026-09-10, final hardware-free production/usability review.
+Kind / scope: Inspect → gap → design → implement → test → diagnose; REQ-002..008.
+Baseline: E018. User explicitly requested renewed software hardening before review.
+Method: Review all runtime layers, lifecycle ownership, public models, manual query
+catalog/units/faults, client callbacks, installed distributions, documentation and
+regressions. Bounded protocol and API/lifecycle audits were delegated under AGENTS.md.
+Findings and diagnoses:
+
+- Manual p. 4-2 states the diode cannot turn on while the LBO warms and key ON
+  reports fault 5. The fixture previously accepted premature enable and could
+  emit automatically at readiness. New cold-start tests initially failed; the
+  simulator now reports fault 5 and refuses ON during warmup. Its conservative
+  post-warmup FAULT latch requires explicit enable and is documented as fixture
+  policy, not an inferred firmware promise. Focused simulator/controller: 24 PASS.
+- Mutable telemetry controller/interval could mislabel model identity or bypass
+  the validated polling delay. Both are now read-only properties; reconfiguration
+  creates a new service. A throwing application logging handler could prevent
+  error publication and kill acquisition. Publication now precedes logging,
+  releases cache/sample locks, and isolates sink Exceptions. Joining a worker
+  while holding the lifecycle lock could block a handler inspecting `running`;
+  shutdown now joins outside that lock and clears only the captured worker.
+- Async example cancellation could leave a worker running while the event-loop
+  thread tried to close its controller. One worker now owns operations and cleanup;
+  its cancellation regression verifies cleanup stays with the in-flight worker.
+  Lifecycle/client/telemetry focused checks: 35 PASS; typing/lint/format PASS.
+- Clean installation previously exercised only the core wheel. Added a separate
+  fresh GUI/serial installation check and standalone installed-Dash HTTP smoke:
+  assets, no data, live data, known/unknown faults, timeout, recovery, bounded
+  history and zero callback acquisition. Core installation now also verifies the
+  missing-GUI CLI error. Both modes are in the acceptance runner and CI workflow.
+- Added a public API reference, expanded install/warmup/troubleshooting guidance,
+  and refined the later physical procedure: completed LBO warmup before enable,
+  one connection owner across read/write stages, exact shutter commands and an
+  operation evidence form with measured tolerance basis. Executed all six Python
+  snippets across README and docs successfully, entirely with simulators.
+
+No additional actionable defect found in serial deadlines, failure poisoning,
+explicit replacement/cleanup, documented command forms, numeric units/model ceilings,
+fault decoding or cache-only Dash state. Integrated acceptance follows in E021.
+This finding supersedes E018's no-new-defect statement for the newly examined cases.
+
+## D005
+
+Date: 2026-09-10.
+Decision: Keep device facts, simulator policy and application lifecycle distinct.
+Cold key ON/fault 5 is manual-grounded; post-warmup re-enable is a conservative
+fixture policy. Telemetry configuration is immutable and failed acquisition is
+published before external logging. Async examples keep operation and resource
+ownership in one worker even when the awaiting task is canceled.
+Basis: E019 reproduced warmup, metadata, logging and cancellation gaps.
+Consequence: No automatic laser enable, command replay, hidden callback polling,
+or physical recovery assumption was introduced. Hardware remains UNTESTED.
+
+## E020
+
+Date: 2026-09-10T01:18:45+00:00.
+Kind / scope: Current real-browser simulator smoke; TEST-006/008.
+Method: Run `python -m coherent_verdi --demo gui --port 8050` on loopback, inspect
+the browser's actual rendered/accessibility state and console, save full-page
+screenshots. Stop the simulator server and wait beyond the 10-second watchdog.
+Result: PASS. SIMULATOR/LIVE, 1.000 W, 1.0000 W setpoint, ON/OPEN, LOCKED servo,
+thermal/status fields and chart rendered without clipping. Live console warnings
+and errors: none. After stopping the server, SERVER UPDATE LOST appeared, LIVE
+was hidden, and all retained values were visibly dimmed and labeled stale.
+Artifacts: [live](../docs/images/simulator-dashboard.png) and
+[server offline](../docs/images/simulator-server-offline.png) simulator screenshots.
+An initial offline capture preceded the watchdog deadline; it was replaced with
+the verified post-deadline capture. Both test servers and browser tabs are closed.
+Bearing: Supersedes E014 for the current candidate. No physical access occurred.
+
+## E021
+
+Date: 2026-09-10T01:19:54.046692+00:00.
+Kind / scope: Final production/usability acceptance; TEST-001..009 / REQ-001..009.
+Candidate: `e47efd04594643e98c1778a7400c0a201ffc987cf2d1d24e13f93f585c85a811`.
+Method: `python scripts/validate.py`, Windows/Python 3.12.14, Node 24.19.0,
+hardware prohibited. Source/docs/screenshots finalized before the run.
+Result: 145 tests PASS (2.63 s), 95% statement coverage, no skips/warnings.
+Ruff lint/format, strict mypy (12 modules), dependency consistency, wheel/sdist
+build and archive completeness PASS. CLI and both examples PASS. Separate clean
+environments pass core installation without dependencies and GUI/serial extras
+installation, including installed module/typing/assets, console entrypoint, both
+examples, missing-GUI error, Dash HTTP assets and callbacks across no data, live,
+fault, timeout and recovery states. Callback checks prove no acquisition occurs
+during rendering. Extras versions: Dash 4.4.1, Plotly 6.9.0, pySerial 3.5.
+Integrated Node watchdog startup/receipt/expiry/recovery PASS. Input/framework
+hashes match and source remained unchanged throughout the complete run.
+Artifacts: [manifest and build hashes](validation.json), [versions](requirements-validated.txt),
+local generated validation.log/JUnit; fresh browser/screenshots E020.
+Bearing: Supersedes E018 for the changed candidate. E019 defects and installation
+coverage gaps are resolved. Earlier E016 remote matrix evidence is historical;
+this changed candidate has current local Windows/Python 3.12.14 acceptance.
+Software validation: PASS. Simulator validation: PASS.
+Physical Verdi validation: UNTESTED. No independent software work remains.
+
+## E022
+
+Date: 2026-09-09 (America/Chicago), publication review after E021.
+Kind / scope: Review, prune, commit and push; TEST-002..009.
+Authorization: User requested "review, prune. commit, push."
+Method: Inspect all pending runtime, simulator, lifecycle, installation, regression
+and documentation changes; compare the candidate to E021 before publication.
+Result: No new actionable runtime defect. Pruned repeated architecture, navigation
+and review-result prose from outputs/REPORT.md; retained requirements, detailed
+evidence, user documentation, screenshots, every assertion and hardware guard.
+Publication checks: 145 tests PASS (1.11 s), Ruff lint/format PASS, strict mypy
+PASS for 12 source modules. The 51 candidate file hashes still match E021 exactly;
+its full build/install/GUI acceptance remains applicable. Only checkpoint/report
+and durable evidence changed during this pruning pass. Physical validation remains
+UNTESTED; publishing the software grants no permission to access hardware.

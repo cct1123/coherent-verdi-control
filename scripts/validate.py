@@ -70,6 +70,7 @@ def validate() -> int:
         ("TEST-007 example", ["examples/simulated_session.py"]),
         ("TEST-007 async", ["examples/async_integration.py"]),
         ("TEST-007 install", ["scripts/install_smoke.py"]),
+        ("TEST-007 extras install", ["scripts/install_smoke.py", "--extras"]),
     ]
     commands = [(test_id, [sys.executable, *args]) for test_id, args in commands]
     commands.append(

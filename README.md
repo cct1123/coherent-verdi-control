@@ -4,6 +4,9 @@ A typed Python controller for Coherent Verdi V-2/V-5/V-6 lasers, with an in-memo
 simulator, diagnostics, bounded telemetry, CLI and optional Plotly Dash monitor.
 The RS-232 interface follows the supplied Coherent operator manual, Rev IB.
 
+[API reference](docs/API.md) · [Lab integration](docs/INTEGRATION.md) ·
+[Simulator behavior](docs/SIMULATOR.md) · [Later hardware validation](HARDWARE_VALIDATION.md)
+
 **Hardware-free candidate.** Software and simulator results are recorded in
 [STATE.md](STATE.md) and [the engineering report](outputs/REPORT.md). Physical
 Verdi behavior, wiring, latency and calibration remain **UNTESTED**. No serial
@@ -26,6 +29,7 @@ optional capabilities only when needed:
 
 ```sh
 python -m pip install -e ".[gui]"            # Dash + Plotly
+python -m pip install -e ".[serial]"         # Adapter dependency, no connection
 python -m pip install -e ".[dev,serial,gui]" # Development and adapter testing
 ```
 
@@ -33,6 +37,9 @@ Installing the serial extra does not access hardware. The physical adapter
 requires explicit opt-in and later candidate approval; this phase's CLI exposes
 no physical connection option. A built wheel can be installed with
 `python -m pip install dist/coherent_verdi_control-0.1.0-py3-none-any.whl`.
+For a non-editable installation from this checkout, use `python -m pip install .`
+or `python -m pip install ".[gui]"`. These instructions do not assume a published
+PyPI release. Python 3.11–3.13 are covered by the declared CI matrix.
 
 ## Quick start: Python
 
@@ -67,6 +74,26 @@ with VerdiController(
 The Verdi head shutter is a **safety shutter**, not an experiment modulation
 mechanism. Closing a Python context only releases communication; it does not
 change laser, shutter or heater state. See [integration and lifecycle details](docs/INTEGRATION.md).
+
+The default simulator is already warm. To test cold-start handling without
+waiting in real time, inject a clock:
+
+```python
+from coherent_verdi import ControllerConfig, Model, SimulatedTransport, VerdiController
+
+now = [0.0]
+sim = SimulatedTransport(Model.V5, clock=lambda: now[0], warmup_s=60)
+with VerdiController(sim, ControllerConfig(Model.V5)) as laser:
+    sim.set_key(True)
+    print(laser.faults())  # Fault 5: LBO not locked at set temperature
+    now[0] = 60.0
+    print(laser.status().lbo_servo.name)  # LOCKED
+    # This fixture requires a separate explicit enable after readiness.
+```
+
+Warmup duration and post-warmup fault latching here are test policies, not firmware
+timing claims. See the simulator guide for fault injection, malformed responses
+and commands applied before a lost acknowledgment.
 
 ## CLI
 
@@ -152,7 +179,10 @@ python examples/async_integration.py
 The validation script runs pytest with coverage, lint, formatting, strict typing,
 package builds, examples, dependency consistency, source/input checks, source
 archive completeness, an isolated wheel-install smoke test and the JavaScript
-watchdog regression. Node.js 22 or later must be on PATH; `VERDI_NODE` may name an
+watchdog regression. Separate clean environments check both the dependency-free
+core and installed GUI/serial extras, including real Dash HTTP callbacks and
+packaged assets. The extras check needs access to the configured pip registry
+or its cache. Node.js 22 or later must be on PATH; `VERDI_NODE` may name an
 explicit Node executable. Results and source hashes go to
 `records/validation.json`, `records/validation.log` and `records/junit.xml`.
 Only the current JSON manifest is versioned; logs/XML are generated locally and
@@ -173,6 +203,8 @@ virtual clock (no npm packages required).
 | `ProtocolError` | Preserve raw reply, check the exact manual/firmware. Do not turn malformed data into a nominal state. |
 | `ConnectionUnusable` | Explicitly prepare a fresh transport; connection recovery must not replay settings or enable the laser. |
 | GUI ERROR or STALE | Check sample errors/age and service lifecycle. A displayed historical value is not current physical state. |
+| Telemetry `stop()` timeout | Keep the controller open; let the in-flight operation finish, then retry stopping with a suitable timeout. |
+| Simulator fault 5 during warmup | Advance the fixture clock to readiness before explicitly enabling. Do not implement automatic enable as recovery. |
 | Missing `dash` or `serial` module | Install the relevant optional extra in the interpreter running the application. |
 | Model mismatch | Select the model from verified identity. The manual contains no documented model-discovery query. |
 

@@ -68,6 +68,9 @@ Only start after Stage 1 passes and an operator approves exact write scope,
 conditions, maximum power and abort procedure for this candidate and device.
 Create a fresh controller configuration with `allow_writes=True` and the approved
 site ceiling. A model's 2/5/6 W software ceiling is not a site safety limit.
+Stop the read-only telemetry service and close its controller before transferring
+connection ownership to a new controller; never open a second owner on the same
+link. This transition must not send automatic mode changes or replay prior writes.
 
 1. TEST-010D: under approved conditions issue `L=0`, then read `?L` and verify
    STANDBY. Confirm expected physical/front-panel state. Keep heater/cooling
@@ -76,11 +79,15 @@ site ceiling. A model's 2/5/6 W software ceiling is not a site safety limit.
    read `?SP` and record quantization and front-panel comparison. No automatic
    ramp sequence is supplied. Do not infer the firmware's full range from ratings.
 3. TEST-010F: obtain specific approval for **LASER ON** with key ON and beam path
-   conditions confirmed by the operator. Capture fault history first, because
-   `L=1` resets faults/history. Verify actual state, remaining faults, warmup and
+   conditions confirmed by the operator. **Complete LBO warmup first** and confirm
+   LOCKED servo/front-panel readiness as described on manual pp. 4-2–4-3; the diode
+   cannot turn on during warmup. Verify the safety shutter is closed before enable.
+   Capture fault history first, because `L=1` resets faults/history. Issue the
+   single authorized enable, then verify actual state, remaining faults and
    measured power; do not repeatedly re-enable a faulted device.
 4. TEST-010G: with specific beam-path approval, perform a single controlled
-   shutter operation and confirm physical state. Treat the head shutter as a
+   shutter operation (`S=1` open, `S=0` close), read `?S`, and confirm physical state.
+   Treat the head shutter as a
    safety shutter; never cycle it for experimental modulation. Validate its
    closed-state `?P` semantics and reopening behavior against p. 4-8.
 
@@ -107,6 +114,16 @@ or baud-rate write is within this procedure's default scope.
 - Archive candidate hashes, environment versions, observed data, uncertainty,
   screenshots where useful, operator identity and calibration references. Report
   calibration as unverified unless measured with a suitable traceable reference.
+
+Use one evidence row per operation, including failed and inconclusive attempts:
+
+| Field | Required record |
+| --- | --- |
+| Identity | Candidate/source hash, test ID, operator, approval scope, model and serial number |
+| Exchange | Exact transmitted/received bytes, UTC time, monotonic duration, timeout and baud settings |
+| Comparison | Parsed value and unit, front-panel/reference observation and its timestamp |
+| Acceptance | Agreed tolerance and its specification/uncertainty basis; PASS, FAIL or INCONCLUSIVE |
+| Follow-up | Unexpected behavior, captured fixture, corrective action and any renewed approval |
 
 ## Abort and shutdown
 
