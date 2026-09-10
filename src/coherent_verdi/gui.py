@@ -1,29 +1,39 @@
 """Optional Dash monitoring client. All data comes from one TelemetryService."""
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .telemetry import TelemetryService
 
 
+def _source_label(simulated: bool | None) -> str:
+    if simulated is None:
+        return "SOURCE UNAVAILABLE"
+    return "SIMULATOR" if simulated else "PHYSICAL / UNVALIDATED"
+
+
 def dashboard_data(service: TelemetryService) -> dict[str, Any]:
     """Read cached values only; rendering or opening a second tab never polls hardware."""
-    samples = service.history
+    snapshot = service.snapshot()
+    samples = snapshot.history
     last = samples[-1] if samples else None
     status = last.status if last else None
-    age = (datetime.now(UTC) - status.sampled_at).total_seconds() if status else None
+    age = snapshot.age_s
+    failed = last is not None and (last.status is None or last.error_type is not None)
     stale = (
         status is not None
         and age is not None
-        and age > max(5.0, 3 * service.interval_s + 2 * status.duration_s)
+        and age > max(5.0, 3 * snapshot.interval_s + 2 * status.duration_s)
     )
     return {
-        "simulated": service.controller.is_simulated,
+        "simulated": snapshot.simulated,
+        "model": snapshot.model,
         "health": "NO DATA"
         if last is None
-        else ("ERROR" if last.error else "STALE" if stale else "LIVE"),
-        "error": last.error if last else None,
+        else ("ERROR" if failed else "STALE" if stale else "LIVE"),
+        "error": (last.error or last.error_type or "Sample unavailable")
+        if failed and last
+        else None,
         "age_s": age,
         "status": status,
         "timestamps": [s.attempted_at for s in samples],
@@ -66,9 +76,8 @@ def create_app(service: TelemetryService) -> Any:
                         ]
                     ),
                     html.Div(
-                        "SIMULATOR"
-                        if service.controller.is_simulated
-                        else "PHYSICAL / UNVALIDATED",
+                        _source_label(service.snapshot().simulated),
+                        id="source",
                         className="badge",
                     ),
                 ]
@@ -138,6 +147,7 @@ def create_app(service: TelemetryService) -> Any:
         Output("temperatures", "children"),
         Output("instrument", "children"),
         Output("server-heartbeat", "children"),
+        Output("source", "children"),
         Input("refresh", "n_intervals"),
     )
     def refresh(_tick: int) -> tuple[Any, ...]:
@@ -188,7 +198,7 @@ def create_app(service: TelemetryService) -> Any:
             ]
         ]
         instrument = [
-            row("Configured model", service.controller.config.model.value),
+            row("Configured model", data["model"].value),
             row("Keyswitch", ("ON" if s.keyswitch_on else "OFF") if s else "—"),
             row("Diode current", f"{s.diode_current_a:.1f} A" if s else "—"),
             row("LBO servo", s.lbo_servo.name if s else "—"),
@@ -217,6 +227,7 @@ def create_app(service: TelemetryService) -> Any:
             thermal,
             instrument,
             _tick,
+            _source_label(data["simulated"]),
         )
 
     return app

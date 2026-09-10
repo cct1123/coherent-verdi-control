@@ -80,7 +80,7 @@ class SerialConfig:
 def finite_range(value: float, low: float, high: float, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a finite number in [{low}, {high}]")
-    if not isfinite(value) or not low <= value <= high:
+    if not low <= value <= high or not isfinite(value):
         raise ValueError(f"{name} must be a finite number in [{low}, {high}]")
     return float(value)
 
@@ -113,6 +113,7 @@ class Status:
     etalon_temp_c: float
     vanadate_temp_c: float
     faults: tuple[Fault, ...]
+    simulated: bool = False
 
 
 @dataclass(frozen=True)
@@ -131,3 +132,14 @@ class TelemetrySample:
     status: Status | None
     error: str | None
     error_type: str | None
+
+
+@dataclass(frozen=True)
+class TelemetrySnapshot:
+    """Immutable cached view; age uses the service's monotonic clock."""
+
+    model: Model
+    history: tuple[TelemetrySample, ...]
+    simulated: bool | None
+    age_s: float | None
+    interval_s: float

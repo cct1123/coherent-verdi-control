@@ -1,8 +1,6 @@
 """TEST-005/006: lifecycle, bounded storage, stale/error UI and CLI workflows."""
 
 import json
-from dataclasses import replace
-from datetime import UTC, datetime, timedelta
 from threading import Event
 
 import pytest
@@ -49,12 +47,12 @@ def test_programming_errors_are_visible_in_background_sample(monkeypatch):
     assert service.poll_once().error_type == "RuntimeError"
 
 
-def test_staleness_and_empty_history(monkeypatch):
-    sim, c, service = setup_service()
+def test_staleness_and_empty_history():
+    now = [0.0]
+    sim, _, service = setup_service(clock=lambda: now[0])
     assert dashboard_data(service)["health"] == "NO DATA"
-    old = replace(c.status(), sampled_at=datetime.now(UTC) - timedelta(seconds=60))
-    monkeypatch.setattr(c, "status", lambda: old)
     service.poll_once()
+    now[0] = 60.0
     requests = sim.requests
     assert dashboard_data(service)["health"] == "STALE"
     assert dashboard_data(service)["age_s"] >= 60

@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import tarfile
 import tempfile
 import venv
 from pathlib import Path
@@ -18,6 +19,23 @@ def main() -> None:
     wheels = sorted((ROOT / "dist").glob("coherent_verdi_control-*.whl"))
     if len(wheels) != 1:
         raise RuntimeError("build one unambiguous current wheel into dist/ first")
+    sources = sorted((ROOT / "dist").glob("coherent_verdi_control-*.tar.gz"))
+    if len(sources) != 1:
+        raise RuntimeError("build one unambiguous current sdist into dist/ first")
+    with tarfile.open(sources[0]) as archive:
+        members = {name.partition("/")[2] for name in archive.getnames()}
+    required = {
+        "scripts/validate.py",
+        "scripts/install_smoke.py",
+        "scripts/test_watchdog.cjs",
+        "examples/simulated_session.py",
+        "examples/async_integration.py",
+        "tests/test_validation_runner.py",
+        "src/coherent_verdi/py.typed",
+        "src/coherent_verdi/assets/watchdog.js",
+    }
+    if missing := required - members:
+        raise RuntimeError(f"source distribution lacks supporting files: {sorted(missing)}")
     scratch = ROOT / "tmp"
     scratch.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="install-smoke-", dir=scratch) as directory:
@@ -52,7 +70,8 @@ def main() -> None:
         result = json.loads(run([str(entrypoint), "query", "?SV"], cwd=directory).stdout)
         assert result["result"] == "SIMULATOR-0.1"
         print(
-            "PASS: clean wheel install, entrypoint, CLI, both examples, optional extras absent\n"
+            "PASS: sdist completeness, clean wheel install, entrypoint, CLI, both examples, "
+            "optional extras absent\n"
             f"Installed module: {check.stdout.strip()}"
         )
 

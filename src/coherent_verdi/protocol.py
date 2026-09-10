@@ -189,11 +189,21 @@ def parse_faults(payload: str) -> tuple[Fault, ...]:
         return ()
     if not re.fullmatch(r"[1-9][0-9]*(?:\s*&\s*[1-9][0-9]*)*", payload):
         raise ProtocolError(f"invalid fault list {payload!r}")
-    codes = tuple(int(part) for part in payload.split("&"))
+    codes = tuple(_parse_integer(part) for part in payload.split("&"))
     return tuple(
         Fault(c, FAULT_DESCRIPTIONS.get(c, "Unknown fault code"), c in FAULT_DESCRIPTIONS)
         for c in codes
     )
+
+
+def _parse_integer(payload: str) -> int:
+    try:
+        return int(payload)
+    except ValueError as exc:
+        # Python bounds decimal conversion independently of the configured wire
+        # response limit. Malformed/unrepresentable data must still invalidate
+        # the controller session through the normal ProtocolError path.
+        raise ProtocolError("integer reply exceeds the supported conversion limit") from exc
 
 
 def parse_value(query: Query, payload: str) -> QueryResult:
@@ -203,9 +213,12 @@ def parse_value(query: Query, payload: str) -> QueryResult:
     if spec.kind == "text":
         return payload
     if spec.kind == "enum":
-        if not re.fullmatch(r"[0-9]+", payload) or int(payload) not in spec.choices:
+        if not re.fullmatch(r"[0-9]+", payload):
             raise ProtocolError(f"{query.value}: undocumented value {payload!r}")
-        return int(payload)
+        integer_value = _parse_integer(payload)
+        if integer_value not in spec.choices:
+            raise ProtocolError(f"{query.value}: undocumented value {payload!r}")
+        return integer_value
     if not _NUMBER.fullmatch(payload):
         raise ProtocolError(f"{query.value}: expected decimal {spec.unit}, received {payload!r}")
     value = float(payload)

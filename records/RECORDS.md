@@ -214,3 +214,98 @@ Raw `validation.log` and `junit.xml` are generated locally and excluded from Git
 Bearing: Supersedes E008/E009 acceptance for changed components after E010 review.
 E007 browser evidence remains applicable because GUI assets are unchanged.
 Software criteria PASS; physical behavior/calibration remain UNTESTED.
+
+
+## E012
+
+Date: 2026-09-10T00:49:00+00:00.
+Kind / scope: Published baseline CI reconciliation; TEST-007 / REQ-007.
+Candidate: Git 48c0cbd46f510d5ba3843f773c6aca3be8096479 (E011 source manifest).
+Method: Read GitHub Actions run and all six job conclusions through the API.
+Result: All Windows/Linux Python 3.11, 3.12 and 3.13 jobs completed successfully,
+including lint, formatting, typing, pytest, build, examples, isolated installation
+and Node regression. PASS for the published baseline, not subsequent edits.
+Artifact: [CI run 34422531888](https://github.com/cct1123/coherent-verdi-control/actions/runs/34422531888).
+Bearing: Replaces the prior "CI not run" uncertainty. Latest user authorization
+explicitly reopens independent software work; hardware access remains prohibited.
+
+## E013
+
+Date: 2026-09-10T00:52:00+00:00.
+Kind / scope: Independent interface audit and diagnostic regressions; TEST-002..009.
+Findings before fixes: Oversized integer replies escaped as ValueError and left
+controllers usable. GUI reads waited on the controller lock; empty exceptions
+produced LIVE despite missing status; a wall-clock rewind produced negative age;
+a static source badge survived replacement. Failed/interrupted close could not
+retry cleanup, failed replacement left the old controller usable, and interrupted
+open leaked cleanup. CLI watch buffered output and returned success after failed
+samples. The sdist included validation tests but omitted their scripts and examples.
+The main validation command did not execute the JavaScript watchdog test.
+
+Method/results: Runtime probes reproduced the numeric and GUI failures. Five new
+resource lifecycle cases failed before the fix, then 50 related lifecycle/API/
+transport/hardening cases passed. Four numeric conversion regressions plus existing
+protocol/API tests: 75 PASS. Nine new client edge cases plus existing GUI/CLI/API
+tests: 44 PASS. Cleanup/validation-runner suite: 9 PASS. The latter injects a JS
+failure to prove the integrated validator cannot claim PASS. Ruff and typing PASS
+in focused checks. Archive inspection confirmed all five scripts/examples missing;
+MANIFEST.in and archive completeness checks added, requiring final rebuild.
+
+Changes: Convert integer conversion errors to ProtocolError; typed cache snapshots
+with monotonic age and per-sample source; explicit unavailable/error presentation;
+flushed watch output and failed exit; retryable cleanup with I/O disabled; preserve
+primary open exception; package supporting source files; include Node in validation.
+Manual review reconfirmed all 42 queries, operational command forms and fault codes.
+No source-supported simulator contradiction justified changing documented fixture
+policies or inventing physical timing. Final integrated acceptance follows below.
+
+## D004
+
+Date: 2026-09-10T00:52:00+00:00.
+Decision: GUI consumes only immutable telemetry snapshots, never controller metadata
+that can contend with acquisition. Status captures source kind under the same lock
+as its sample; monotonic age is measured from the polling attempt's start. Failed
+samples have no current source, and changing simulated/physical source clears plotted
+history while preserving sequence numbers. UTC remains the recording/display clock.
+Basis: E013 lock contention, false freshness and source mislabeling. REQ-003/005/006.
+Consequence: Source and freshness describe the displayed sample, not a replacement
+connection or wall-clock assumption. No GUI code acquires or polls a serial owner.
+Cleanup failures disable I/O but allow explicit cleanup retry; no commands are replayed.
+
+
+## E014
+
+Date: 2026-09-10T00:55:00+00:00.
+Kind / scope: Current browser rendering and server-loss regression; TEST-006/008.
+Method: Start `python -m coherent_verdi --demo gui --port 8050` on loopback,
+inspect the actual in-app browser, capture full-page screenshots, stop the server,
+then inspect the warning after its 10-second stale interval.
+Result: PASS. SIMULATOR, LIVE, 1.000 W measured, 1.0000 W setpoint, ON, OPEN,
+thermal/status fields and plot rendered. Live browser console warnings/errors: none.
+After server stop: SERVER UPDATE LOST, all displayed values labeled stale, LIVE
+indicator hidden, tiles and thermal/status fields dimmed. Updated the
+[live screenshot](../docs/images/simulator-dashboard.png) and
+[offline screenshot](../docs/images/simulator-server-offline.png).
+The fake server and temporary browser tab are closed. No physical access occurred.
+Bearing: Supersedes E007 for current GUI source. E013 additionally tests empty
+errors, monotonic freshness, source changes and cache responsiveness during blocked I/O.
+
+
+## E015
+
+Date: 2026-09-10T00:55:27.405946+00:00
+Kind / scope: Final continued-engineering acceptance; TEST-001..009 / REQ-001..009.
+Candidate: `a731d6a9db7bc9db8e642c67bbba3d0f18d8209b2458caea3a17c85c1cca94e4`.
+Method: `python scripts/validate.py` with VERDI_NODE set to bundled Node 24.19.0;
+Windows 11/Python 3.12.14, isolated temp install, entirely hardware-free.
+Result: 135 pytest tests PASS (2.09 s), 94% statement coverage; no skips/warnings.
+Ruff lint/format PASS, strict mypy PASS for 12 modules, dependency consistency PASS,
+wheel/sdist build PASS, source archive completeness PASS, CLI and both examples
+PASS, isolated no-extras wheel install/import/typing marker/assets/entrypoint/examples
+PASS, integrated Node watchdog PASS. Manual/framework/input hashes PASS and source
+unchanged throughout validation. Raw logs/XML are local generated artifacts.
+Artifacts: [manifest](validation.json), [versions](requirements-validated.txt);
+current browser evidence E014. E013 regressions and package omission are resolved.
+Bearing: Supersedes E011 for changed software. All hardware-independent requirements
+have current PASS evidence; physical protocol/calibration remain UNTESTED. Remote
+matrix results from E012 apply only to the published baseline until a new run finishes.

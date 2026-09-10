@@ -73,11 +73,27 @@ age; no last-good value is represented as fresh after failure. History size is
 bounded. The library logs telemetry errors to `coherent_verdi.telemetry` without
 configuring the application's logging handlers.
 
+`snapshot()` returns an immutable `TelemetrySnapshot` of the cache, configured
+model, source kind and sample age without acquiring a controller transaction
+lock. Freshness uses a monotonic clock measured from the polling attempt's start;
+UTC timestamps are for display and recording. Clock corrections cannot make old
+data appear fresh. A failed sample has an unavailable source, even if its
+exception message is empty. `Status.simulated` identifies each successful
+sample's source. A successful switch between simulated and physical sources
+clears retained history so one plot cannot silently mix the two; sequence numbers
+continue increasing. No-data startup remains explicitly unavailable.
+
 `stop()` waits up to 30 s by default. If an injected/custom transport exceeds
 that bound it raises `TimeoutError` instead of claiming the thread stopped.
 The serial adapter's per-transaction default is 1 s; longer caller-configured
 timeouts require an appropriate stop budget (14 queries per status sample).
 All custom transports must provide bounded I/O and exclusive request/reply ownership.
+
+If controller or serial transport cleanup fails, I/O remains disabled and an
+explicit later `close()` can retry resource release. A failed transport
+replacement also disables I/O until cleanup and replacement succeed. Interrupted
+serial opening cleans up the partial handle while preserving the original
+exception. Resource cleanup does not perform device commands.
 
 For async applications, see [async_integration.py](../examples/async_integration.py).
 `asyncio.to_thread` prevents blocking the event loop. Canceling the awaiting task
@@ -87,7 +103,9 @@ closing the controller. Never interpret cancellation as a physical stop.
 ## Dash deployment
 
 `create_app(telemetry)` constructs a read-only monitoring app. Its callbacks only
-read cached telemetry and cannot control the laser. The owner starts/stops the
+read telemetry snapshots and cannot control the laser or wait for serial I/O.
+The source badge follows the displayed sample and reports unavailable on errors.
+The owner starts/stops the
 service. Multiple browser tabs share the same cache and cause no new device queries.
 
 The CLI serves localhost with debug/reloader disabled. For a larger deployment,

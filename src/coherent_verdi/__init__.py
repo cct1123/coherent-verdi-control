@@ -20,6 +20,7 @@ from .models import (
     ServoState,
     Status,
     TelemetrySample,
+    TelemetrySnapshot,
 )
 from .protocol import Query
 from .simulator import SimulatedTransport
@@ -43,6 +44,7 @@ __all__ = [
     "SimulatedTransport",
     "Status",
     "TelemetrySample",
+    "TelemetrySnapshot",
     "TelemetryService",
     "Transport",
     "TransportError",

@@ -84,7 +84,9 @@ verdi --demo watch --count 5 --interval 0.1
 
 `--demo` explicitly prepares a 1 W simulated ON/open-shutter fixture. It never
 opens hardware. Without it, the fake starts in STANDBY with key OFF and shutter
-closed. `watch` produces JSON Lines; errors use JSON on stderr and exit code 2.
+closed. `watch` flushes each JSON Lines sample immediately for pipeline consumers
+and exits with code 2 if any sample failed. Command errors use JSON on stderr and
+exit code 2; failed watch samples remain visible in the JSON Lines output.
 The Python module form is also available: `python -m coherent_verdi status`.
 Use the Python API for a persistent multi-command session.
 
@@ -97,7 +99,9 @@ verdi --demo gui
 Open [localhost:8050](http://127.0.0.1:8050/). Stop with Ctrl+C. The GUI is a
 read-only client of the library's single telemetry service. It has no protocol
 implementation, serial handle, device-write callbacks or independent polling
-worker. Multiple tabs read the same bounded history. Failed samples create chart
+worker. Its immutable cache snapshots remain responsive during slow serial reads,
+track source identity per sample, and use monotonic time for freshness. Multiple
+tabs read the same bounded history. Failed samples create chart
 gaps, and current-state fields become UNKNOWN; old samples are marked STALE.
 A browser watchdog also warns after 10 seconds without server updates, so a
 disconnected browser does not retain an apparently LIVE monitoring display.
@@ -146,8 +150,10 @@ python examples/async_integration.py
 ```
 
 The validation script runs pytest with coverage, lint, formatting, strict typing,
-package builds, examples, dependency consistency, source/input checks and an
-isolated wheel-install smoke test. Results and source hashes go to
+package builds, examples, dependency consistency, source/input checks, source
+archive completeness, an isolated wheel-install smoke test and the JavaScript
+watchdog regression. Node.js 22 or later must be on PATH; `VERDI_NODE` may name an
+explicit Node executable. Results and source hashes go to
 `records/validation.json`, `records/validation.log` and `records/junit.xml`.
 Only the current JSON manifest is versioned; logs/XML are generated locally and
 CI publishes its test results as artifacts.
@@ -155,8 +161,8 @@ Tests prohibit real serial opens and discovery; adapter tests inject byte stream
 The CI workflow declares Windows/Linux and Python 3.11–3.13; only environments
 actually run have PASS evidence. Current tested versions are in
 [requirements-validated.txt](records/requirements-validated.txt).
-The browser watchdog also has a virtual-clock regression check:
-`node scripts/test_watchdog.cjs` (Node.js 22 or later; no npm packages required).
+Run `node scripts/test_watchdog.cjs` to check only the browser watchdog with a
+virtual clock (no npm packages required).
 
 ## Troubleshooting and limits
 

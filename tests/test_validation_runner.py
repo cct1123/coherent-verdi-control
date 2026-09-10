@@ -38,3 +38,27 @@ def test_interrupted_validation_does_not_leave_stale_pass(tmp_path, monkeypatch,
     report = json.loads(report_path.read_text())
     assert report["status"] == "FAIL"
     assert report["physical_validation"] == "UNTESTED"
+
+
+def test_watchdog_failure_prevents_integrated_pass(tmp_path, monkeypatch):
+    path = Path(__file__).resolve().parents[1] / "scripts" / "validate.py"
+    spec = importlib.util.spec_from_file_location("validation_runner", path)
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    records = tmp_path / "records"
+    monkeypatch.setattr(runner, "RECORDS", records)
+    monkeypatch.setattr(runner, "fingerprint", lambda: {})
+    calls = []
+
+    def completed(command, **kwargs):
+        calls.append(command)
+        code = 1 if command[-1] == "scripts/test_watchdog.cjs" else 0
+        return subprocess.CompletedProcess(command, code, "injected watchdog result")
+
+    monkeypatch.setattr(runner.subprocess, "run", completed)
+    assert runner.main() == 1
+    assert any(command[-1] == "scripts/test_watchdog.cjs" for command in calls)
+    report = json.loads((records / "validation.json").read_text())
+    assert report["status"] == "FAIL"
+    assert report["physical_validation"] == "UNTESTED"
+    assert report["results"][-1]["exit_code"] == 1

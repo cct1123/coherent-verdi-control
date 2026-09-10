@@ -2,12 +2,14 @@
 
 import logging
 from collections import deque
+from collections.abc import Callable
 from datetime import UTC, datetime
 from threading import Event, Lock, Thread
+from time import monotonic
 from types import TracebackType
 
 from .controller import VerdiController
-from .models import TelemetrySample, finite_range
+from .models import TelemetrySample, TelemetrySnapshot, finite_range
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +22,21 @@ class TelemetryService:
     """
 
     def __init__(
-        self, controller: VerdiController, *, interval_s: float = 1.0, history_size: int = 600
+        self,
+        controller: VerdiController,
+        *,
+        interval_s: float = 1.0,
+        history_size: int = 600,
+        clock: Callable[[], float] = monotonic,
     ) -> None:
         finite_range(interval_s, 0.001, 86400, "interval_s")
         if type(history_size) is not int or not 1 <= history_size <= 100000:
             raise ValueError("history_size must be an integer in [1, 100000]")
         self.controller = controller
+        self._model = controller.config.model
+        self._clock = clock
+        self._latest_started: float | None = None
+        self._last_source: bool | None = None
         self.interval_s = interval_s
         self._history: deque[TelemetrySample] = deque(maxlen=history_size)
         self._history_lock = Lock()
@@ -40,6 +51,20 @@ class TelemetryService:
         with self._history_lock:
             return tuple(self._history)
 
+    def snapshot(self) -> TelemetrySnapshot:
+        """Read only the cache, even while the controller is blocked in a transaction."""
+        with self._history_lock:
+            samples = tuple(self._history)
+            status = samples[-1].status if samples else None
+            age = (
+                max(0.0, self._clock() - self._latest_started)
+                if status is not None and self._latest_started is not None
+                else None
+            )
+            return TelemetrySnapshot(
+                self._model, samples, status.simulated if status else None, age, self.interval_s
+            )
+
     @property
     def running(self) -> bool:
         with self._lifecycle_lock:
@@ -48,6 +73,7 @@ class TelemetryService:
     def poll_once(self) -> TelemetrySample:
         """Explicit synchronous sample for orchestration/tests, serialized with worker polls."""
         with self._poll_lock:
+            started = self._clock()
             at = datetime.now(UTC)
             try:
                 status = self.controller.status()
@@ -59,6 +85,13 @@ class TelemetryService:
                 error, error_type = str(exc), type(exc).__name__
                 logger.warning("telemetry sample failed (%s): %s", error_type, error)
             with self._history_lock:
+                # One plotted history must not silently mix simulated and physical
+                # measurements after an explicit transport replacement.
+                if status is not None:
+                    if self._last_source is not None and status.simulated != self._last_source:
+                        self._history.clear()
+                    self._last_source = status.simulated
+                self._latest_started = started
                 self._sequence += 1
                 sample = TelemetrySample(self._sequence, at, status, error, error_type)
                 self._history.append(sample)

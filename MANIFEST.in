@@ -1,0 +1,2 @@
+recursive-include scripts *.py *.cjs
+recursive-include examples *.py

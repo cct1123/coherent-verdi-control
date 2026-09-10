@@ -120,6 +120,7 @@ class VerdiController:
                 etalon,
                 vanadate,
                 faults,
+                simulated=self._transport.is_simulated,
             )
 
     def diagnostics(self) -> Diagnostics:
@@ -186,6 +187,7 @@ class VerdiController:
                 raise ConnectionUnusable("cannot replace transport on a closed controller")
             if transport is self._transport:
                 raise ValueError("replacement must be a different transport")
+            self._failed = True
             self._transport.close()
             self._transport = transport
             self._failed = False
@@ -194,8 +196,11 @@ class VerdiController:
         """Release communication resources; does not change laser/shutter/heater state."""
         with self._lock:
             if not self._closed:
-                self._closed = True
+                # Disable I/O immediately; mark cleanup complete only on success.
+                # A failed close can then be retried without reviving the session.
+                self._failed = True
                 self._transport.close()
+                self._closed = True
 
     def __enter__(self) -> "VerdiController":
         return self

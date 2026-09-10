@@ -69,11 +69,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if not 1 <= args.count <= 100000:
                     raise ValueError("count must be in [1, 100000]")
                 service = TelemetryService(controller, interval_s=args.interval)
+                failed = False
                 for i in range(args.count):
-                    print(to_json({"simulated": True, "sample": service.poll_once()}, indent=None))
+                    sample = service.poll_once()
+                    failed |= sample.status is None
+                    print(to_json({"simulated": True, "sample": sample}, indent=None), flush=True)
                     if i + 1 < args.count:
                         sleep(service.interval_s)
-                return 0
+                return 2 if failed else 0
             else:
                 if not 1 <= args.port <= 65535:
                     raise ValueError("HTTP port must be in [1, 65535]")

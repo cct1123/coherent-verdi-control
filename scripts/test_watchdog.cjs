@@ -38,4 +38,4 @@ nodes["server-heartbeat"].textContent = "1";
 timer();
 assert.equal(disconnected, false);
 assert.equal(nodes["connection-warning"].textContent, "");
-console.log("PASS: browser watchdog startup, live receipt, expiry and recovery (virtual clock)");
+console.log(`PASS: browser watchdog startup, live receipt, expiry and recovery (virtual clock; Node ${process.version})`);

@@ -84,11 +84,12 @@ class SerialTransport:
     def close(self) -> None:
         with self._lock:
             if not self._closed:
-                self._closed = True
+                self._failed = True
                 try:
                     self._stream.close()
                 except OSError as exc:
                     raise TransportError(f"serial close failed: {exc}") from exc
+                self._closed = True
 
 
 def open_serial(config: SerialConfig, *, hardware_allowed: bool = False) -> SerialTransport:
@@ -118,7 +119,12 @@ def open_serial(config: SerialConfig, *, hardware_allowed: bool = False) -> Seri
         stream.rts = False
         stream.port = config.port
         stream.open()
-    except (OSError, ValueError) as exc:
-        stream.close()
-        raise TransportError(f"could not open explicit serial connection: {exc}") from exc
+    except BaseException as exc:
+        try:
+            stream.close()
+        except BaseException as cleanup_error:
+            exc.add_note(f"serial cleanup also failed: {cleanup_error}")
+        if isinstance(exc, (OSError, ValueError)):
+            raise TransportError(f"could not open explicit serial connection: {exc}") from exc
+        raise
     return SerialTransport(stream, config)

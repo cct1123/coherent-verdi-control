@@ -2,76 +2,75 @@
 
 ## Status
 
-**AWAITING_HUMAN_REVIEW** — 2026-09-09, America/Chicago.
-Hardware-free software and simulator validation: **PASS**.
-Physical Verdi behavior and calibration: **UNTESTED**. No physical access authorized.
+**AWAITING_HUMAN_REVIEW** — software/simulator scope complete, 2026-09-09 America/Chicago.
+All hardware-independent requirements have current **PASS** evidence (E015).
+No independent software task remains from this audit. This is not an
+"awaiting hardware" blocker. Physical behavior and calibration remain **UNTESTED**;
+no physical access is authorized.
 
-## Objective and current system
+## Objective and current architecture
 
 [PROJECT.md](PROJECT.md): manual-grounded Verdi V2/V5/V6 controller, diagnostics,
 simulator, telemetry, CLI and optional Dash client for research software stacks.
-The typed controller owns serialized I/O; the GUI reads a shared telemetry cache.
-See [README](README.md), [integration](docs/INTEGRATION.md), and
-[candidate report](outputs/REPORT.md).
+One typed controller owns serialized transactions. Telemetry publishes bounded,
+immutable snapshots with source provenance and monotonic age; GUI reads only that
+cache. The internal shutter is a safety shutter, never an experimental modulator.
+[README](README.md), [integration](docs/INTEGRATION.md), [report](outputs/REPORT.md).
 
 ## Requirements status
 
-Criteria are agent-derived except explicit REQ-001/009. PASS applies to the stated
-software/simulation scope; it does not establish physical firmware conformance.
+Criteria are agent-derived except explicit REQ-001/009. PASS applies to software
+and simulation, not physical firmware conformance or calibration.
 
 | ID / source | Criterion | Method | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| REQ-001 / explicit | Pinned framework, preserved useful inputs | TEST-001 hashes | PASS | [E011](records/RECORDS.md#e011) |
-| REQ-002 / derived | Manual-linked protocol, framing and errors | TEST-002 golden wire tests | PASS | [E002](records/RECORDS.md#e002), [E011](records/RECORDS.md#e011) |
-| REQ-003 / derived | Typed API, policies, serialized I/O, cleanup | TEST-003 concurrency/deadline/interruption | PASS | [E010](records/RECORDS.md#e010), [E011](records/RECORDS.md#e011) |
-| REQ-004 / derived | Simulator and injected failures | TEST-004 virtual clock/faults/lost replies | PASS | [E011](records/RECORDS.md#e011) |
-| REQ-005 / derived | Bounded telemetry and diagnostics | TEST-005 lifecycle/errors/1000 samples | PASS | [E011](records/RECORDS.md#e011) |
-| REQ-006 / derived | CLI and Dash consume library/cache | TEST-006 routes, callbacks, browser outage | PASS | [E007](records/RECORDS.md#e007), [E011](records/RECORDS.md#e011) |
-| REQ-007 / derived | Packaging, typing, lint, integration | TEST-007 build/install/examples/checkpoint | PASS | [E011](records/RECORDS.md#e011) |
-| REQ-008 / derived | Operating docs and review procedure | TEST-008 review, links, screenshots | PASS | [E009](records/RECORDS.md#e009), [E010](records/RECORDS.md#e010) |
-| REQ-009 / explicit | Hardware-free development | TEST-009 fake serial guards and review | PASS | [E011](records/RECORDS.md#e011) |
-| REQ-010 / future derived | Actual protocol/behavior/calibration | TEST-010 later physical validation | UNTESTED | [Procedure](HARDWARE_VALIDATION.md); outside phase |
+| REQ-001 / explicit | Pinned framework and preserved inputs | TEST-001 hashes | PASS | [E015](records/RECORDS.md#e015) |
+| REQ-002 / derived | Documented protocol/framing/errors | TEST-002 golden wire and malformed numeric cases | PASS | [E013](records/RECORDS.md#e013), [E015](records/RECORDS.md#e015) |
+| REQ-003 / derived | Typed API/models, serialized I/O, cleanup | TEST-003 concurrency/deadline/interruption/recovery | PASS | [E013](records/RECORDS.md#e013), [E015](records/RECORDS.md#e015) |
+| REQ-004 / derived | Simulator and faults/warmup/transitions | TEST-004 all models, virtual clock, lost acknowledgments | PASS | [E015](records/RECORDS.md#e015) |
+| REQ-005 / derived | Bounded telemetry, errors, freshness, source | TEST-005 lifecycle, 1000 samples, clock/source changes | PASS | [E015](records/RECORDS.md#e015) |
+| REQ-006 / derived | Cache-only Dash and streaming CLI | TEST-006 blocked acquisition, callbacks, real browser, JS | PASS | [E014](records/RECORDS.md#e014), [E015](records/RECORDS.md#e015) |
+| REQ-007 / derived | Packaging, examples and software quality | TEST-007 lint/type/build/archive/install/runner | PASS | [E015](records/RECORDS.md#e015) |
+| REQ-008 / derived | Operating docs and validation procedure | TEST-008 source review, links, current screenshots | PASS | [E013](records/RECORDS.md#e013), [E014](records/RECORDS.md#e014) |
+| REQ-009 / explicit | Entire phase hardware-free | TEST-009 patched constructors/discovery and fake streams | PASS | [E015](records/RECORDS.md#e015) |
+| REQ-010 / future derived | Physical behavior/calibration | TEST-010 later operator-approved procedure | UNTESTED | [Procedure](HARDWARE_VALIDATION.md); outside phase |
 
 ## Current configuration and evidence
 
-Version 0.1.0; candidate manifest SHA-256:
-`50d96d36801e5d2acf905a4ce53664ef6e74761c315d80186236f7ca12437b82`.
-[E011](records/RECORDS.md#e011): 116 tests, 94% statement coverage, lint/format,
-strict typing, dependencies, builds, CLI/examples, isolated wheel installation and
-Node watchdog regression PASS. Windows/Python 3.12.14; Node 24.19.0.
-[validation.json](records/validation.json) records source/build hashes and packages;
-[requirements-validated.txt](records/requirements-validated.txt) records versions.
+Version 0.1.0; candidate source-manifest SHA-256:
+`a731d6a9db7bc9db8e642c67bbba3d0f18d8209b2458caea3a17c85c1cca94e4`.
+E015: **135 tests**, **94% statement coverage**, lint/format, strict typing,
+dependencies, builds, source archive completeness, CLI/examples, isolated wheel
+installation and integrated Node watchdog regression PASS. Windows/Python 3.12.14;
+Node 24.19.0. [validation.json](records/validation.json) records current hashes,
+results and environment; [requirements-validated.txt](records/requirements-validated.txt)
+records exact Python dependencies. Current browser rendering/server-loss PASS (E014).
 
-Framework `724a7f772069d3357ea66dbc4742d25bd874a33e` and original input hashes
-verified. The local prompt log and generated logs are ignored; durable evidence,
-manual and current manifest are versioned. No upstream modifications.
+Published baseline 48c0cbd passed all six Windows/Linux Python 3.11-3.13 CI jobs
+([E012](records/RECORDS.md#e012)). That run is baseline evidence; current changes
+have the local integrated evidence above until their own remote results arrive.
+Original manual and framework hashes verified. Upstream remains untouched.
 
-## Gaps and limits
+## Limits and next action
 
-No remaining actionable finding from this software review. Physical no-fault
-framing, echo/prompt timing, electrical compatibility, firmware latency,
-closed-shutter reporting, operating limits and calibration remain unverified.
-See the [uncertainty register](docs/PROTOCOL.md#uncertainty-register).
-No automatic retry/resynchronization or service/calibration API. GUI is read-only.
-Windows/Linux Python 3.11-3.13 CI is configured; local evidence covers the host above.
+No remaining actionable software finding from the audit. Real no-fault formatting,
+echo timing, electrical compatibility, firmware latency, shutter-closed reporting,
+operating limits and calibration remain unverified. The
+[uncertainty register](docs/PROTOCOL.md#uncertainty-register) states these separately
+from simulator policies. No automatic replay, service/calibration API or GUI writes.
 
-## Authorization, priority and next action
-
-The user explicitly authorized "review, prune. commit, push." Review and pruning
-are complete; publish this candidate to the target `origin/main` without force.
-Git history/remote status establish publication; no upstream template write is
-permitted. After publication, remain at this hardware review gate. On resume read
-PROJECT.md, AGENTS.md and STATE.md. New software requirements reopen development
-and invalidate affected evidence. No real port has been enumerated or opened.
+The user's latest instruction authorizes completing all independent software work;
+the earlier commit/push authorization applies to this same target repository.
+Preserve this candidate and evidence in Git, verify its CI results, then retain the
+hardware-free boundary. Read PROJECT.md, AGENTS.md and STATE.md on resume; new
+software requirements or failures reopen development and invalidate affected evidence.
+Temporary simulator server/browser are closed. No port was enumerated or opened.
 
 ## Blockers and human action
 
-None for this software phase. No hardware approval exists. For a later hardware
-phase, review the candidate and explicitly approve Stage 1 read-only integration
-under [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md), naming model, operator-confirmed
-connection/baud and site conditions. The prepared first interaction is passive
-open followed by one `?SV` query; record approval and framing evidence before
-proceeding. No write/actuation authorization is implied.
-
-The candidate is software-complete pending hardware review, not a physically
-validated release. Durable files retain progress; they do not schedule execution.
+None for this phase; no hardware permission is requested to finish software work.
+For a separately requested later phase, explicit candidate approval must identify
+Stage 1 read-only scope, model, operator-confirmed connection/baud and site conditions
+under [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md). Prepared first interaction:
+passive open followed by one `?SV` query. Record scope and evidence before proceeding;
+no device writes or actuation are implied. This is not a physically validated release.

@@ -19,6 +19,7 @@ def fingerprint() -> dict[str, str]:
         ROOT / name
         for name in (
             "pyproject.toml",
+            "MANIFEST.in",
             "README.md",
             "PROJECT.md",
             "AGENTS.md",
@@ -70,14 +71,19 @@ def validate() -> int:
         ("TEST-007 async", ["examples/async_integration.py"]),
         ("TEST-007 install", ["scripts/install_smoke.py"]),
     ]
+    commands = [(test_id, [sys.executable, *args]) for test_id, args in commands]
+    commands.append(
+        ("TEST-006 watchdog", [environment.get("VERDI_NODE", "node"), "scripts/test_watchdog.cjs"])
+    )
     before = fingerprint()
     results = []
     with (RECORDS / "validation.log").open("w", encoding="utf-8") as log:
-        for test_id, args in commands:
-            label = "python " + " ".join(args)
+        for test_id, command in commands:
+            runtime = "python" if command[0] == sys.executable else "node"
+            label = runtime + " " + " ".join(command[1:])
             print(f"Running {label}", flush=True)
             completed = subprocess.run(
-                [sys.executable, *args],
+                command,
                 cwd=ROOT,
                 env=environment,
                 text=True,
