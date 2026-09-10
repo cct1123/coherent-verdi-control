@@ -14,3 +14,23 @@ def prohibit_physical_hardware(monkeypatch):
     monkeypatch.setattr(serial, "serial_for_url", prohibited)
     monkeypatch.setattr(serial.tools.list_ports, "comports", prohibited)
     monkeypatch.setattr(serial.tools.list_ports, "grep", prohibited)
+
+
+@pytest.fixture
+def callback_payload():
+    """Build the real Dash callback request shared by client integration tests."""
+
+    def build(app):
+        key = next(iter(app.callback_map))
+        return {
+            "output": key,
+            "outputs": [
+                {"id": output.component_id, "property": output.component_property}
+                for output in app.callback_map[key]["output"]
+            ],
+            "inputs": [{"id": "refresh", "property": "n_intervals", "value": 1}],
+            "changedPropIds": ["refresh.n_intervals"],
+            "state": [],
+        }
+
+    return build

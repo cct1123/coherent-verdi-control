@@ -107,19 +107,7 @@ def test_stop_timeout_does_not_claim_worker_stopped(monkeypatch):
         service.stop()
 
 
-def callback_payload(app):
-    key = next(iter(app.callback_map))
-    outputs = app.callback_map[key]["output"]
-    return {
-        "output": key,
-        "outputs": [{"id": o.component_id, "property": o.component_property} for o in outputs],
-        "inputs": [{"id": "refresh", "property": "n_intervals", "value": 1}],
-        "changedPropIds": ["refresh.n_intervals"],
-        "state": [],
-    }
-
-
-def test_dash_routes_callbacks_assets_and_no_independent_polling():
+def test_dash_routes_callbacks_assets_and_no_independent_polling(callback_payload):
     sim, _, service = setup_service()
     service.poll_once()
     count = len(sim.requests)

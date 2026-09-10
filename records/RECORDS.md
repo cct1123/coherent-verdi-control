@@ -325,3 +325,34 @@ Artifact: [CI run 34423561052](https://github.com/cct1123/coherent-verdi-control
 Bearing: Supersedes E012 for current software; closes remote matrix uncertainty.
 All software/simulator requirements now have current local and CI PASS evidence.
 Physical protocol and calibration remain UNTESTED and outside authorized scope.
+
+
+## E017
+
+Date: 2026-09-09 (America/Chicago), publication review after E016.
+Kind / scope: Review and pruning; TEST-003/005/006/007/008.
+Authorization: User requested "review, prune. commit, push."
+Method: Inspect the latest controller/transport cleanup, telemetry/cache/source
+boundaries, CLI, validation runner, installed-archive checks and their regressions.
+Result: No new actionable runtime defect. Removed duplicated Dash callback request
+builders and validator setup in favor of shared pytest fixtures. Guarded joining
+an unstarted test thread so setup failures preserve their original diagnostic.
+Condensed repeated checkpoint/report prose; retained original inputs, all assertions,
+acceptance criteria, physical limitations and durable historical records.
+Runtime package, assets, examples, build configuration and hardware guards remain
+unchanged. Integrated acceptance of the test cleanup is recorded next.
+
+
+## E018
+
+Date: 2026-09-10T01:05:40.459186+00:00
+Kind / scope: Post-pruning integrated acceptance; TEST-001..009 / REQ-001..009.
+Candidate: `7b3c7d8cf51378f091fa5adf459c5d3e35df2a223286de01bc04636028199c81`.
+Method: `python scripts/validate.py`, Windows/Python 3.12.14, Node 24.19.0, no hardware.
+Result: 135 tests PASS (2.03 s), 94% coverage, no skips/warnings. Lint/format,
+strict mypy (12 modules), dependencies, wheel/sdist/archive, CLI/examples, isolated
+no-extras wheel installation and Node watchdog PASS. Input/framework hashes PASS;
+source unchanged during validation. [Manifest](validation.json) records current hashes.
+Bearing: Supersedes E015 for the pruned test suite; runtime code/assets remain
+unchanged from E016's passing CI candidate. E014 browser evidence remains applicable.
+No new runtime finding. Physical validation/calibration remain UNTESTED.

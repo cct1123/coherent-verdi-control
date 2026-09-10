@@ -19,21 +19,7 @@ from coherent_verdi.cli import main
 from coherent_verdi.gui import create_app, dashboard_data
 
 
-def callback_payload(app):
-    key = next(iter(app.callback_map))
-    return {
-        "output": key,
-        "outputs": [
-            {"id": output.component_id, "property": output.component_property}
-            for output in app.callback_map[key]["output"]
-        ],
-        "inputs": [{"id": "refresh", "property": "n_intervals", "value": 1}],
-        "changedPropIds": ["refresh.n_intervals"],
-        "state": [],
-    }
-
-
-def test_blank_exception_is_error_with_unavailable_current_values(monkeypatch):
+def test_blank_exception_is_error_with_unavailable_current_values(monkeypatch, callback_payload):
     with VerdiController(SimulatedTransport(), ControllerConfig(Model.V5)) as controller:
         service = TelemetryService(controller)
         service.poll_once()
@@ -92,7 +78,7 @@ def test_freshness_includes_slow_sampling(monkeypatch):
         assert dashboard_data(service)["health"] == "STALE"
 
 
-def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch):
+def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch, callback_payload):
     sim = SimulatedTransport()
     with VerdiController(sim, ControllerConfig(Model.V5)) as controller:
         service = TelemetryService(controller)
@@ -127,11 +113,12 @@ def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch):
             assert responses[0].json["response"]["source"]["children"] == "SIMULATOR"
         finally:
             release.set()
-            worker.join(5)
+            if worker.ident is not None:
+                worker.join(5)
             service.stop()
 
 
-def test_source_badge_tracks_sample_and_history_never_mixes_source_kinds():
+def test_source_badge_tracks_sample_and_history_never_mixes_source_kinds(callback_payload):
     # This transport remains entirely in memory; only its source metadata differs.
     class NonSimulatedFake(SimulatedTransport):
         is_simulated = False
