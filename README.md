@@ -1,0 +1,194 @@
+# Coherent Verdi Control
+
+A typed Python controller for Coherent Verdi V-2/V-5/V-6 lasers, with an in-memory
+simulator, diagnostics, bounded telemetry, CLI and optional Plotly Dash monitor.
+The RS-232 interface follows the supplied Coherent operator manual, Rev IB.
+
+**Hardware-free candidate.** Software and simulator results are recorded in
+[STATE.md](STATE.md) and [the engineering report](outputs/REPORT.md). Physical
+Verdi behavior, wiring, latency and calibration remain **UNTESTED**. No serial
+ports were enumerated or opened during development.
+
+## Install
+
+Python **3.11 or later**. From this checkout:
+
+```sh
+python -m venv .venv
+# Windows PowerShell:
+.\.venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -e .
+```
+
+The core API and simulator have no third-party runtime dependencies. Install
+optional capabilities only when needed:
+
+```sh
+python -m pip install -e ".[gui]"            # Dash + Plotly
+python -m pip install -e ".[dev,serial,gui]" # Development and adapter testing
+```
+
+Installing the serial extra does not access hardware. The physical adapter
+requires explicit opt-in and later candidate approval; this phase's CLI exposes
+no physical connection option. A built wheel can be installed with
+`python -m pip install dist/coherent_verdi_control-0.1.0-py3-none-any.whl`.
+
+## Quick start: Python
+
+```python
+from coherent_verdi import ControllerConfig, Model, SimulatedTransport, VerdiController
+
+with VerdiController(SimulatedTransport(Model.V5), ControllerConfig(Model.V5)) as laser:
+    status = laser.status()
+    print(status.model, status.laser_state.name, status.power_w, "W")
+    print(laser.diagnostics().software_version)  # SIMULATOR-0.1
+```
+
+Construction, close, status polling and transport replacement send no state-changing
+commands. Writes are disabled by default. A complete simulated control session:
+
+```python
+from coherent_verdi import ControllerConfig, Model, SimulatedTransport, VerdiController
+
+sim = SimulatedTransport(Model.V2)
+sim.set_key(True)  # Local fixture only: the real keyswitch has no remote command.
+with VerdiController(
+    sim, ControllerConfig(Model.V2, allow_writes=True, power_limit_w=0.5)
+) as laser:
+    laser.set_power_w(0.25)
+    laser.enable_laser()  # Explicit action; LASER ON also clears fault history.
+    laser.set_shutter(open=True)
+    print(laser.power_w(), "W")
+    laser.set_shutter(open=False)
+    laser.standby()
+```
+
+The Verdi head shutter is a **safety shutter**, not an experiment modulation
+mechanism. Closing a Python context only releases communication; it does not
+change laser, shutter or heater state. See [integration and lifecycle details](docs/INTEGRATION.md).
+
+## CLI
+
+Every CLI invocation uses a fresh in-memory simulator, emits `simulated: true`,
+and loses its simulated settings on exit. Global options precede the subcommand.
+
+```sh
+verdi status
+verdi --model V6 diagnostics
+verdi query '?LBOT'
+verdi --allow-writes set-power 0.5
+verdi --demo status
+verdi --demo watch --count 5 --interval 0.1
+```
+
+`--demo` explicitly prepares a 1 W simulated ON/open-shutter fixture. It never
+opens hardware. Without it, the fake starts in STANDBY with key OFF and shutter
+closed. `watch` produces JSON Lines; errors use JSON on stderr and exit code 2.
+The Python module form is also available: `python -m coherent_verdi status`.
+Use the Python API for a persistent multi-command session.
+
+## Optional Dash monitor
+
+```sh
+verdi --demo gui
+```
+
+Open [localhost:8050](http://127.0.0.1:8050/). Stop with Ctrl+C. The GUI is a
+read-only client of the library's single telemetry service. It has no protocol
+implementation, serial handle, device-write callbacks or independent polling
+worker. Multiple tabs read the same bounded history. Failed samples create chart
+gaps, and current-state fields become UNKNOWN; old samples are marked STALE.
+A browser watchdog also warns after 10 seconds without server updates, so a
+disconnected browser does not retain an apparently LIVE monitoring display.
+
+![Dash monitoring a synthetic 1 W V5 session](docs/images/simulator-dashboard.png)
+
+This screenshot was captured from the running simulator. Synthetic values are
+not measurements of a physical laser. For embedding, use
+`coherent_verdi.gui.create_app(telemetry)` and retain lifecycle ownership in your
+application. The CLI binds loopback with debug/reloader off. See the
+[integration guide](docs/INTEGRATION.md#dash-deployment) for deployment boundaries.
+The [server-loss screenshot](docs/images/simulator-server-offline.png) shows the
+independent stale-data warning after stopping the simulator web server.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    API[Python application / CLI] --> C[VerdiController]
+    D[Dash monitoring clients] --> T[One TelemetryService / bounded cache]
+    T --> C
+    C --> P[Documented protocol / typed parsing]
+    P --> X[Injected Transport]
+    X --> S[Deterministic in-memory simulator]
+    X -. explicit later opt-in .-> R[pySerial adapter]
+    R -. physical validation pending .-> V[Verdi laser]
+```
+
+- All 42 manual queries have source-page references. Routine commands cover
+  power, STANDBY/ON, shutter, echo and prompt; service operations are not exposed.
+- Immutable models carry W, A, °C, hours, timestamp and sample duration explicitly.
+- Per-controller and per-transport locks serialize complete request/reply pairs.
+  Compound snapshots also exclude interleaved writes from this controller.
+- Finite input checks and 2/5/6 W conservative software ceilings protect against
+  malformed setpoints. Caller ceilings can be lower; these are not physical safeguards.
+- Bounded I/O, explicit exceptions and failure-aware telemetry keep communication
+  problems visible. Timeouts never cause automatic retries or laser enable.
+
+## Verification and examples
+
+```sh
+python -m pip install -e ".[dev,serial,gui]"
+python scripts/validate.py
+python examples/simulated_session.py
+python examples/async_integration.py
+```
+
+The validation script runs pytest with coverage, lint, formatting, strict typing,
+package builds, examples, dependency consistency, source/input checks and an
+isolated wheel-install smoke test. Results and source hashes go to
+`records/validation.json`, `records/validation.log` and `records/junit.xml`.
+Only the current JSON manifest is versioned; logs/XML are generated locally and
+CI publishes its test results as artifacts.
+Tests prohibit real serial opens and discovery; adapter tests inject byte streams.
+The CI workflow declares Windows/Linux and Python 3.11–3.13; only environments
+actually run have PASS evidence. Current tested versions are in
+[requirements-validated.txt](records/requirements-validated.txt).
+The browser watchdog also has a virtual-clock regression check:
+`node scripts/test_watchdog.cjs` (Node.js 22 or later; no npm packages required).
+
+## Troubleshooting and limits
+
+| Symptom | Response |
+| --- | --- |
+| `WritesDisabled` | Use explicit write-enabled configuration for an authorized session; simulator CLI needs `--allow-writes`. |
+| `ResponseTimeout` / `TransportError` | Outcome may be unknown. No automatic replay; a serial session is unusable after failure. |
+| `ProtocolError` | Preserve raw reply, check the exact manual/firmware. Do not turn malformed data into a nominal state. |
+| `ConnectionUnusable` | Explicitly prepare a fresh transport; connection recovery must not replay settings or enable the laser. |
+| GUI ERROR or STALE | Check sample errors/age and service lifecycle. A displayed historical value is not current physical state. |
+| Missing `dash` or `serial` module | Install the relevant optional extra in the interpreter running the application. |
+| Model mismatch | Select the model from verified identity. The manual contains no documented model-discovery query. |
+
+The simulator is a software test fixture, not a physical plant model. Active
+no-fault `?F` formatting, actual echo framing, firmware timing, shutter-closed
+power reporting and calibration require later observation. Unknown fault codes
+are preserved. The GUI is monitoring-only; advanced service/calibration commands
+are outside this version's operational API. Read the
+[protocol contract and uncertainty register](docs/PROTOCOL.md),
+[simulator contract](docs/SIMULATOR.md), and
+[later hardware-validation procedure](HARDWARE_VALIDATION.md).
+
+## Autonomous engineering workspace
+
+This repository uses [cct1123/agentic-engineering-template](https://github.com/cct1123/agentic-engineering-template),
+pinned to `724a7f772069d3357ea66dbc4742d25bd874a33e`. Upstream was not modified.
+[Provenance and preserved-file hashes](records/FRAMEWORK.md) are recorded locally.
+
+`PROJECT.md` captures intent, `AGENTS.md` operating instructions, `ARCHITECTURE.md`
+the engineering process, `STATE.md` the current checkpoint,
+`records/RECORDS.md` evidence/decisions, and `outputs/REPORT.md` the candidate review.
+Resume by reading PROJECT.md, AGENTS.md and STATE.md and following the current
+inspect → gap → design → implement → test → diagnose loop. At the recorded review
+gate, remain hardware-free until explicit candidate approval. These files retain
+state; they do not schedule or keep an agent running after a session ends.

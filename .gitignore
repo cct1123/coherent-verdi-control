@@ -1,0 +1,34 @@
+# Local credentials and private inputs; review filenames before committing.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+inputs/private/
+
+# Common local caches and editor/OS artifacts.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.DS_Store
+Thumbs.db
+~$*
+
+# Python development and generated scratch artifacts.
+tmp/
+build/
+dist/
+*.egg-info/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv-*/
+pytest-cache-files-*/
+
+# Local bootstrap reference and regenerable validation output.
+prompt log.txt
+records/*.log
+records/junit.xml
+records/validation-initial.json
