@@ -35,7 +35,9 @@ def fingerprint() -> dict[str, str]:
         paths.extend(
             p
             for p in (ROOT / directory).rglob("*")
-            if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"
+            if p.is_file()
+            and not {"__pycache__", ".ipynb_checkpoints"}.intersection(p.parts)
+            and p.suffix != ".pyc"
         )
     return {
         p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -49,7 +51,7 @@ def validate() -> int:
     environment["PYTHONUTF8"] = "1"
     commands = [
         (
-            "TEST-002..006/009",
+            "TEST-002..006/009/011/012/013/014",
             [
                 "-m",
                 "pytest",
@@ -134,7 +136,9 @@ def validate() -> int:
             if p.is_file()
         },
     }
-    (RECORDS / "validation.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    (RECORDS / "validation.json").write_text(
+        json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     print(f"{report['status']}: candidate {manifest_sha}")
     return 0 if passed else 1
 
@@ -148,14 +152,16 @@ def main() -> int:
         "scope": "software and simulator only",
         "physical_validation": "UNTESTED",
     }
-    report_path.write_text(json.dumps(checkpoint, indent=2) + "\n", encoding="utf-8")
+    report_path.write_text(json.dumps(checkpoint, indent=2) + "\n", encoding="utf-8", newline="\n")
     try:
         return validate()
     except BaseException as exc:
         # A timeout, interruption or missing build directory must not leave the
         # previous candidate's PASS masquerading as the result of this invocation.
         checkpoint.update(status="FAIL", error=f"{type(exc).__name__}: {exc}")
-        report_path.write_text(json.dumps(checkpoint, indent=2) + "\n", encoding="utf-8")
+        report_path.write_text(
+            json.dumps(checkpoint, indent=2) + "\n", encoding="utf-8", newline="\n"
+        )
         raise
 
 

@@ -586,3 +586,194 @@ build/install/GUI evidence remains current. Public exports unchanged; diff check
 PASS. Fetched origin and confirmed no branch divergence before publication.
 Only checkpoint/evidence prose changed during this review. No hardware access;
 physical Verdi validation remains UNTESTED and publication grants no hardware approval.
+
+## D007
+
+Date: 2026-09-10; user-requested beginner command-control tutorials.
+Decision: Teach four progressively broader workflows: read-only status/diagnostics,
+bounded setpoint/readback in standby, one enable–safety-shutter–standby session,
+and fault evidence/uncertain write handling. Pair each small script with a notebook
+containing the same visible source; AST comparison prevents executable-code drift.
+Application functions accept a controller; only entry points construct simulators
+and change fixture conditions. Reuse the existing driver without changing its API.
+No executable hardware switch, remote keyswitch, cycling shutter loop, auto-enable,
+retry or blind cleanup is introduced. Exercise ceilings are explicitly synthetic.
+Normal completion verifies closure/standby; errors and interrupts stop subsequent
+commands and require an operator's physical abort procedure on eventual hardware.
+Source: active user task and PROJECT.md tutorial extension. Scope remains hardware-free.
+
+## E027
+
+Date: 2026-09-10; incremental tutorial verification, TEST-011/012 / REQ-011/012.
+Method: `python -m pytest tests/test_tutorials.py -q -p no:cacheprovider` with a
+workspace temporary directory; Python 3.12.14, nbclient 0.11.0, nbformat 5.11.1,
+ipykernel 7.3.0. Executed all four notebooks in separate fresh Python kernels,
+injecting serial-open/discovery guards before tutorial imports. Source notebooks
+contain clear expected results; actual executed outputs are retained separately.
+Result: 36 tests PASS. Nominal functions passed for V2/V5/V6; script entry points
+ran twice with identical output and released every simulator. Verified exact
+control command order, local write/input rejection, readiness/fault guards,
+readback/parsing failures, interrupt handling, lost acknowledgments at every
+control write, active/history evidence, unknown faults and no command replay.
+Reviewed actual notebook output against the written expected results: all match.
+Ruff lint/format, strict library typing and dependency consistency PASS.
+Environment note: Windows sandbox denied access to pytest-created temporary
+directories; the same guarded tests passed with normal local permissions. Notebook
+tooling installation needed normal package-registry access. One non-failing pyzmq
+warning reports its supported selector-thread fallback for Windows' Proactor loop.
+No device was enumerated or connected. Physical validation remains UNTESTED.
+Integrated acceptance and final candidate fingerprint follow in E028.
+
+## E028
+
+Date: 2026-09-10T23:12:02.508556+00:00.
+Kind / scope: Integrated tutorial candidate acceptance; TEST-001..009/011/012.
+Candidate: `577575f55400df6c51985cd7b88f2bb96dd6ac6c388cd58c6dc1dfd57a5494e5`.
+Method: `python scripts/validate.py` in the documented development environment,
+workspace temporary fixtures, normal local permissions and package-registry access.
+Result: 181 tests PASS (15.50 s), 95% library statement coverage. Includes 36 new
+tutorial cases and actual execution of all four notebooks in hardware-guarded
+fresh kernels. One non-failing pyzmq Windows selector-thread warning, no skips.
+Ruff lint/format PASS (46 files including notebooks), strict mypy PASS (12 runtime
+modules), dependency consistency PASS, wheel/sdist builds and inclusion of all
+tutorial scripts/notebooks/guide PASS. Isolated core-wheel installation ran all
+four tutorial scripts plus original examples and CLI without serial/Jupyter/Dash
+dependencies. Installed GUI/serial extras then passed HTTP callback/assets/cache/
+fault/error/recovery checks (Dash 4.4.1, Plotly 7.0.0, pySerial 3.5). Node 24.19.0
+watchdog regression PASS. All 11 validator stages passed; all 55 candidate source
+hashes stayed unchanged. Manual and pinned framework input hashes match.
+Artifacts: [manifest/environment/build hashes](validation.json),
+[development dependencies](requirements-validated.txt), local validation.log/JUnit
+and four executed notebook copies in `records/tutorial-notebooks/` (CI artifacts).
+Review: Expected notebook outputs match observations; normal completion and unknown
+outcomes are distinguished. Application functions use only the existing public
+controller API; simulator-only setup/injection is isolated in entry points. Core
+runtime is unchanged, so prior browser evidence E024 remains applicable.
+Bearing: REQ-011/012 PASS; REQ-001..009 current software/simulator PASS. Supersedes
+E025/E026 for the expanded candidate. Physical REQ-010 remains UNTESTED. Tutorial
+request complete; hardware gate retained without requesting physical access.
+All sessions/kernels finished. No serial device was enumerated or opened; no
+commit/push or upstream change was requested or performed.
+
+## D008
+
+Date: 2026-09-10; user clarification: examples must implement real-hardware use
+for human operators, not merely describe future adaptation.
+Decision: Add one shared `run_tutorial.py` operator runner and a disabled-by-default
+hardware section in every notebook. Reuse the four application functions. Validate
+explicit native port/model/baud and required write target/ceiling before opening;
+ask CONNECT, query ?SV first, and ask RUN before the lesson. Identification-only
+mode sends one query. Hardware fault diagnosis stays read-only and never invokes
+fixture setup, fault removal or timeout injection. Hardware power setting leaves
+the approved target stored; synthetic rejection and return-to-zero exercises remain
+in simulator mode. Physical access by the agent remains unauthorized; preparation
+of executable operator paths does not pass the project's hardware review gate.
+
+## E029
+
+Date: 2026-09-10; TEST-013 and affected TEST-011/012, hardware-path software checks.
+Method: Run the tutorial suite with the serial factory replaced by the actual
+Verdi simulator and scripted human answers. Execute each notebook in default mode
+and again with the hardware section enabled against that substituted factory.
+Result: 71 tests PASS, including all four hardware lesson routes, explicit serial
+settings, invalid/missing configuration before opening, cancellation before connect
+and after ?SV, identification-only exchange, fixture-operation prohibition,
+connection/timeout failures without fallback/reconnect, and CLI routing. Eight
+fresh notebook executions passed; recorded outputs match the real-mode sequence
+descriptions. Kernel artifacts restore disabled hardware settings and explicitly
+record simulator substitution in metadata. No real device was accessed.
+Diagnosis: The first expanded suite run had 67 PASS and four notebook harness
+failures because IPykernel resets builtins.input between cells. Patch the runner's
+module lookup for scripted test input instead; ordinary terminal/Jupyter input in
+the implementation is unchanged. The rerun passed all 71 checks. One non-failing
+Windows pyzmq selector-thread warning remains. Lint/format and library typing PASS.
+Final integrated candidate validation follows E030. No physical PASS is inferred.
+
+## E030
+
+Date: 2026-09-10T23:34:10.147333+00:00.
+Kind / scope: Integrated human-operated tutorial software candidate; TEST-001..009/011..013.
+Candidate: `cb278b99ebeeb7eb8d186f939127045a33b7f2ce41fd16e1c35c72b7cb020f11`.
+Method: `python scripts/validate.py`, normal Windows temporary-file permissions,
+workspace fixtures and explicit Node runtime. All device interaction uses simulation
+or fake streams; the new operator paths use simulator serial-factory substitution.
+Result: 216 tests PASS (19.79 s), 95% library statement coverage; 71 tutorial/operator
+tests include eight fresh notebook executions. One non-failing Windows pyzmq
+selector-thread warning, no failed/skipped tests. Ruff lint/format PASS (47 files),
+strict runtime typing PASS, dependency consistency PASS. Wheel/sdist builds and
+archive completeness PASS; the core-only isolated install ran the four original
+tutorial scripts and the new runner's simulator default. Installed GUI/serial extras,
+CLI/original examples and Node watchdog PASS. All 11 validation stages passed.
+All 56 source hashes stayed unchanged; supplied manual and framework hashes match.
+Artifacts: [manifest/environment/build hashes](validation.json), local validation.log,
+JUnit, and default/operator-path executed notebooks under `records/tutorial-notebooks/`.
+Operator-path notebook artifacts identify simulation and restore disabled settings.
+Review: Hardware configuration/connection and calls to the existing application
+functions are implemented; no reader-written adapter code is necessary. Actual
+physical identity, framing, operating limits, behavior and calibration remain
+UNTESTED. Candidate/site approval is still required before a human uses the path.
+Bearing: REQ-013 software PASS and affected tutorial/package/docs requirements
+revalidated; supersedes E028 for the current candidate. No library runtime changes,
+physical discovery/open/actuation, upstream modification or commit/push occurred.
+All simulator sessions and test kernels completed; no pending operation remains.
+
+## E031
+
+Date: 2026-09-10; user-authorized review, pruning, commit and push, followed by
+the clarification that notebooks must show all demonstration functions explicitly,
+use clear sections and avoid crowding. Scope remains entirely hardware-free.
+Review findings/changes:
+
+- Fix CLI handling of --timeout-s without --hardware: reject it consistently with
+  other serial settings instead of silently ignoring it. Add missing/incomplete
+  CLI-mode regressions and retain numeric/range/rounded-ceiling rejection.
+- Remove redundant finite-number checking after a bounded comparison against the
+  validated finite ceiling; NaN/infinity remain rejected before connection. Merge
+  duplicate operator-path test executions while retaining connection, command,
+  fixture-prohibition and cleanup assertions. Trim duplicate lesson prose in the guide.
+- Keep the terminal runner, but remove every tutorial-script import/dispatch from
+  notebooks. Define hardware_power_config and hardware_connection visibly in each
+  notebook; hardware cells call the notebook's own application functions directly.
+  Split the controlled session into readiness, enable, sample, normal-stop and
+  orchestration functions. Split the two fault exercises into distinct visible
+  functions. Maintain clear numbered sections and one function per code cell.
+- Strengthen notebook validation: execute from otherwise empty working directories,
+  allow only controller-library/standard-library imports, compare application/helper
+  definitions with paired scripts and limit cells to 30 lines. Actual maximum is
+  22 lines in all four notebooks. No code cell loads an adjacent tutorial file.
+- Normalize the dependency snapshot and generated validation JSON to repository LF
+  line endings, so staging cannot silently alter the validated source fingerprint.
+
+Evidence: The initial pruning candidate passed integrated validation (216 tests),
+then was superseded by the user's notebook clarification. The self-contained
+revision passes all 71 tutorial/operator tests, including eight kernel runs with
+hardware branches using simulator substitutes. Lint/format/typing remain passing.
+No runtime library API change, physical discovery/connection/actuation or upstream
+template edit. Final combined validation follows E032. Fetched origin and confirmed
+origin/main matches local main at aced244 before publication; no divergence.
+
+## E032
+
+Date: 2026-09-10T23:51:22.454712+00:00.
+Kind / scope: Final self-contained notebook/publication candidate; TEST-001..009/011..014.
+Candidate: `1e83941dbd88416affb180a51c1d1547679cc9bbdccf9dc20cd504b65977766e`.
+Method: `python scripts/validate.py` with hardware-free guards, simulator serial
+substitution, workspace temporary fixtures and normal local Windows permissions.
+Result: 216 tests PASS (17.86 s), including 71 tutorial/operator cases and eight
+fresh notebook executions from otherwise empty working directories. No notebook
+loads a tutorial script; all application/connection/configuration functions are
+visible, match their paired definitions, and occupy at most 22 lines per cell.
+Ruff lint/format PASS (47 files), strict library typing PASS, 95% library coverage,
+dependencies/builds/source-archive completeness PASS. Isolated core installation
+ran all four tutorial scripts and the terminal runner's simulator default; installed
+GUI/serial extras, CLI/original examples and Node watchdog PASS. All 11 stages passed;
+all 56 source hashes remained unchanged. Manual/framework preserved-input hashes match.
+One non-failing Windows pyzmq selector-thread warning; no skips or failures.
+Artifacts: [manifest/build/environment hashes](validation.json), local validation.log,
+JUnit and eight executed notebooks. Hardware-path artifacts retain disabled source
+settings and identify simulator substitution. Notebook layout and expected outputs
+were reviewed; no remaining actionable software finding under the current request.
+Bearing: REQ-014 software PASS; affected REQ-001..009/011..013 revalidated. Supersedes
+E030 and the intermediate pruning candidate. Physical REQ-010 remains UNTESTED.
+The user authorized commit/push; publication does not approve real hardware access.
+All test sessions/kernels completed. No physical enumeration/open/actuation occurred.

@@ -32,3 +32,5 @@ prompt log.txt
 records/*.log
 records/junit.xml
 records/validation-initial.json
+.ipynb_checkpoints/
+records/tutorial-notebooks/

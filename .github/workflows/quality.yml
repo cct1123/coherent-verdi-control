@@ -27,3 +27,4 @@ jobs:
             records/junit.xml
             records/validation.json
             records/validation.log
+            records/tutorial-notebooks/*.ipynb

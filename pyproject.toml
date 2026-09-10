@@ -13,7 +13,8 @@ dependencies = []
 [project.optional-dependencies]
 serial = ["pyserial>=3.5,<4"]
 gui = ["dash>=3,<5"]
-dev = ["pytest>=8,<10", "pytest-cov>=6,<8", "ruff>=0.11,<1", "mypy>=1.15,<2", "build>=1.2,<2", "types-pyserial>=3.5", "setuptools>=77", "wheel>=0.45"]
+tutorials = ["jupyterlab>=4,<5", "nbclient>=0.10,<1"]
+dev = ["pytest>=8,<10", "pytest-cov>=6,<8", "ruff>=0.11,<1", "mypy>=1.15,<2", "build>=1.2,<2", "types-pyserial>=3.5", "setuptools>=77", "wheel>=0.45", "nbclient>=0.10,<1", "ipykernel>=6,<8"]
 
 [project.scripts]
 verdi = "coherent_verdi.cli:main"

@@ -51,3 +51,24 @@ implementation.
 
 Initial authorization: the user's task in this session, 2026-09-09. Reversible
 software work is authorized; physical validation is outside this phase.
+
+## Beginner tutorials (user request, 2026-09-10)
+
+Provide four simple, representative command-control use cases for a new Verdi
+user. For each, implement a small tutorial example, a clear Jupyter notebook and
+concise documentation explaining the command sequence, expected behavior and
+basic error/safety handling. Structure the examples for later hardware use with
+minimal changes. Develop and test every example using the Verdi simulator only.
+They must be practical, beginner-friendly starting points; this request does not
+authorize hardware discovery, connection or operation.
+
+User clarification, 2026-09-10: implement the tutorials for real-hardware use by
+human operators, rather than leaving serial setup as an adaptation exercise.
+Provide executable operator entry points and notebook hardware configuration while
+retaining simulator defaults and simulator-only development/testing. Preparing
+these paths does not authorize the agent to connect to or operate physical hardware.
+
+Further clarification during publication review: tutorial notebooks must not use
+hidden scripts. Lay out every demonstration function explicitly in the notebook,
+use clear sections and avoid crowded code blocks. Retain the requested review,
+pruning, commit and push after satisfying this notebook presentation requirement.
