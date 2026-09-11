@@ -777,3 +777,67 @@ Bearing: REQ-014 software PASS; affected REQ-001..009/011..013 revalidated. Supe
 E030 and the intermediate pruning candidate. Physical REQ-010 remains UNTESTED.
 The user authorized commit/push; publication does not approve real hardware access.
 All test sessions/kernels completed. No physical enumeration/open/actuation occurred.
+
+## D009
+
+Date: 2026-09-10; source: user's aggressive codebase simplification request.
+Decision: consolidate the four terminal examples into run_tutorial.py with direct
+function dispatch. Remove the four duplicate script files and runtime runpy/path
+loading. Keep standalone notebook definitions because the user explicitly requires
+visible, self-contained tutorials. Keep the public library modules/API and the
+independent protocol/transport/simulator/telemetry boundaries: they implement
+required parsing, serialization, failure isolation and hardware-free testing.
+Do not add compatibility wrappers for the removed example filenames; document
+their existing run_tutorial.py command equivalents instead. Library import paths,
+signatures, notebook filenames and terminal runner arguments remain stable.
+
+## E033
+
+Date: 2026-09-10; TEST-015 simplification review and affected regression preparation.
+Changes: terminal tutorial files reduced from five to one; dynamic execution and
+duplicate imports/entry guards removed. Notebook simulator entry points receive
+descriptive names and are called directly. One AST comparison checks every visible
+notebook function against its terminal equivalent; fresh-kernel execution retains
+independence checks and all simulator/operator cases. CLI writes share the status
+readback path; successful set-power and standby assertions extend the existing
+test. Simulator current aliases share one value, and injected query replies no
+longer compute and discard a side-effect-free query result. No safety check removed.
+
+Dependencies: remove explicit wheel requirements from build/dev and the redundant
+nbclient declaration from the interactive tutorials extra; keep nbclient/ipykernel
+in dev for notebook tests. Core still has no runtime dependencies. All remaining
+modules/declarations have concrete uses; no placeholder or unused runtime module
+was found. Documentation gives the replacement terminal commands.
+
+Observed: 176 affected tests PASS, including eight fresh notebook runs and the
+human-operated branches with simulator substitution; Ruff and strict typing PASS.
+Isolated wheel build PASS with only setuptools 84.0.0 installed as the backend
+dependency (`python -m build --wheel --outdir tmp/simplification-isolated-build`).
+All 216 existing collected test cases remain; no test file was removed.
+Python source count across library/examples/scripts/tests: 29 -> 25 files,
+4,221 -> 4,159 lines (blank/comment lines included). Final integrated validation
+follows in E034. Physical hardware remains UNTESTED and untouched.
+
+## E034
+
+Date: 2026-09-11T00:05:33.655180+00:00; TEST-001..009/011..015 final simplification candidate.
+Candidate: `29b070ac92fa9b7bca04287c1ef96afec593e2e873b704684d55f80d4d8906e0`.
+Method: `python scripts/validate.py`, normal local Windows permissions, workspace
+temporary fixtures; physical serial/discovery prohibited, operator branches simulated.
+Result: 216 tests PASS (14.35 s), 95% library statement coverage; 71 tutorial/operator
+cases and eight fresh notebook runs. Ruff lint/format PASS (43 files), strict typing
+PASS (12 modules), dependency checks, wheel/sdist completeness, CLI/examples, clean
+core/extras installs and Node watchdog PASS. All 11 stages passed; 52 candidate hashes
+unchanged during validation and preserved input hashes match. One non-failing Windows
+pyzmq selector-thread warning; no skips or failed tests.
+Review: public class/function/method signature inventory unchanged, all notebook
+functions match terminal equivalents, max code-cell length 22 lines, source diff
+clean. No runtime dynamic loading remains. All four terminal lessons and the default
+passed against the installed core wheel; Dash 4.4.1/Plotly 7.0.0/pySerial 3.5 extras
+callbacks passed. The previous browser evidence E024 applies to unchanged GUI assets.
+Artifacts: validation.json; local validation.log/JUnit and eight executed notebooks.
+Bearing: affected requirements revalidated; REQ-015 PASS. E032 remains historical
+evidence for the previous candidate. REQ-010 physical validation remains UNTESTED.
+Origin/main fetched and matched HEAD at 0033ecc before commit. The user's earlier
+commit/push authorization remains applicable; Git history records publication.
+All test sessions/kernels completed. No device access or upstream template change.

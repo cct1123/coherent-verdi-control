@@ -1,120 +1,99 @@
-# Engineering report — self-contained Verdi tutorials
+# Engineering report — simplified Verdi controller
 
-Four beginner tutorials are implemented for simulator learning and later
-human-operated hardware sessions. **Every demonstration, configuration and
-connection function is visible in each notebook.** No notebook imports or runs a
-tutorial script. Named sections separate individual functions, execution,
-expected results, exercises and optional hardware use. The largest code cell is
-22 lines. Start with the [tutorial guide](../examples/tutorials/README.md).
+The simplification is complete and reviewed. **Software/simulator validation PASS;
+physical hardware and calibration remain UNTESTED.** The public controller API,
+safety checks, hardware/simulator separation and all 216 test cases are retained.
 
-| Tutorial | Notebook | Small Python equivalent |
+## Changes and compatibility
+
+- Consolidated five terminal tutorial files into one
+  [run_tutorial.py](../examples/tutorials/run_tutorial.py), using direct function
+  dispatch. Removed runtime script loading and duplicate imports/entry guards.
+- Kept all four notebooks self-contained, with named simulator functions, direct
+  execution cells and visible hardware helpers. Maximum code-cell length: 22 lines.
+- Combined CLI write-result handling; simplified simulator current aliases and
+  removed discarded query computation during reply injection.
+- Removed explicit `wheel` build/dev requirements and the redundant interactive
+  tutorials `nbclient` declaration. Notebook testing retains its own dependencies;
+  core runtime remains dependency-free.
+- Simplified notebook definition comparisons and updated installation checks and
+  documentation. Added successful set-power/standby assertions to the existing test.
+
+Python source across library/examples/scripts/tests: **29 -> 25 files** and
+**4,221 -> 4,159 lines**, including blanks/comments. The core's 12 small modules
+remain because they have distinct responsibilities and stable import paths.
+The API signature inventory is unchanged. The four old example filenames are
+replaced by the existing terminal commands below; notebook filenames and runner
+arguments remain unchanged. No compatibility wrappers were added.
+
+| Lesson | Notebook | Command after `python examples/tutorials/run_tutorial.py` |
 | --- | --- | --- |
-| Read status and diagnostics | [Lesson 1](../examples/tutorials/01_read_status.ipynb) | [read_status.py](../examples/tutorials/read_status.py) |
-| Set and verify power in standby | [Lesson 2](../examples/tutorials/02_set_power.ipynb) | [set_power.py](../examples/tutorials/set_power.py) |
-| One start–shutter–standby session | [Lesson 3](../examples/tutorials/03_controlled_session.ipynb) | [controlled_session.py](../examples/tutorials/controlled_session.py) |
-| Fault evidence and lost replies | [Lesson 4](../examples/tutorials/04_handle_faults.ipynb) | [handle_faults.py](../examples/tutorials/handle_faults.py) |
+| Read status and diagnostics | [Lesson 1](../examples/tutorials/01_read_status.ipynb) | `read-status` |
+| Set power in standby | [Lesson 2](../examples/tutorials/02_set_power.ipynb) | `set-power` |
+| One controlled session | [Lesson 3](../examples/tutorials/03_controlled_session.ipynb) | `controlled-session` |
+| Fault evidence and lost replies | [Lesson 4](../examples/tutorials/04_handle_faults.ipynb) | `faults` |
 
-## Architecture and use
+## Architecture and operation
 
-The controller/protocol/transport/simulator/telemetry/CLI/Dash runtime is unchanged.
-Notebook functions call the controller library directly. The controlled session
-is broken into readiness, enable, sample, normal-stop and orchestration functions;
-the two fault exercises have separate visible functions. Hardware configuration,
-connection and cleanup are also defined in individual notebook cells.
-The [terminal runner](../examples/tutorials/run_tutorial.py) is an optional CLI
-alternative and is not a notebook dependency.
+The controller owns one serial or simulated transport and serializes transactions.
+Protocol parsing validates complete replies; serial failures invalidate the session.
+The simulator is an independent peer with explicit fixture policies. Telemetry
+owns one polling worker and bounded immutable history. Dash consumes only cached
+snapshots. See the [API](../docs/API.md) and [integration guide](../docs/INTEGRATION.md).
 
-In an activated Python 3.11+ environment, install `.[tutorials]` and run
-`python -m jupyterlab examples/tutorials`. Run the notebook cells in order.
-Default runs create fresh simulators and skip hardware; sessions finish within
-one execution cell. Install `.[tutorials,serial]` only when preparing the
-separately approved human hardware path. Standalone simulator scripts and the
-runner's default need only the dependency-free core.
+For learning, install `.[tutorials]`, run `python -m jupyterlab examples/tutorials`,
+and execute notebook cells in order. Terminal lessons need only the core package.
+Each default execution owns a fresh simulator and completes its connection lifetime
+within one call. No notebook imports or executes the terminal file.
 
 The [operator guide](../examples/tutorials/README.md#human-operated-hardware)
-provides notebook settings and CLI templates. Supply a verified native port,
-model, matching baud and timeout. Writes require explicit approved target/ceiling.
-CONNECT precedes open and one `?SV` query; RUN precedes lesson operations.
-Identification-only mode stops after `?SV`. Configuration errors precede opening;
-cancellation, errors and interruptions never trigger retries or simulator fallback.
-The 0.25 W target and 0.5 W ceiling shown in simulator exercises are not physical
-safe limits. All notebook hardware switches are disabled in the delivered source.
+provides the later serial workflow. Model, native port, matching baud and timeout
+are explicit; writes require an approved target/ceiling. Configuration validation
+precedes open, CONNECT precedes ?SV, and RUN precedes the lesson sequence.
+Identification-only mode stops after ?SV. Cancellation/errors never retry, replay
+commands or fall back to simulation. Hardware switches default to disabled.
 
-## Reviewed changes
+## Validation evidence
 
-[E031](../records/RECORDS.md#e031) records review and pruning. Fixed a CLI option
-that silently ignored `--timeout-s` without `--hardware`; incomplete mode settings
-now fail consistently. Removed redundant numeric checks and duplicated operator
-test execution, shortened repeated guide prose and normalized publication artifacts
-to repository LF line endings. Retained state/readback checks, confirmation,
-fault evidence, no-replay behavior and all distinct regression assertions.
+[E034](../records/RECORDS.md#e034), 2026-09-11T00:05:33.655180+00:00:
+**216 tests PASS**, 95% library coverage, including 71 tutorial/operator cases and
+eight fresh notebook runs from empty directories. Hardware branches use simulated
+serial factories; physical opening/discovery is blocked in tests and kernels.
+All notebook functions match their terminal equivalents. All 11 validator stages
+passed: tests, lint, formatting, strict typing, dependency consistency, builds,
+CLI, synchronous/async examples, clean core/extras installs and Node watchdog.
+All 52 source hashes stayed unchanged; manual/framework hashes match.
 
-The user's final clarification replaced notebook dispatch through helper scripts
-with explicit local definitions and direct calls. Application and hardware-helper
-definitions are checked against the Python equivalents, while kernel execution
-from empty working directories proves notebooks have no adjacent-script dependency.
+Version 0.1.0; source-manifest SHA-256:
+`29b070ac92fa9b7bca04287c1ef96afec593e2e873b704684d55f80d4d8906e0`.
+[Manifest](../records/validation.json), [review](../records/RECORDS.md#e033),
+[dependencies](../records/requirements-validated.txt). An additional isolated wheel
+build passed with only setuptools 84.0.0 as the build dependency. Windows 11/Python
+3.12.14 and Node 24.19.0 were tested. One non-failing pyzmq selector-thread warning;
+no skipped or failed tests. Browser evidence E024 applies to unchanged GUI assets.
+Reproduce with `python scripts/validate.py` after installing `.[dev,serial,gui]`.
 
-## Final validation
+## Hardware review and recovery
 
-| Scope | Result |
-| --- | --- |
-| Software and simulator | **PASS** |
-| Four default + four simulated-hardware notebook runs | **PASS** |
-| Actual physical behavior/calibration | **UNTESTED** |
+Physical integration remains **AWAITING_HUMAN_REVIEW**. Follow
+[HARDWARE_VALIDATION.md](../HARDWARE_VALIDATION.md): approve this candidate and
+actual connection, begin with passive open and one `?SV` query, then verify framing,
+read semantics and actual no-fault replies (TEST-010A–C). Only after Stage 1, approve
+the exact writes, limits, beam/cooling/warmup/interlock conditions and physical abort
+procedure (TEST-010D–G). Software publication does not grant hardware authority.
 
-Version 0.1.0; final source-manifest SHA-256:
-`1e83941dbd88416affb180a51c1d1547679cc9bbdccf9dc20cd504b65977766e`.
+Status and fault lessons are read-only. Setpoint control retains the approved target
+in standby. The controlled lesson checks readiness/history, sets power, enables,
+opens the safety shutter once, samples, closes it and verifies standby. It retains
+the target. Fault injection and lost-reply exercises remain simulator-only.
 
-[E032](../records/RECORDS.md#e032), [manifest](../records/validation.json),
-2026-09-10T23:51:22.454712+00:00: **216 tests PASS**, including 71 tutorial/operator
-cases; **95% library statement coverage**. Every notebook executes in a fresh kernel
-with real serial opening/discovery blocked, from an otherwise empty working
-directory. Tests check source equivalence, permitted imports, code-cell length,
-all model workflows, bad inputs/states/readbacks, fault history, interruption,
-lost acknowledgments, operator configuration/cancellation and no retries.
-
-Lint/format, strict library typing, dependency consistency, wheel/sdist completeness,
-all scripts and the simulator runner in an isolated core installation, installed
-GUI/serial extras, CLI/examples and Node watchdog PASS. All 11 validator stages
-passed; all 56 source hashes remained unchanged and manual/framework hashes match.
-Browser evidence E024 applies to unchanged runtime/assets. Reproduce with
-`python scripts/validate.py` after installing `.[dev,serial,gui]`.
-
-Windows 11/Python 3.12.14; JupyterLab 4.6.3, nbclient 0.11.0, nbformat 5.11.1,
-ipykernel 7.3.0; Node 24.19.0. One non-failing Windows pyzmq selector-thread fallback
-warning; no skipped or failed tests. Normal local permissions were required for
-Windows temporary directories. [Dependency snapshot](../records/requirements-validated.txt).
-Executed notebook copies are regenerated under `records/tutorial-notebooks/`
-and uploaded by CI; source outputs stay clear and hardware settings stay disabled.
-
-## Hardware review, expected outcomes and recovery
-
-Physical integration remains at **AWAITING_HUMAN_REVIEW**. Follow
-[HARDWARE_VALIDATION.md](../HARDWARE_VALIDATION.md): approve a specific candidate
-and actual link, begin with passive open and one `?SV\r\n`, then verify framing,
-read semantics and actual no-fault replies (TEST-010A–C). Only after Stage 1,
-approve exact write scope, limits, beam/cooling/warmup/interlock conditions and the
-physical abort procedure (TEST-010D–G). Publication does not grant hardware access.
-
-Normal hardware behavior requested by each lesson: status/fault diagnosis is
-read-only; setpoint control leaves the approved target stored in standby; the
-controlled session verifies readiness, sets power, enables, opens the safety
-shutter once, samples once, closes it and verifies standby. It retains the target
-and does not establish optical settling. Fault injection/removal and the lost-write
-exercise occur only in simulator demonstrations.
-
-Actual idle power, ramp behavior, quantization, echo timing, firmware latency,
-wiring, interlocks and calibration remain unverified. The simulator's values and
-fault latching are fixture policies. The head shutter is a safety shutter, not an
-experimental modulator; status reads are not physical interlocks.
-
-On error or Ctrl+C, stop subsequent commands and use the approved physical abort
-procedure. A missing acknowledgment can follow an applied command. Communication
-close is not shutdown, and reopening is not proof that late replies cleared.
-If communication is verified trustworthy and shutdown is authorized, close the
-shutter and enter standby with readback; full heater/cooling shutdown follows the
-manual. Software rollback cannot undo a physical action.
-
-All test kernels and simulator sessions completed. No physical port was enumerated
-or opened and no upstream template was modified. The user authorized review,
-pruning, commit and push of this software candidate; Git history records publication.
+Actual idle power, ramp/settling, quantization, echo timing, latency, wiring,
+interlocks and calibration are unverified. Simulator fault latching and numerical
+values are fixtures. The safety shutter is not an experimental modulator.
+On error or Ctrl+C, stop subsequent commands and follow the physical abort procedure.
+A missing acknowledgment may follow an applied command; communication close is not
+shutdown. Do not send blind cleanup writes or assume reopening clears late replies.
+If shutdown is approved and communication is trustworthy, verify shutter closure
+and standby; full heater/cooling shutdown follows the manual. Software rollback
+cannot undo a physical action. All test kernels/simulator sessions completed;
+no physical port was enumerated or opened, and upstream was not modified.

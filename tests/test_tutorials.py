@@ -29,7 +29,7 @@ LESSONS = ("read_status", "set_power", "controlled_session", "handle_faults")
 
 @pytest.fixture
 def lessons():
-    return {name: runpy.run_path(str(TUTORIALS / f"{name}.py")) for name in LESSONS}
+    return runpy.run_path(str(TUTORIALS / "run_tutorial.py"))
 
 
 def writes(sim):
@@ -40,7 +40,7 @@ def writes(sim):
 def test_reusable_workflows_all_models(lessons, model):
     sim = SimulatedTransport(model)
     with VerdiController(sim, ControllerConfig(model)) as laser:
-        status = lessons["read_status"]["read_status"](laser)
+        status = lessons["read_status"](laser)
         assert status.simulated and status.model == model
         assert status.laser_state == LaserState.STANDBY
         assert not status.shutter_open and not status.faults
@@ -49,11 +49,11 @@ def test_reusable_workflows_all_models(lessons, model):
     with VerdiController(
         sim, ControllerConfig(model, allow_writes=True, power_limit_w=0.5)
     ) as laser:
-        assert lessons["set_power"]["set_standby_power"](laser, 0.25) == 0.25
+        assert lessons["set_standby_power"](laser, 0.25) == 0.25
         assert laser.laser_state() == LaserState.STANDBY
         assert laser.power_w() == 0
         sim.set_key(True)
-        assert lessons["controlled_session"]["controlled_session"](laser, 0.25) == 0.25
+        assert lessons["controlled_session"](laser, 0.25) == 0.25
         assert laser.laser_state() == LaserState.STANDBY
         assert laser.query(Query.SHUTTER) == 0
         assert laser.query(Query.SET_POWER) == 0.25
@@ -76,7 +76,7 @@ def test_entrypoints_repeat_and_release_simulators(lessons, name, monkeypatch, c
         instances.append(sim)
         return sim
 
-    main = lessons[name]["main"]
+    main = lessons[f"simulate_{name}"]
     monkeypatch.setitem(main.__globals__, "SimulatedTransport", factory)
     main()
     first_output = capsys.readouterr().out
@@ -138,7 +138,7 @@ def test_bad_setpoints_never_transmit(lessons, target):
         sim, ControllerConfig(Model.V5, allow_writes=True, power_limit_w=0.5)
     ) as c:
         with pytest.raises(ValueError):
-            lessons["set_power"]["set_standby_power"](c, target)
+            lessons["set_standby_power"](c, target)
         assert not writes(sim)
 
 
@@ -155,7 +155,7 @@ def test_session_preconditions_prevent_writes(lessons, state):
             c.set_shutter(open=True)
         before = writes(sim)
         with pytest.raises(RuntimeError):
-            lessons["controlled_session"]["controlled_session"](c, 0.25)
+            lessons["controlled_session"](c, 0.25)
         assert writes(sim) == before
 
 
@@ -173,7 +173,7 @@ def test_standby_setpoint_preconditions(lessons, state):
             c.standby()  # Standby does not clear the active fixture fault.
         before = writes(sim)
         with pytest.raises((RuntimeError, WritesDisabled)):
-            lessons["set_power"]["set_standby_power"](c, 0.25)
+            lessons["set_standby_power"](c, 0.25)
         assert writes(sim) == before
 
 
@@ -191,7 +191,7 @@ def test_session_lost_ack_stops_without_replay_or_cleanup(lessons, instruction, 
     monkeypatch.setattr(sim, "exchange", fail_selected)
     with VerdiController(sim, ControllerConfig(Model.V5, allow_writes=True)) as c:
         with pytest.raises(ResponseTimeout):
-            lessons["controlled_session"]["controlled_session"](c, 0.25)
+            lessons["controlled_session"](c, 0.25)
     assert sim.requests[-1] == instruction + b"\r\n"
     assert sim.requests.count(instruction + b"\r\n") == 1
 
@@ -216,7 +216,7 @@ def test_session_bad_readback_or_interrupt_stops(lessons, instruction, response,
     monkeypatch.setattr(sim, "exchange", fail_selected)
     with VerdiController(sim, ControllerConfig(Model.V5, allow_writes=True)) as c:
         with pytest.raises((RuntimeError, ProtocolError, KeyboardInterrupt)):
-            lessons["controlled_session"]["controlled_session"](c, 0.25)
+            lessons["controlled_session"](c, 0.25)
     assert b"S=0\r\n" not in writes(sim) and b"L=0\r\n" not in writes(sim)
     if instruction == b"?SP":
         assert b"L=1\r\n" not in writes(sim)
@@ -226,11 +226,11 @@ def test_fault_evidence_preserved_without_enable(lessons):
     sim = SimulatedTransport()
     sim.set_faults(2, 999)
     with VerdiController(sim, ControllerConfig(Model.V5)) as c:
-        active, history = lessons["handle_faults"]["read_fault_report"](c)
+        active, history = lessons["read_fault_report"](c)
         assert [fault.code for fault in active] == [2, 999]
         assert not active[1].known and active == history
         sim.set_faults()
-        after, retained = lessons["handle_faults"]["read_fault_report"](c)
+        after, retained = lessons["read_fault_report"](c)
         assert after == () and retained == history
         assert c.laser_state() == LaserState.FAULT
     assert writes(sim) == []
@@ -241,7 +241,7 @@ def test_unknown_write_outcome_is_not_retried(lessons, after_apply, capsys):
     sim = SimulatedTransport()
     with VerdiController(sim, ControllerConfig(Model.V5, allow_writes=True)) as c:
         sim.inject_timeout(after_apply=after_apply)
-        assert lessons["handle_faults"]["set_power_once"](c, 0.25) is False
+        assert lessons["set_power_once"](c, 0.25) is False
     assert sim.requests == (b"P=0.2500\r\n",)
     assert "Outcome UNKNOWN" in capsys.readouterr().out
 
@@ -250,32 +250,25 @@ def test_unknown_write_outcome_is_not_retried(lessons, after_apply, capsys):
     "hardware_path", [False, True], ids=["default", "operator-path-with-simulator"]
 )
 @pytest.mark.parametrize("name", LESSONS)
-def test_notebook_matches_script_and_executes(name, hardware_path, tmp_path, monkeypatch):
+def test_notebook_definitions_match_and_execute(name, hardware_path, tmp_path, monkeypatch):
     index = LESSONS.index(name) + 1
     path = TUTORIALS / f"{index:02}_{name}.ipynb"
     notebook = nbformat.read(path, as_version=4)
     nbformat.validate(notebook)
-    code = "\n\n".join(
-        cell.source
-        for cell in notebook.cells
-        if cell.cell_type == "code" and "application" in cell.metadata.get("tags", [])
-    )
-    script = (TUTORIALS / f"{name}.py").read_text(encoding="utf-8")
-    assert ast.dump(ast.parse(code)) == ast.dump(ast.parse(script)), "Notebook/script drift"
     runner = ast.parse((TUTORIALS / "run_tutorial.py").read_text(encoding="utf-8"))
-    helper_names = {"hardware_power_config", "hardware_connection"}
-    reference_helpers = {
-        node.name: ast.dump(node)
-        for node in runner.body
-        if isinstance(node, ast.FunctionDef) and node.name in helper_names
+    reference_functions = {
+        node.name: ast.dump(node) for node in runner.body if isinstance(node, ast.FunctionDef)
     }
     all_code = "\n\n".join(cell.source for cell in notebook.cells if cell.cell_type == "code")
     notebook_tree = ast.parse(all_code)
-    assert {
+    functions = {
         node.name: ast.dump(node)
         for node in notebook_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in helper_names
-    } == reference_helpers
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert {f"simulate_{name}", "hardware_power_config", "hardware_connection"} <= functions.keys()
+    for function, definition in functions.items():
+        assert definition == reference_functions[function], f"Notebook drift: {function}"
     for node in ast.walk(notebook_tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             modules = (
@@ -550,7 +543,7 @@ def test_operator_cli_defaults_to_simulator(operator_runner, lesson, capsys):
     namespace, _, opened = operator_runner
     namespace["main"]([lesson])
     assert not opened
-    assert "SIMULATOR: running the original lesson" in capsys.readouterr().out
+    assert "SIMULATOR: running the lesson" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("options", [["--timeout-s", "2"], ["--port", "TEST_PORT"], ["--hardware"]])

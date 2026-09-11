@@ -104,14 +104,15 @@ class SimulatedTransport:
         ready = self._ready()
         faults = self._active_faults()
         emitting = self._laser == LaserState.ON and self._shutter and ready and not faults
+        current = "12.0" if emitting else "0.0"
         fraction = 1.0 if not self._warmup_s else min(1.0, elapsed / self._warmup_s)
         # Independent literal query mapping deliberately does not import QUERY_SPECS.
         values: dict[str, str] = {
             "?ACAD": "0.0&0.0",
             "?BT": "30.00",
             "?B": "19200",
-            "?C": "0.0",
-            "?D1C": "12.0" if emitting else "0.0",
+            "?C": current,
+            "?D1C": current,
             "?D1HST": "28.00",
             "?D1H": "42.0",
             "?D1PC": "0.0",
@@ -150,7 +151,6 @@ class SimulatedTransport:
             "?VD": "0.0",
             "?VSS": "1",
         }
-        values["?C"] = values["?D1C"]
         return values.get(instruction, f"Query Error: {instruction}")
 
     def _command(self, instruction: str) -> str:
@@ -202,11 +202,8 @@ class SimulatedTransport:
             instruction = request[:-2].decode("ascii")
             if self._injections:
                 result, after_apply = self._injections.popleft()
-                if after_apply:
-                    if instruction.startswith("?"):
-                        self._query(instruction)
-                    else:
-                        self._command(instruction)
+                if after_apply and not instruction.startswith("?"):
+                    self._command(instruction)
                 if isinstance(result, Exception):
                     raise result
                 return result

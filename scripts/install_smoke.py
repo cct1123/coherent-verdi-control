@@ -77,8 +77,9 @@ def main() -> None:
         assert data["simulated"] is True and data["result"]["power_w"] == 1.0
         for example in ("simulated_session.py", "async_integration.py"):
             run([str(executable), "-I", str(ROOT / "examples" / example)], cwd=directory)
-        for example in sorted((ROOT / "examples" / "tutorials").glob("*.py")):
-            run([str(executable), "-I", str(example)], cwd=directory)
+        tutorial = str(ROOT / "examples" / "tutorials" / "run_tutorial.py")
+        for lesson in ([], ["read-status"], ["set-power"], ["controlled-session"], ["faults"]):
+            run([str(executable), "-I", tutorial, *lesson], cwd=directory)
         entrypoint = env_path / ("Scripts/verdi.exe" if os.name == "nt" else "bin/verdi")
         result = json.loads(run([str(entrypoint), "query", "?SV"], cwd=directory).stdout)
         assert result["result"] == "SIMULATOR-0.1"

@@ -6,12 +6,12 @@ for a human operator, available in its self-contained notebook or the terminal r
 Expected outputs below describe synthetic fixtures. Simulator mode needs no serial
 dependency or physical connection; development and testing remain simulator-only.
 
-| Lesson | Notebook | Small example | What you learn |
+| Lesson | Notebook | Terminal lesson | What you learn |
 | --- | --- | --- | --- |
-| 1. Read status | [01_read_status.ipynb](01_read_status.ipynb) | [read_status.py](read_status.py) | Queries, units, state, diagnostics and write protection |
-| 2. Set power in standby | [02_set_power.ipynb](02_set_power.ipynb) | [set_power.py](set_power.py) | Bounded setpoint, readback and rejected input |
-| 3. One controlled session | [03_controlled_session.ipynb](03_controlled_session.ipynb) | [controlled_session.py](controlled_session.py) | Preconditions, enable, safety shutter and verified standby |
-| 4. Diagnose and stop | [04_handle_faults.ipynb](04_handle_faults.ipynb) | [handle_faults.py](handle_faults.py) | Active/history faults, unknown codes and uncertain write outcomes |
+| 1. Read status | [01_read_status.ipynb](01_read_status.ipynb) | `read-status` | Queries, units, state, diagnostics and write protection |
+| 2. Set power in standby | [02_set_power.ipynb](02_set_power.ipynb) | `set-power` | Bounded setpoint, readback and rejected input |
+| 3. One controlled session | [03_controlled_session.ipynb](03_controlled_session.ipynb) | `controlled-session` | Preconditions, enable, safety shutter and verified standby |
+| 4. Diagnose and stop | [04_handle_faults.ipynb](04_handle_faults.ipynb) | `faults` | Active/history faults, unknown codes and uncertain write outcomes |
 
 ## Start here
 
@@ -32,16 +32,9 @@ execution cell creates a fresh fixture and closes the controller before returnin
 The final hardware section defaults to disabled and calls the notebook's own
 functions directly. Neither mode leaves a connection waiting between cells.
 
-The scripts need only the dependency-free core (`python -m pip install -e .`):
-
-```sh
-python examples/tutorials/read_status.py
-python examples/tutorials/set_power.py
-python examples/tutorials/controlled_session.py
-python examples/tutorials/handle_faults.py
-```
-
-The shared runner defaults to simulation too:
+All terminal equivalents live in [run_tutorial.py](run_tutorial.py), with small
+functions for each lesson and no dynamic script loading. They need only the
+dependency-free core (`python -m pip install -e .`) and default to simulation:
 
 ```sh
 python examples/tutorials/run_tutorial.py read-status
@@ -49,6 +42,10 @@ python examples/tutorials/run_tutorial.py set-power
 python examples/tutorials/run_tutorial.py controlled-session
 python examples/tutorials/run_tutorial.py faults
 ```
+
+These commands replace the former separate `read_status.py`, `set_power.py`,
+`controlled_session.py` and `handle_faults.py` files. Notebook filenames and the
+runner's arguments are unchanged.
 
 If an import fails, check that the selected kernel uses the environment where
 you installed the checkout. Install packages in the terminal, then restart the
@@ -112,8 +109,8 @@ whether a command executed. Unknown codes remain visible and require diagnosis.
 
 Each notebook explicitly defines its connection, validation and cleanup functions
 in section 7 and calls its own application functions. No external tutorial code is
-loaded. For terminal use, [run_tutorial.py](run_tutorial.py) runs the paired Python
-examples. Both paths open an explicit `SerialConfig` through the controller library's
+loaded. For terminal use, [run_tutorial.py](run_tutorial.py) calls its own lesson
+functions. Both paths open an explicit `SerialConfig` through the controller library's
 `open_serial`. No connection code needs to be written by the operator.
 The model, port and matching front-panel baud must be supplied; write lessons also
 require an explicit target and site ceiling in W. There are no physical power
@@ -190,9 +187,9 @@ python scripts/validate.py
 ```
 
 TEST-011/012/013 check all models, command order/readbacks, rejected states/inputs,
-failure stopping, script/runner entry points, and notebook execution in fresh kernels.
-Application functions and visible hardware helpers are checked against their paired
-Python definitions. Notebook code cells are kept below 30 lines, and each notebook
+failure stopping, terminal entry points, and notebook execution in fresh kernels.
+Every notebook function is checked against its equivalent in `run_tutorial.py`.
+Notebook code cells are kept below 30 lines, and each notebook
 executes in an empty working directory to prove it needs no adjacent scripts.
 Hardware cells are tested with a simulated serial factory and scripted human
 answers; no real port is opened. Tests cover configuration and cancellation before
@@ -200,7 +197,7 @@ open, `?SV` first, no writes without RUN, no fault injection and no reconnect/re
 Update both source forms when editing. Executed notebook copies go to
 `records/tutorial-notebooks/`; source notebooks keep outputs clear. Kernel tests
 block real serial opening/discovery before tutorial imports. The clean-install
-check runs all scripts and the runner's default with only the core wheel installed.
+check runs all four terminal lessons and the default with only the core wheel installed.
 
 Notebook execution uses the [NBClient API](https://nbclient.readthedocs.io/en/latest/client.html);
 interactive startup follows [JupyterLab's guide](https://jupyterlab.readthedocs.io/en/stable/getting_started/starting.html).

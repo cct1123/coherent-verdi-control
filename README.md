@@ -9,8 +9,9 @@ The RS-232 interface follows the supplied Coherent operator manual, Rev IB.
 
 **New to Verdi?** Start with the [four simulator tutorials](examples/tutorials/README.md):
 read status, set power in standby, run one controlled session, and diagnose faults
-or lost replies. Each includes a small Python script and a self-contained Jupyter
-notebook with all demonstration functions laid out in short, named sections.
+or lost replies. Each has a self-contained Jupyter notebook with all demonstration
+functions laid out in short, named sections. The terminal equivalents share one
+[Python file](examples/tutorials/run_tutorial.py) with direct function calls.
 An implemented [operator runner](examples/tutorials/README.md#human-operated-hardware)
 and optional notebook cells support explicit human-operated serial sessions after
 hardware review; simulator mode remains the default and the only development/test mode.
@@ -190,8 +191,9 @@ archive completeness, an isolated wheel-install smoke test and the JavaScript
 watchdog regression. One clean environment first checks the dependency-free core,
 then installs GUI/serial extras and checks Dash HTTP callbacks and packaged assets.
 It also executes all four tutorial notebooks in fresh hardware-guarded kernels,
-checks their code matches the scripts, and runs the scripts against the installed
-core wheel. Executed notebook copies are saved in `records/tutorial-notebooks/`.
+checks every notebook function against the terminal equivalent, and runs all four
+terminal lessons against the installed core wheel. Executed notebook copies are
+saved in `records/tutorial-notebooks/`.
 The extras check needs access to the configured pip registry
 or its cache. Node.js 22 or later must be on PATH; `VERDI_NODE` may name an
 explicit Node executable. Results and source hashes go to

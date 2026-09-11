@@ -72,3 +72,13 @@ Further clarification during publication review: tutorial notebooks must not use
 hidden scripts. Lay out every demonstration function explicitly in the notebook,
 use clear sections and avoid crowded code blocks. Retain the requested review,
 pruning, commit and push after satisfying this notebook presentation requirement.
+
+## Simplification (user request, 2026-09-10)
+
+Simplify the codebase aggressively: remove unnecessary scaffolding, abstractions,
+wrappers, duplicate utilities, unused modules, placeholder code and dependencies.
+Prefer direct functions and small classes; reduce files where reasonable and
+simplify configuration/control flow. Preserve required controller features,
+safety checks, tests and hardware/simulator separation. Keep public APIs stable
+when practical and update tests/documentation. The target is the smallest clean,
+maintainable implementation that still fully supports the Verdi controller.

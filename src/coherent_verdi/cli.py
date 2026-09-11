@@ -53,17 +53,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = controller.diagnostics()
             elif args.command == "query":
                 result = controller.query(Query(args.query))
-            elif args.command == "set-power":
-                controller.set_power_w(args.watts)
-                result = controller.status()
-            elif args.command == "standby":
-                controller.standby()
-                result = controller.status()
-            elif args.command == "enable":
-                controller.enable_laser()
-                result = controller.status()
-            elif args.command == "shutter":
-                controller.set_shutter(open=args.state == "open")
+            elif args.command in ("set-power", "standby", "enable", "shutter"):
+                if args.command == "set-power":
+                    controller.set_power_w(args.watts)
+                elif args.command == "standby":
+                    controller.standby()
+                elif args.command == "enable":
+                    controller.enable_laser()
+                else:
+                    controller.set_shutter(open=args.state == "open")
                 result = controller.status()
             elif args.command == "watch":
                 if not 1 <= args.count <= 100000:

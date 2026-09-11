@@ -220,6 +220,10 @@ def test_cli_explicit_writes_and_errors(capsys):
     assert json.loads(capsys.readouterr().out)["result"]["laser_state"] == 1
     assert main(["--demo", "shutter", "closed"]) == 0
     assert json.loads(capsys.readouterr().out)["result"]["shutter_open"] is False
+    assert main(["--allow-writes", "set-power", "0.25"]) == 0
+    assert json.loads(capsys.readouterr().out)["result"]["set_power_w"] == 0.25
+    assert main(["--demo", "standby"]) == 0
+    assert json.loads(capsys.readouterr().out)["result"]["laser_state"] == 0
 
 
 def test_cli_watch_jsonlines_and_invalid_interval(capsys):
