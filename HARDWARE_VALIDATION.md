@@ -30,8 +30,8 @@ TEST-010A. Expected: connection sends **no Verdi instructions**. Explicitly sele
 native serial port, 8N1, no flow control; the selected baud rate matches the front
 panel, with 19200 only the documented factory default. Review cable pinout/DCE
 orientation from Figure 5-1. No auto-baud, enumeration, buffer purge or echo/prompt
-configuration. The reviewed `open_serial` factory requires `hardware_allowed=True`;
-only use it after the recorded authorization. Keep `allow_writes=False`.
+configuration. Call `VerdiController(port, model=model, baudrate=baudrate).connect()`
+only after recorded authorization; explicit connect is the hardware entry point. Keep `allow_writes=False`.
 
 TEST-010B. Issue **one `?SV\r\n` query**. Capture transmitted/received bytes and
 timestamps without modifying device state. Compare CR/LF, prompt/echo layout and
@@ -53,7 +53,7 @@ documented CR/LF handshaking, recording raw bytes and parsed values:
 
 Record the actual no-active-fault `?F` reply and independently verify its meaning
 against the operator's observed state/firmware documentation before setting
-`ControllerConfig.active_fault_clear_reply` to that exact text. `SYSTEM OK` is
+`active_fault_clear_reply` to that exact text. `SYSTEM OK` is
 specified only for history. A default physical controller deliberately rejects an
 unverified clear-looking response. For this one approved framing capture, use one
 owner of the serial transport to record the single `?F` exchange before typed
@@ -74,7 +74,7 @@ Only start after Stage 1 passes and an operator approves exact write scope,
 conditions, maximum power and abort procedure for this candidate and device.
 Create a fresh controller configuration with `allow_writes=True` and the approved
 site ceiling. A model's 2/5/6 W software ceiling is not a site safety limit.
-Stop the read-only telemetry service and close its controller before transferring
+Stop read-only acquisition and disconnect its controller before transferring
 connection ownership to a new controller; never open a second owner on the same
 link. This transition must not send automatic mode changes or replay prior writes.
 
@@ -138,7 +138,7 @@ On unexpected behavior, stop issuing further software commands and involve the
 operator. Use the established physical safety procedure; software communication
 may already be unavailable. If communication is trustworthy and an explicit
 shutdown scope applies, the operator may command shutter closed and STANDBY and
-verify them. Stop telemetry before releasing the controller. `close()` only
+verify them. Stop telemetry before releasing the controller. `disconnect()` only
 closes the port. Follow the manual's LBO cool-down and complete-shutdown procedure
 (p. 4-5); do not cut AC or power-cycle as a communication-recovery shortcut.
 For complete shutdown, that procedure retains AC through LBO cooldown and waits

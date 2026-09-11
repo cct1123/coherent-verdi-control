@@ -10,54 +10,8 @@ from collections.abc import Callable
 from threading import RLock
 from time import monotonic
 
-from .errors import ConnectionUnusable, ResponseTimeout
-from .models import LaserState, Model, finite_range
-
-# Table 5-4 long forms; deliberately independent of the controller query catalog.
-_QUERY_NAMES = {
-    "AVG CURRENT AND DELTA": "?ACAD",
-    "BASEPLATE TEMP": "?BT",
-    "BAUD RATE": "?B",
-    "CURRENT": "?C",
-    "DIODE1 CURRENT": "?D1C",
-    "DIODE1 HEATSINK TEMP": "?D1HST",
-    "DIODE1 HOURS": "?D1H",
-    "DIODE1 PHOTOCELL": "?D1PC",
-    "DIODE1 RATED CURRENT FACTOR": "?D1RCF",
-    "DIODE1 RATED CURRENT MAX": "?D1RCM",
-    "DIODE1 SERVO STATUS": "?D1SS",
-    "DIODE1 SET TEMP": "?D1ST",
-    "DIODE1 TEMP DRIVE": "?D1TD",
-    "DIODE1 TEMP": "?D1T",
-    "DIODE1 5VREF SENSE": "?D15V",
-    "DIODE OPTIMIZER STATUS": "?DIOS",
-    "ETALON DRIVE": "?ED",
-    "ETALON SERVO STATUS": "?ESS",
-    "ETALON SET TEMP": "?EST",
-    "ETALON TEMP": "?ET",
-    "FAULTS": "?F",
-    "FAULT HISTORY": "?FH",
-    "HEAD_HOURS": "?HH",
-    "KEYSWITCH": "?K",
-    "LASER": "?L",
-    "LBO DRIVE": "?LBOD",
-    "LBO HEATER": "?LBOH",
-    "LBO OPTIMIZER STATUS": "?LBOOS",
-    "LBO SET TEMP": "?LBOST",
-    "LBO SERVO STATUS": "?LBOSS",
-    "LBO TEMP": "?LBOT",
-    "LIGHT": "?P",
-    "LIGHT REG STATUS": "?LRS",
-    "MODE": "?M",
-    "PS HOURS": "?PSH",
-    "SET LIGHT": "?SP",
-    "SHUTTER": "?S",
-    "SOFTWARE": "?SV",
-    "VANADATE SET TEMP": "?VST",
-    "VANADATE TEMP": "?VT",
-    "VANADATE DRIVE": "?VD",
-    "VANADATE SERVO STATUS": "?VSS",
-}
+from .errors import TransportError
+from .protocol import LaserState, Model, finite_range
 
 
 class SimulatedTransport:
@@ -65,15 +19,14 @@ class SimulatedTransport:
 
     def __init__(
         self,
-        model: Model = Model.V5,
+        model: Model | str = Model.V5,
         *,
         clock: Callable[[], float] = monotonic,
         warmup_s: float = 0.0,
         echo: bool = False,
         prompt: bool = False,
     ) -> None:
-        if not isinstance(model, Model):
-            raise ValueError("model must be a Model enum")
+        model = Model(model)
         finite_range(warmup_s, 0, 86400, "warmup_s")
         if type(echo) is not bool or type(prompt) is not bool:
             raise ValueError("echo and prompt must be bools")
@@ -83,7 +36,7 @@ class SimulatedTransport:
         self._warmup_s = warmup_s
         self._echo = echo
         self._prompt = prompt
-        self._closed = False
+        self._closed = True
         self._lock = RLock()
         self._key = False
         self._laser = LaserState.STANDBY
@@ -131,7 +84,7 @@ class SimulatedTransport:
 
     def inject_timeout(self, *, after_apply: bool = False) -> None:
         """Model a lost request or an applied command whose acknowledgment is lost."""
-        self.inject(ResponseTimeout("simulated response timeout"), after_apply=after_apply)
+        self.inject(TransportError("simulated response timeout"), after_apply=after_apply)
 
     def _ready(self) -> bool:
         return self._clock() - self._started >= self._warmup_s
@@ -157,7 +110,7 @@ class SimulatedTransport:
         # Closed-shutter idle is not diode-off (Tables 4-1/4-3). Values are fixtures.
         current = ("12.0" if self._shutter else "1.0") if diode_on else "0.0"
         fraction = 1.0 if not self._warmup_s else min(1.0, elapsed / self._warmup_s)
-        # Independent literal query mapping deliberately does not import QUERY_SPECS.
+        # Independent short-form replies for the controller; values are fixtures.
         values: dict[str, str] = {
             "?ACAD": f"{current}&0.0",
             "?BT": "30.00",
@@ -202,26 +155,25 @@ class SimulatedTransport:
             "?VD": "0.0",
             "?VSS": "1",
         }
-        name = instruction[1:] if instruction.startswith("?") else instruction[6:]
-        return values.get(_QUERY_NAMES.get(name, "?" + name), f"Query Error: {instruction}")
+        return values.get(instruction, f"Query Error: {instruction}")
 
     def _command(self, instruction: str) -> str:
-        name, sep, operand = instruction.replace(":", "=", 1).partition("=")
+        name, sep, operand = instruction.partition("=")
         if not sep:
             return f"Command Error: {instruction}"
         name, operand = name.strip(), operand.strip()
-        if name in ("P", "POWER", "LIGHT"):
+        if name == "P":
             if not re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", operand):
                 return f"RANGE ERROR: {instruction}"
             try:
                 self._power = finite_range(float(operand), 0, self.model.rated_power_w, "power")
             except ValueError:
                 return f"RANGE ERROR: {instruction}"
-        elif name in ("L", "LASER", "S", "SHUTTER", "E", "ECHO", "PROMPT", ">"):
+        elif name in ("L", "S", "E", "PROMPT"):
             if operand not in ("0", "1"):
                 return f"RANGE ERROR: {instruction}"
             value = operand == "1"
-            if name in ("L", "LASER"):
+            if name == "L":
                 if value:
                     self._history = ()
                     if self._key and not self._ready():
@@ -235,12 +187,12 @@ class SimulatedTransport:
                     self._laser = LaserState.STANDBY
                     self._shutter = False
                     self._warmup_fault = False
-            elif name in ("S", "SHUTTER"):
+            elif name == "S":
                 # Conservative simulation policy; not a claim about rejected hardware writes.
                 self._shutter = value and self._laser == LaserState.ON and self._key
-            elif name in ("E", "ECHO"):
+            elif name == "E":
                 self._echo = value
-            elif name in ("PROMPT", ">"):
+            elif name == "PROMPT":
                 self._prompt = not value
         else:
             return f"Command Error: {instruction}"
@@ -249,18 +201,16 @@ class SimulatedTransport:
     def exchange(self, request: bytes) -> bytes:
         with self._lock:
             if self._closed:
-                raise ConnectionUnusable("simulator connection is closed")
+                raise TransportError("simulator connection is closed")
             self._requests.append(request)
             if request.endswith(b"\r\n"):
                 body = request[:-2]
-            elif request.endswith(b";"):
-                body = request[:-1]
             else:
-                raise ValueError("simulator expects CR/LF or semicolon termination")
+                raise ValueError("simulator expects CR/LF termination")
             if not body or any(c < 32 or c > 126 or c == 59 for c in body):
                 raise ValueError("simulator accepts one printable ASCII instruction at a time")
             instruction = body.decode("ascii")
-            query = instruction.startswith(("?", "PRINT "))
+            query = instruction.startswith("?")
             if self._injections:
                 result, after_apply = self._injections.popleft()
                 if after_apply and not query:
@@ -276,6 +226,11 @@ class SimulatedTransport:
                 parts.append(payload)
             return (" ".join(parts) + "\r\n").encode("ascii")
 
-    def close(self) -> None:
+    def disconnect(self) -> None:
         with self._lock:
             self._closed = True
+
+    def connect(self) -> None:
+        """Open the fake connection without resetting its plant state."""
+        with self._lock:
+            self._closed = False

@@ -4,7 +4,6 @@ import pytest
 
 from coherent_verdi import DeviceError, ProtocolError, Query, SimulatedTransport
 from coherent_verdi.protocol import (
-    QUERY_SPECS,
     decode_response,
     encode_instruction,
     parse_faults,
@@ -119,11 +118,6 @@ def test_undocumented_fault_replies_are_not_assumed_clear(payload):
         parse_faults(payload)
 
 
-def test_catalog_complete_with_manual_references():
-    assert len(QUERY_SPECS) == len(Query) == 42
-    assert all(spec.page in {"5-6", "5-7", "5-8", "5-9", "5-10"} for spec in QUERY_SPECS.values())
-
-
 # TEST-016: independent transcription of all Table 5-4 rows, pp.5-6..5-10.
 # Payloads are representative software vectors, not physical measurements.
 MANUAL_QUERIES = [
@@ -181,12 +175,8 @@ MANUAL_QUERIES = [
 
 
 @pytest.mark.parametrize("short,long,page,unit,payload,expected,choices", MANUAL_QUERIES)
-def test_every_manual_query_format_units_codes_and_aliases(
-    short, long, page, unit, payload, expected, choices
-):
+def test_every_manual_query_value_and_codes(short, long, page, unit, payload, expected, choices):
     query = Query(short)
-    spec = QUERY_SPECS[query]
-    assert (spec.page, spec.unit, spec.choices) == (page, unit, choices)
     value = parse_value(query, payload)
     if isinstance(expected, tuple):
         assert tuple(fault.code for fault in value) == expected
@@ -197,14 +187,6 @@ def test_every_manual_query_format_units_codes_and_aliases(
     if choices:
         with pytest.raises(ProtocolError):
             parse_value(query, str(max(choices) + 1))
-    sim = SimulatedTransport()
-    try:
-        canonical = sim.exchange((short + "\r\n").encode())
-        for alias in ("?" + long, "PRINT " + long, "PRINT " + short[1:]):
-            for terminator in ("\r\n", ";"):
-                assert sim.exchange((alias + terminator).encode()) == canonical
-    finally:
-        sim.close()
 
 
 def test_manual_query_inventory_is_exact():
@@ -226,10 +208,11 @@ def test_table_5_1_error_layouts_preserve_instruction_and_error(echo, prompt, in
         decode_response(instruction, wire, query=instruction.startswith("?"))
     assert caught.value.response == error + " " + instruction
     sim = SimulatedTransport(echo=echo, prompt=prompt)
+    sim.connect()
     try:
         assert sim.exchange((instruction + "\r\n").encode()) == wire
     finally:
-        sim.close()
+        sim.disconnect()
 
 
 def test_complete_fault_catalog_including_manual_disagreement():

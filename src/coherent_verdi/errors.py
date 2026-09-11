@@ -1,4 +1,4 @@
-"""Stable public exceptions; uncertain writes must never be retried automatically."""
+"""Communication failures may leave hardware state unknown; never replay commands."""
 
 
 class VerdiError(Exception):
@@ -7,14 +7,6 @@ class VerdiError(Exception):
 
 class TransportError(VerdiError):
     """Communication failed; a write may already have reached the laser."""
-
-
-class ResponseTimeout(TransportError):
-    """A complete reply did not arrive before the deadline."""
-
-
-class ConnectionUnusable(TransportError):
-    """Closed or desynchronized connection; explicit replacement is required."""
 
 
 class ProtocolError(VerdiError):
@@ -28,7 +20,3 @@ class DeviceError(VerdiError):
         self.instruction = instruction
         self.response = response
         super().__init__(f"{instruction}: {response}")
-
-
-class WritesDisabled(VerdiError):
-    """The caller has not explicitly enabled controller writes."""

@@ -56,7 +56,7 @@ kernel. Do not add serial connection code to resolve a notebook setup error.
 `?` starts a query. `=` sets a value. The controller sends ASCII with CR/LF,
 waits for a complete reply, and parses it before sending the next instruction.
 Successful commands normally have an empty acknowledgment when echo/prompt are
-off; no `OK` acknowledgment is expected. Construction and `close()` send nothing.
+off; no `OK` acknowledgment is expected. Construction and `disconnect()` send nothing.
 
 `status()` expands to `?L, ?K, ?S, ?P, ?SP, ?D1C, ?D1T, ?D1HST, ?BT, ?LBOT,
 ?LBOSS, ?ET, ?VT, ?F`. It is a sequential sample, not a simultaneous measurement.
@@ -71,7 +71,7 @@ Tables 5-1, 5-3 and 5-4 (printed pp. 5-2, 5-5 through 5-10). See the
 
 Query `?SV`, `status()` and `diagnostics()`. The simulator reports V5,
 STANDBY, key OFF, shutter closed, 0 W, LBO 148 °C / LOCKED, 100 head hours
-and no faults. The write-protection exercise catches `WritesDisabled` without
+and no faults. The write-protection exercise catches `PermissionError` without
 transmitting a command. Query failures stop the run rather than present partial
 data as healthy. See [lesson 1](01_read_status.ipynb) for code and an exercise.
 
@@ -114,8 +114,8 @@ whether a command executed. Unknown codes remain visible and require diagnosis.
 Each notebook explicitly defines its connection, validation and cleanup functions
 in section 7 and calls its own application functions. No external tutorial code is
 loaded. For terminal use, [run_tutorial.py](run_tutorial.py) calls its own lesson
-functions. Both paths open an explicit `SerialConfig` through the controller library's
-`open_serial`. No connection code needs to be written by the operator.
+functions. Both pass explicit serial keywords to `VerdiController` and call
+its connection API after operator confirmation. No connection code needs to be written by the operator.
 The model, port and matching front-panel baud must be supplied; write lessons also
 require an explicit target and site ceiling in W. There are no physical power
 defaults. The 1 s transaction timeout is configurable with `--timeout-s` and
@@ -202,10 +202,10 @@ python scripts/validate.py
 
 TEST-011/012/013 check all models, command order/readbacks, rejected states/inputs,
 failure stopping, terminal entry points, and notebook execution in fresh kernels.
-Every notebook function is checked against its equivalent in `run_tutorial.py`.
+Every notebook executes its visible functions through the public controller API.
 Notebook code cells are kept below 30 lines, and each notebook
 executes in an empty working directory to prove it needs no adjacent scripts.
-Hardware cells are tested with a simulated serial factory and scripted human
+Hardware cells are tested with a simulated serial connection and scripted human
 answers; no real port is opened. Tests cover configuration and cancellation before
 open, `?SV` first, no writes without RUN, no fault injection and no reconnect/replay.
 Update both source forms when editing. Executed notebook copies go to

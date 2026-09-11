@@ -1,122 +1,70 @@
-# Integration guide
+# Integration into an experiment stack
 
-## Ownership and concurrency
-
-Use one `VerdiController` per physical connection and share it among clients.
-The controller serializes all transactions and holds its lock over `status()`
-and `diagnostics()` query groups. A status sample is 14 sequential reads; its UTC
-timestamp marks the start and `duration_s` records elapsed sampling time. External
-hardware/front-panel changes can still occur between queries.
-
-The controller owns its transport. The telemetry service owns its worker and
-does not own the controller. Dash owns neither. Shutdown in that order: stop
-the worker, then close the controller. Communication close issues no device
-commands. A surrounding application must separately implement its authorized
-hardware shutdown policy.
-
-See the [architecture diagram](../README.md#architecture). Protocol functions parse
-bytes; the controller directly owns a serial or simulated transport. Dash supplies
-the Plotly runtime and receives plain figure dictionaries from cached telemetry.
-
-## API and errors
-
-The [API reference](API.md) lists immutable configurations, units, methods and
-exceptions. Select the model explicitly and use a lower `power_limit_w` when needed;
-the manual provides no automatic model-discovery query.
-
-Catch `VerdiError` at the application boundary. `DeviceError` retains the
-instruction and device reply. `ResponseTimeout`/`TransportError` mean that an
-operation may already have taken effect. `ProtocolError` means malformed or
-unsupported data; it is never converted to a nominal state. `ConnectionUnusable`
-requires explicit replacement. Bad local inputs raise `ValueError` before I/O;
-disabled writes raise `WritesDisabled`. Automatic retries are intentionally absent.
-
-Before physical status acquisition, complete Stage 1 and configure the verified
-`active_fault_clear_reply`. The manual's `?FH` clear text does not establish `?F`
-clear semantics. The default physical configuration rejects unverified clear-looking
-replies rather than treating them as healthy. See [protocol uncertainties](PROTOCOL.md#uncertainty-register).
-
-`replace_transport(fresh)` closes the old transport and installs a caller-prepared
-new one without replaying commands. The caller owns establishing a truly clean
-physical session after later authorization. It cannot replace a closed controller.
-Do not share one transport among controllers or use it directly alongside its owner.
-
-## Telemetry
+Create one controller per connection and share it with clients. Its lock serializes
+requests and complete status/diagnostic groups. Status contains 14 sequential
+readings: timestamp marks the start and duration covers all queries. Front-panel
+actions can still change hardware between queries.
 
 ```python
-from coherent_verdi import ControllerConfig, Model, SimulatedTransport
-from coherent_verdi import TelemetryService, VerdiController
+from coherent_verdi import SimulatedTransport, VerdiController
 
-with VerdiController(SimulatedTransport(), ControllerConfig(Model.V5)) as controller:
-    with TelemetryService(controller, interval_s=1, history_size=600) as telemetry:
-        # Application work here. telemetry.history is an immutable cached snapshot.
-        # The first sample may still be in progress when this block begins.
-        pass
+laser = VerdiController(SimulatedTransport(), model="V5")
+laser.connect()
+try:
+    print(laser.read_power_w())
+    # Share this connected object with the experiment's other components.
+finally:
+    laser.disconnect()
 ```
 
-`interval_s` is the minimum delay **after** a full sample, not a guaranteed sample
-frequency. There are no catch-up bursts. Failed samples have `status=None`, an
-error message and exception type. Consumers must check those fields and sample
-age; no last-good value is represented as fresh after failure. History size is
-bounded. The library logs telemetry errors to `coherent_verdi.telemetry` without
-configuring the application's logging handlers.
+The hardware form takes an operator-identified port instead of the simulator.
+After candidate approval, start with passive connect and one `read("?SV")`.
+Broader status acquisition needs verified clear-fault text. See [API](API.md) and
+[physical procedure](../HARDWARE_VALIDATION.md).
 
-The controller reference and interval are read-only for each service. Stop the
-service and create a new one to change its controller, model, or polling interval.
-For recovery on the same controller, use its explicit `replace_transport()` API.
-Failed samples enter the cache before logging. Logging handlers may inspect the
-cache or lifecycle without holding up its locks; a failing logging sink cannot
-discard the sample or terminate acquisition. Keep handlers short because they
-still execute synchronously on the thread that attempted the sample.
+Import, construction, connect and disconnect issue no laser commands. Within an
+approved scope and trustworthy connection, explicitly command shutter closure and
+standby and verify readbacks. After uncertain I/O, stop issuing commands and use
+the operator's physical abort procedure. Context cleanup only closes communication;
+it cannot undo a command that executed before its reply was lost.
 
-`snapshot()` returns an immutable `TelemetrySnapshot` of the cache, configured
-model, source kind and sample age without acquiring a controller transaction
-lock. Freshness uses a monotonic clock measured from the polling attempt's start;
-UTC timestamps are for display and recording. Clock corrections cannot make old
-data appear fresh. A failed sample has an unavailable source, even if its
-exception message is empty. `Status.simulated` identifies each successful
-sample's source. A successful switch between simulated and physical sources
-clears retained history so one plot cannot silently mix the two; sequence numbers
-continue increasing. No-data startup remains explicitly unavailable.
+An interruption, timeout or malformed reply invalidates the controller session.
+Disconnect remains retryable if cleanup fails. Establish a clean connection before
+constructing another controller; reopening does not prove delayed untagged replies
+are gone. Complete DeviceError replies can be diagnosed using the same session.
+No state is automatically restored, reset or replayed.
 
-`stop()` waits up to 30 s by default. If an injected/custom transport exceeds
-that bound it raises `TimeoutError` instead of claiming the thread stopped.
-The serial adapter's per-transaction default is 1 s; longer caller-configured
-timeouts require an appropriate stop budget (14 queries per status sample).
-All custom transports must provide bounded I/O and exclusive request/reply ownership.
+## Monitoring and logging
 
-If controller or serial transport cleanup fails, I/O remains disabled and an
-explicit later `close()` can retry resource release. A failed transport
-replacement also disables I/O until cleanup and replacement succeed. Interrupted
-serial opening cleans up the partial handle while preserving the original
-exception. Resource cleanup does not perform device commands.
+Monitor borrows a controller without connecting, closing or creating workers.
+Call `poll_once()` from the experiment scheduler. Write its returned Sample with
+`to_json()` to JSON Lines, a notebook or an existing logger. No global handlers
+or hidden callbacks are installed.
 
-For async applications, see [async_integration.py](../examples/async_integration.py).
-`asyncio.to_thread` prevents blocking the event loop. Canceling the awaiting task
-does not cancel an in-flight serial command; await/drain outstanding work before
-closing the controller. Never interpret cancellation as a physical stop.
-The example keeps the controller context and its sequential reads inside one
-worker function, so that worker retains responsibility for cleanup if its async
-caller is canceled. Application-owned long-lived controllers need the same
-explicit drain-before-close policy.
+`snapshot()` copies the bounded cache under a short lock without waiting for I/O.
+It contains model, simulated, history, interval_s and age_s. Samples contain
+sequence, UTC attempt time, status or an error string. Age uses monotonic time
+from acquisition start. Errors produce gaps; source metadata remains known when
+a reading fails. Use a new monitor for each new controller/session.
 
-## Dash deployment
+`interval_s` is a scheduling hint used for GUI staleness and by the launcher.
+The launcher waits this interval after each sample; no exact rate or catch-up
+burst is promised. Other schedulers own timing. Finish acquisition before disconnect.
 
-`create_app(telemetry)` constructs a read-only monitoring app. Its callbacks only
-read telemetry snapshots and cannot control the laser or wait for serial I/O.
-The source badge follows the displayed sample and reports unavailable on errors.
-The owner starts/stops the
-service. Multiple browser tabs share the same cache and cause no new device queries.
+## Async applications and Dash
 
-The CLI serves localhost with debug/reloader disabled. For a larger deployment,
-provide authentication through the existing stack, retain one process owning the
-controller, and expose snapshots through your application boundary if using
-multiple web workers. Do not construct one hardware owner per WSGI worker.
-The optional GUI is not an access-control or safety system.
+[async_integration.py](../examples/async_integration.py) puts the complete
+connection/read/cleanup block inside `asyncio.to_thread`. Cancelling the await
+does not cancel serial I/O or stop emission. Drain work before releasing an
+application-owned controller.
 
-A local browser watchdog marks all displayed data stale after 10 seconds without
-a server callback, including when the server itself stops. It uses browser
-monotonic receipt time and makes no device or network queries. If the browser/OS
-is suspended, the warning can only update once browser execution resumes.
-Reload browser tabs after upgrading the application, so the layout and callback
-definitions match the running server version.
+`coherent_verdi.gui.create_app(monitor)` builds the read-only Dash app. It reads
+only cached public monitor data; Monitor uses the public `status()` API. The
+caller schedules polling. The simulator CLI explicitly starts/joins one worker;
+browser tabs never create extra acquisition.
+
+Serve on loopback or behind the stack's authenticated proxy. Disable debug and
+reloader; do not create a controller per web worker. GUI errors show unknown
+values, old samples become stale, and a browser watchdog warns after 10 seconds
+without updates. Suspended browsers can update only on resume. The GUI provides
+observation, not a hardware interlock or shutdown mechanism.

@@ -13,7 +13,7 @@ poorly spaced fault codes 19, 21, 25, 27 and 28. No newer firmware behavior is a
   this library emits **CR/LF only**, one instruction per transaction.
 - `PRINT ` and `?` are equivalent query prefixes; `:` and `=` are equivalent
   command delimiters (p. 5-3). The controller emits catalogued short queries and
-  `=` commands; the simulator also accepts documented long forms and alternatives.
+  `=` commands; the simulator supports the same emitted subset, not all firmware aliases.
 - Replies end in CR/LF; wait for a complete reply before the next instruction.
 - Table 5-1, p. 5-2: a successful command replies with an empty CR/LF when echo
   and prompt are off. There is no documented `OK` command acknowledgment.
@@ -40,20 +40,20 @@ There is no automatic retry, input-buffer purge, mode normalization or state rep
 | API | Wire form | Source / meaning |
 | --- | --- | --- |
 | `set_power_w(watts)` | `P=nn.nnnn` | Table 5-3, pp. 5-5–5-6; light regulation in W |
-| `standby()` | `L=0` | p. 5-5; STANDBY overrides the ON keyswitch |
-| `enable_laser()` | `L=1` | p. 5-5; key must be ON; resets faults and clears fault history |
+| `stop()` | `L=0` | p. 5-5; STANDBY overrides the ON keyswitch |
+| `start()` | `L=1` | p. 5-5; key must be ON; resets faults and clears fault history |
 | `set_shutter(open=...)` | `S=0/1` | p. 5-6; closes/opens the head shutter |
 | `set_echo(enabled=...)` | `E=0/1` | p. 5-5; change applies to the following command |
 | `set_prompt(enabled=...)` | `PROMPT=0/1` | p. 5-6; **0 enables, 1 disables** prompt; `>=n` is its alternate spelling |
 
-Writes require `ControllerConfig(..., allow_writes=True)`. Construction, close,
-replacement and telemetry never issue commands. Mode writes are optional explicit
-operations; they are not connection prerequisites. `close()` only releases the
+Writes require `VerdiController(..., allow_writes=True)`. Construction, connection,
+disconnection and monitoring never issue commands. Mode writes are optional explicit
+operations; they are not connection prerequisites. `disconnect()` only releases the
 communication handle and **does not place the laser in STANDBY**.
 
 The manual also documents service/front-panel operations (baud-rate changes,
 chiller, FLASH, LBO heater/optimization, panel lock and menu buttons). They are
-outside the public operational API in 0.1.0. There is no unrestricted raw-write
+outside the public operational API in 0.2.0. There is no unrestricted raw-write
 escape hatch. Chiller operand details and service sequencing are insufficiently
 specified for this controller's scope. Extending this subset needs a documented
 use case, source review and software tests.
@@ -61,8 +61,9 @@ use case, source review and software tests.
 ## Query coverage
 
 All **42** short-form queries from Table 5-4 are represented by `Query`.
-`QUERY_SPECS` in [protocol.py](../src/coherent_verdi/protocol.py) maps each query to
-its printed page, documented unit and response parser.
+Direct parsing groups in [protocol.py](../src/coherent_verdi/protocol.py) distinguish
+raw text, documented integer codes and decimal numbers. Source pages are below;
+independent test vectors retain units and long names as manual reference data.
 
 | Source | Queries |
 | --- | --- |
@@ -81,7 +82,7 @@ For diode/LBO servo queries, code 5 is excluded for V6 and code 6 is excluded
 for V2 (pp. 5-7, 5-9); these mismatches raise `ProtocolError`. V5 can mean standard
 V5 or V5 UNO, so both codes remain representable until its variant is identified.
 
-The complete independent query/unit/code/alias vectors are in
+The complete independent query/unit/code vectors are in
 [test_protocol.py](../tests/test_protocol.py), `MANUAL_QUERIES`. Fault descriptions
 cover the union of Tables 5-4 and 6-1: 22 codes, including battery service code 30.
 Code 1 retains both conflicting manual labels (see below). Code 47 remains known
@@ -91,7 +92,7 @@ from Table 5-4 even though Table 6-1 omits it. Unknown positive codes remain fau
 
 1. **No active faults:** `SYSTEM OK` is explicit for `?FH`; the clear reply for
    `?F` is not explicit. Physical controllers therefore reject clear-looking
-   replies unless `ControllerConfig.active_fault_clear_reply` matches the exact
+   replies unless `active_fault_clear_reply` matches the exact
    text independently verified for that firmware in Stage 1. Its default is None;
    malformed/unverified data invalidates the session. Positive fault codes/lists
    cannot be configured as clear tokens. Empty replies remain unsupported.

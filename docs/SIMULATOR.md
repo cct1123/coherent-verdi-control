@@ -11,10 +11,10 @@ exercise SEEKING -> LOCKED without sleeping. Default runtime clocks use
 
 ## Documented semantics represented
 
-- All 42 short and long query spellings, `PRINT ` or `?`, `=` or `:`, CR/LF or
-  semicolon request endings, CR/LF replies, echo/prompt layouts and error prefixes.
-  A transaction still accepts exactly one instruction; batching is rejected.
-  The operational command subset includes `>=n` as the short prompt command.
+- All 42 short queries and the six exact command forms emitted by the controller,
+  with CR/LF framing, echo/prompt layouts and documented error prefixes.
+  Firmware aliases, long names, alternative separators and semicolon termination
+  are outside this fixture's scope. A transaction accepts exactly one instruction.
 - LASER state codes 0/1/2, keyswitch and shutter flags, servo states and fault codes.
 - `L=0` enters STANDBY; `L=1` needs key ON and clears the latched history fixture.
 - Key ON while the simulated LBO is cold reports fault 5 (LBO not locked), as
@@ -58,30 +58,29 @@ exercise SEEKING -> LOCKED without sleeping. Default runtime clocks use
   accepts the decimal spelling used by the controller. No case-folding is assumed.
 - The old prompt setting formats a setting command's acknowledgment. Transition
   ordering is a fixture choice because the manual does not explicitly define it.
-- A timeout injection can be recovered in the fake because no late bytes exist.
-  The serial adapter instead poisons a timed-out session. Do not infer real
-  reconnect behavior from the simpler fake.
+- Controller sessions latch failure after injected timeouts exactly as with serial.
+  Fixture state remains inspectable directly by tests, but applications must retire
+  a failed controller. No simulator behavior establishes real resynchronization.
 
 ## Failure injection and use
 
 ```python
-from coherent_verdi import ControllerConfig, Model, SimulatedTransport, VerdiController
+from coherent_verdi import Model, SimulatedTransport, VerdiController
 
 clock = [0.0]
 sim = SimulatedTransport(Model.V6, clock=lambda: clock[0], warmup_s=30)
-with VerdiController(sim, ControllerConfig(Model.V6)) as laser:
+with VerdiController(sim, model=Model.V6) as laser:
     assert laser.status().lbo_servo.name == "SEEKING"
     clock[0] = 30
     assert laser.status().lbo_servo.name == "LOCKED"
     sim.set_faults(2, 999)  # Includes an unknown fault: preserved, not discarded.
-    print(laser.faults())
-    sim.inject_timeout()  # Next request raises ResponseTimeout.
+    print(laser.read_faults())
+    sim.inject_timeout()  # Next request raises TransportError.
 ```
 
 `inject(b"malformed\r\n")` overrides the next response. `inject(Exception(...))`
-raises it. The controller makes malformed semantic replies unusable until an
-explicit transport replacement. Tests also use byte-stream fakes below the real
-serial adapter to cover fragmentation, dropped terminators, cable loss, partial
+raises it. The controller makes malformed semantic replies unusable; retire that controller after cleanup. Tests also use fake pySerial handles beneath the real
+serial connection to cover fragmentation, dropped terminators, cable loss, partial
 writes, response bounds and concurrency without a shared parser implementation.
 
 `inject_timeout(after_apply=True)` first applies the request to fake state and

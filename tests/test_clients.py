@@ -9,38 +9,40 @@ from threading import Event, Thread
 import pytest
 
 from coherent_verdi import (
-    ControllerConfig,
     Model,
     SimulatedTransport,
-    TelemetryService,
     VerdiController,
 )
-from coherent_verdi.cli import main
+from coherent_verdi.__main__ import main
 from coherent_verdi.gui import create_app, dashboard_data
+from coherent_verdi.monitor import Monitor
 
 
 def test_bounded_history_failure_visibility_and_recovery():
     sim = SimulatedTransport()
-    controller = VerdiController(sim, ControllerConfig(Model.V5))
-    service = TelemetryService(controller, history_size=2)
+    controller = VerdiController(sim, model=Model.V5)
+    controller.connect()
+    service = Monitor(controller, history_size=2)
     first = service.poll_once()
     assert first.status is not None and first.error is None
     sim.inject_timeout()
     failed = service.poll_once()
     assert failed.status is None
-    assert failed.error_type == "ResponseTimeout"
+    assert failed.error.startswith("TransportError:")
     assert dashboard_data(service)["health"] == "ERROR"
     assert dashboard_data(service)["power_w"] == [0.0, None]
     service.poll_once()
-    assert [s.sequence for s in service.history] == [2, 3]
-    assert dashboard_data(service)["health"] == "LIVE"
+    assert [s.sequence for s in service.snapshot()["history"]] == [2, 3]
+    assert dashboard_data(service)["health"] == "ERROR"
+    assert len(sim.requests) == 15  # No extra I/O after failure.
 
 
 def test_staleness_and_empty_history():
     now = [0.0]
     sim = SimulatedTransport()
-    controller = VerdiController(sim, ControllerConfig(Model.V5))
-    service = TelemetryService(controller, clock=lambda: now[0])
+    controller = VerdiController(sim, model=Model.V5)
+    controller.connect()
+    service = Monitor(controller, clock=lambda: now[0])
     assert dashboard_data(service)["health"] == "NO DATA"
     service.poll_once()
     now[0] = 60.0
@@ -53,23 +55,23 @@ def test_staleness_and_empty_history():
 @pytest.mark.parametrize("wall_clock_offset_s", [-3600, 3600])
 def test_freshness_ignores_wall_clock_steps(monkeypatch, wall_clock_offset_s):
     now = [0.0]
-    with VerdiController(SimulatedTransport(), ControllerConfig(Model.V5)) as controller:
+    with VerdiController(SimulatedTransport(), model=Model.V5) as controller:
         status = controller.status()
         shifted = replace(
             status, sampled_at=status.sampled_at + timedelta(seconds=wall_clock_offset_s)
         )
         monkeypatch.setattr(controller, "status", lambda: shifted)
-        service = TelemetryService(controller, clock=lambda: now[0])
+        service = Monitor(controller, clock=lambda: now[0])
         service.poll_once()
         assert dashboard_data(service)["health"] == "LIVE"
         now[0] = 60
         assert dashboard_data(service)["health"] == "STALE"
-        assert service.snapshot().age_s == 60
+        assert service.snapshot()["age_s"] == 60
 
 
 def test_freshness_includes_slow_sampling(monkeypatch):
     now = [0.0]
-    with VerdiController(SimulatedTransport(), ControllerConfig(Model.V5)) as controller:
+    with VerdiController(SimulatedTransport(), model=Model.V5) as controller:
         original = controller.status
 
         def delayed():
@@ -77,16 +79,17 @@ def test_freshness_includes_slow_sampling(monkeypatch):
             return original()
 
         monkeypatch.setattr(controller, "status", delayed)
-        service = TelemetryService(controller, clock=lambda: now[0])
+        service = Monitor(controller, clock=lambda: now[0])
         service.poll_once()
-        assert service.snapshot().age_s == 60
+        assert service.snapshot()["age_s"] == 60
         assert dashboard_data(service)["health"] == "STALE"
 
 
 def test_dash_routes_callbacks_assets_and_no_independent_polling(callback_payload):
     sim = SimulatedTransport()
-    controller = VerdiController(sim, ControllerConfig(Model.V5))
-    service = TelemetryService(controller)
+    controller = VerdiController(sim, model=Model.V5)
+    controller.connect()
+    service = Monitor(controller)
     service.poll_once()
     count = len(sim.requests)
     app = create_app(service)
@@ -105,7 +108,6 @@ def test_dash_routes_callbacks_assets_and_no_independent_polling(callback_payloa
         assert data["power"]["children"] == "0.000"
         assert data["server-heartbeat"]["children"] == 1
     assert len(sim.requests) == count
-    assert not service.running  # app creation doesn't spawn a worker
     sim.inject_timeout()
     service.poll_once()
     response = client.post("/_dash-update-component", json=payload)
@@ -117,8 +119,8 @@ def test_dash_routes_callbacks_assets_and_no_independent_polling(callback_payloa
 
 
 def test_blank_exception_is_error_with_unavailable_current_values(monkeypatch, callback_payload):
-    with VerdiController(SimulatedTransport(), ControllerConfig(Model.V5)) as controller:
-        service = TelemetryService(controller)
+    with VerdiController(SimulatedTransport(), model=Model.V5) as controller:
+        service = Monitor(controller)
         service.poll_once()
 
         def fail():
@@ -128,8 +130,8 @@ def test_blank_exception_is_error_with_unavailable_current_values(monkeypatch, c
         service.poll_once()
         data = dashboard_data(service)
         assert data["health"] == "ERROR"
-        assert data["error"] == "RuntimeError"
-        assert data["status"] is None and data["simulated"] is None
+        assert data["error"] == "RuntimeError:"
+        assert data["status"] is None and data["simulated"] is True
         assert data["power_w"] == [0.0, None]
         app = create_app(service)
         response = app.server.test_client().post(
@@ -138,14 +140,14 @@ def test_blank_exception_is_error_with_unavailable_current_values(monkeypatch, c
         assert response.status_code == 200
         values = response.json["response"]
         assert values["health"]["children"] == "ERROR"
-        assert values["source"]["children"] == "SOURCE UNAVAILABLE"
+        assert values["source"]["children"] == "SIMULATOR"
         assert values["power"]["children"] == "—"
 
 
 def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch, callback_payload):
     sim = SimulatedTransport()
-    with VerdiController(sim, ControllerConfig(Model.V5)) as controller:
-        service = TelemetryService(controller)
+    with VerdiController(sim, model=Model.V5) as controller:
+        service = Monitor(controller)
         service.poll_once()
         entered, release, rendered = Event(), Event(), Event()
         original = sim.exchange
@@ -165,7 +167,8 @@ def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch, callback_
             )
             rendered.set()
 
-        service.start()
+        poller = Thread(target=service.poll_once)
+        poller.start()
         worker = Thread(target=render)
         try:
             assert entered.wait(2)
@@ -179,28 +182,8 @@ def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch, callback_
             release.set()
             if worker.ident is not None:
                 worker.join(5)
-            service.stop()
-
-
-def test_source_badge_tracks_sample_and_history_never_mixes_source_kinds(callback_payload):
-    # This transport remains entirely in memory; only its source metadata differs.
-    class NonSimulatedFake(SimulatedTransport):
-        is_simulated = False
-
-    config = ControllerConfig(Model.V5, active_fault_clear_reply="SYSTEM OK")
-    with VerdiController(SimulatedTransport(), config) as controller:
-        service = TelemetryService(controller)
-        service.poll_once()
-        app = create_app(service)
-        client = app.server.test_client()
-        assert b"SIMULATOR" in client.get("/_dash-layout").data
-        controller.replace_transport(NonSimulatedFake())
-        service.poll_once()
-        snapshot = service.snapshot()
-        assert snapshot.simulated is False
-        assert len(snapshot.history) == 1 and snapshot.history[0].sequence == 2
-        response = client.post("/_dash-update-component", json=callback_payload(app))
-        assert response.json["response"]["source"]["children"] == "PHYSICAL / UNVALIDATED"
+            poller.join(5)
+            assert not poller.is_alive()
 
 
 @pytest.mark.parametrize(
@@ -214,7 +197,7 @@ def test_cli_read_paths(args, capsys):
 
 def test_cli_explicit_writes_and_errors(capsys):
     assert main(["enable"]) == 2
-    assert json.loads(capsys.readouterr().err)["type"] == "WritesDisabled"
+    assert json.loads(capsys.readouterr().err)["type"] == "PermissionError"
     assert main(["--allow-writes", "set-power", "nan"]) == 2
     assert "finite" in capsys.readouterr().err
     assert main(["--allow-writes", "--sim-key-on", "enable"]) == 0
@@ -243,13 +226,13 @@ def test_cli_watch_flushes_each_record_before_waiting(monkeypatch):
             self.flushes += 1
 
     output = Output()
-    monkeypatch.setattr("coherent_verdi.cli.sys.stdout", output)
+    monkeypatch.setattr("coherent_verdi.__main__.sys.stdout", output)
 
     def after_first_record(interval):
         assert output.flushes == 1
         assert json.loads(output.getvalue())["sample"]["sequence"] == 1
 
-    monkeypatch.setattr("coherent_verdi.cli.sleep", after_first_record)
+    monkeypatch.setattr("coherent_verdi.__main__.sleep", after_first_record)
     assert main(["watch", "--count", "2"]) == 0
     assert output.flushes == 2
 
@@ -261,4 +244,34 @@ def test_cli_watch_returns_failure_when_any_sample_failed(monkeypatch, capsys):
     monkeypatch.setattr(VerdiController, "status", fail)
     assert main(["watch", "--count", "1"]) == 2
     sample = json.loads(capsys.readouterr().out)["sample"]
-    assert sample["status"] is None and sample["error_type"] == "RuntimeError"
+    assert sample["status"] is None and sample["error"] == "RuntimeError:"
+
+
+def test_gui_launcher_drains_acquisition_before_disconnect(monkeypatch):
+    entered, release, finished = Event(), Event(), Event()
+    original_status = VerdiController.status
+    original_disconnect = VerdiController.disconnect
+
+    def sample(controller):
+        entered.set()
+        assert release.wait(3)
+        result = original_status(controller)
+        finished.set()
+        return result
+
+    def disconnect(controller):
+        assert finished.is_set(), "connection closed before acquisition finished"
+        original_disconnect(controller)
+
+    class App:
+        def run(self, **settings):
+            assert settings["host"] == "127.0.0.1"
+            assert not settings["debug"] and not settings["use_reloader"]
+            assert entered.wait(3)
+            release.set()
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(VerdiController, "status", sample)
+    monkeypatch.setattr(VerdiController, "disconnect", disconnect)
+    monkeypatch.setattr("coherent_verdi.gui.create_app", lambda monitor: App())
+    assert main(["gui"]) == 130

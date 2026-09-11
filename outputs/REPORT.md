@@ -1,80 +1,93 @@
-# Verdi manual verification report
+# Compact Verdi driver — candidate review
 
-**Software/manual audit complete; physical behavior and calibration UNTESTED.**
-Source: supplied Coherent Verdi V2/V5/V6 Operator's Manual, **0171-750-00 Rev IB,
-08/2005**, sections 1, 2, 4, 5, 6 and relevant operating principles in section 7.
-The original PDF is unchanged. See the [source and protocol matrix](../docs/PROTOCOL.md)
-for its hash, printed-page references and implementation boundaries.
+Software-complete and hardware-ready for review. **Physical behavior, wiring,
+timing and calibration remain UNTESTED.** This software work authorizes no hardware
+access. Candidate SHA-256: `be0ad6235eb92e38800fe23e6c24f784719d4b5359d43f6b2ac2015a736fa027`; version 0.2.0, based on cfb3f4a.
 
-## What was checked
+## Simplification
 
-| Area | Coverage |
-| --- | --- |
-| Commands | All six public operations: power, standby, enable, shutter, echo and prompt; five wire families in Table 5-3, operands, aliases and side effects. |
-| Queries | All 42 Table 5-4 queries: spelling, units, response type and every documented state code; long forms and PRINT aliases. |
-| Wire and errors | Tables 5-1/5-2: CR/LF, semicolon requests, colon/equal delimiters, four echo/prompt layouts, three error prefixes, 8N1/no flow control and supported baud rates. |
-| Limits and safety | Model ratings versus firmware bounds; key/standby override, warmup/servo readiness, fault/history reset, shutter idle behavior, no automatic replay and complete shutdown. |
+| Measure | Before | After |
+| --- | ---: | ---: |
+| Package Python modules | 12 | 8 |
+| Package Python lines, including comments/blanks | 1610 | 1335 |
+| Classes, including enums, exceptions and typing protocols | 25 | 17 |
+| Root public exports | 24 | 12 |
+| Exception classes | 7 | 4 |
+| Core runtime dependencies | 0 | 0 |
 
-Independent [manual vectors](../tests/test_protocol.py) supplement existing tests.
-Service/front-panel writes remain outside the public API. Undocumented layouts and
-units remain raw text; no inferred service command or calibration API was added.
-The controller, serial transport and independent simulator remain separate; telemetry
-and Dash retain their existing ownership and cache boundaries.
+Final modules: controller, protocol, simulator, monitor, gui, errors, __init__,
+__main__. Configuration/model fragmentation, separate transport/serialization/CLI
+files, query-spec registry, transport replacement, telemetry lifecycle/logging
+machinery and compatibility exports were removed. Core operations use direct
+keywords and explicit connect/disconnect/read/set/start/stop/status methods.
+See [architecture](../ARCHITECTURE.md) and [API migration](../docs/API.md).
+This intentionally changes the previous interface; callers must migrate before use.
 
-## What was corrected
+## Device-control path and behavior
 
-- Added battery-service fault **30** from Table 6-1/Chart 13. Fault **1** now shows
-  the manual's conflicting head-interlock/emission-lamp descriptions. All 22 codes
-  in the union of the command and troubleshooting tables are represented.
-- Removed the assumption that active-fault query `?F` shares `?FH`'s `SYSTEM OK`
-  clear reply. Physical configurations now require independently verified
-  `active_fault_clear_reply` text. Unexpected clear-looking replies stop the
-  session; positive fault codes/lists cannot be configured as clear.
-- Enforced documented diode/LBO servo restrictions: V2 excludes code 6; V6 excludes
-  code 5. The controlled tutorial checks all four temperature servos before enable.
-- Added simulator long/PRINT query forms, colon/semicolon syntax and the short
-  prompt command; corrected acknowledgment spacing and rejected Python-only power
-  syntax. Enabled, shutter-closed diode current now differs from diode-off current.
-- Updated all four self-contained notebooks, terminal examples and documentation.
-  Corrected the shutter reference to Table 4-3, p.4-9; clarified key fixture behavior,
-  warmup and the below-40 °C LBO condition before AC removal during complete shutdown.
+One controller locks one backend. Each operation validates input, encodes one
+CR/LF request, exchanges once and decodes one reply. Status holds the lock for 14
+sequential reads. Six operations and all 42 manual short queries remain, with
+documented units/state codes and preservation of unknown positive fault codes.
+The simulator supports this emitted subset using independent in-memory replies;
+extra firmware aliases are no longer emulated. Its dynamics are fixtures.
 
-## What remains uncertain
+Import/construction cause no I/O. Connect passively opens the explicit port;
+disconnect sends no device commands. Timeout, partial write, interruption or
+malformed replies permanently invalidate that controller session. DeviceError
+denotes a complete rejection whose session remains readable. No automatic replay,
+flush, reconnect, mode change or state restoration is implemented. Failed cleanup
+can be retried; it does not revive the session or replace an existing error.
 
-The manual does not settle active-fault clear text, the conflicting code-1 label,
-V5 versus V5 UNO servo behavior, real echo timing/prompt transitions, transaction
-latency, firmware setpoint bounds/quantization, or fault recovery/latching details.
-The 2/5/6 W ratings are software ceilings, not site-approved safe limits. Simulator
-power/current values, closed-shutter `?P` and ramps are fixtures, not measurements.
-See the [uncertainty register](../docs/PROTOCOL.md#uncertainty-register).
-
-## What requires real hardware validation
-
-Follow [HARDWARE_VALIDATION.md](../HARDWARE_VALIDATION.md) only after explicit
-candidate approval. First: operator-confirmed model/port/baud and passive open,
-then one `?SV` query. Compare raw framing, state/servo values and front-panel
-readings; independently verify the exact `?F` clear response before configuring it.
-Separately approved writes must validate setpoint readback, key/standby behavior,
-one shutter cycle, warmup, physical interlocks, fault response and shutdown.
-Optical accuracy/calibration require suitable reference measurements.
-
-On communication failure, stop commands and use the operator's physical abort
-procedure. A lost acknowledgment may follow an applied command. Closing the port
-does not shut down the laser; software rollback cannot undo a physical action.
+Monitoring is optional and synchronous, with a bounded cache and monotonic age.
+Applications own scheduling/log sinks. Dash consumes only that cache; Monitor
+calls the public status API. The standalone GUI launcher explicitly creates and
+joins its polling thread. Core imports do not load monitoring, pySerial, Dash or
+Plotly, and simulator/controller/Monitor use starts no implicit thread.
 
 ## Validation
 
-**320 tests passed, 96% library statement coverage**, including eight fresh notebook
-executions and 75 tutorial/operator cases. All 11 validation stages passed: tests,
-lint, format, strict typing, dependency checks, builds, CLI, synchronous/async
-examples, clean core/extras installs and Node watchdog. No tests were removed.
-Notebooks retain visible helpers and sections; maximum code-cell length is 23 lines.
-Physical serial opening/discovery was blocked in tests and notebook kernels.
+[E039](../records/RECORDS.md#e039): **315 tests PASS, 97% coverage, all 11 integrated
+stages PASS**, including eight notebook executions, all operator paths with fake
+serial connections, strict typing, lint/format, dependencies, wheel/sdist, CLI and
+examples, isolated core/GUI installs and watchdog tests. The wheel contains exactly
+the eight source modules; core-only installation runs without optional dependencies.
+Tests prohibit physical opening/discovery, including in notebook kernels.
 
-[E035/E036 evidence](../records/RECORDS.md#e035), [validation manifest](../records/validation.json).
-[Publication review E037](../records/RECORDS.md#e037) found no further code defects;
-the same 320 tests and static checks passed again on unchanged implementation files.
-Run: `python scripts/validate.py` after installing `.[dev,serial,gui]`.
-Windows 11, Python 3.12.14, Node 24.19.0; one non-failing pyzmq warning.
-Timestamp: 2026-09-11T00:28:16.330843+00:00. All 52 source hashes and preserved inputs matched.
-Candidate SHA-256: `7cee08deb695a9136e4b07749dd7003c2ff5dff6b9f63fd3641503096d34693f`.
+The final review fixed non-boolean fault-history selectors that silently selected
+the history query, and added five regressions proving rejection before I/O. It also
+restored missing test guards, operating documents and the manual to the source
+archive, with explicit package checks. Version 0.2.0 identifies the intentional API
+break; build validation selects that version's artifacts and the local editable
+CLI installation was refreshed. The current user authorized commit and push.
+
+Environment: Windows, Python 3.12.14, Node v24.14.1. One non-failing pyzmq warning;
+no failed/skipped tests. Full versions, source/build hashes and commands are in
+[validation.json](../records/validation.json). Reproduce with `.[dev,serial,gui]`
+installed and `python scripts/validate.py`. GUI verification covers routes,
+callbacks, assets and watchdog behavior; old screenshots are historical.
+
+## Remaining hardware assumptions and first interactions
+
+The supplied manual remains authoritative. Hardware framing, actual response
+latency, `?F` no-fault text, V5/UNO servo variant, shutter-closed power reporting,
+startup/fault recovery behavior and calibration remain unverified. Model ratings
+are conservative software ceilings, not proven firmware bounds or site safety
+limits. No service, heater, chiller or calibration writes are exposed. See the
+[uncertainty register](../docs/PROTOCOL.md#uncertainty-register).
+
+The next physical phase requires explicit Stage 1 approval of this candidate plus
+actual model, operator-confirmed port/baud and site conditions. The exact first
+interactions are passive `connect()` and one `read("?SV")`, with writes disabled;
+capture raw framing/version and compare the front panel. Then follow TEST-010A..C
+in [HARDWARE_VALIDATION.md](../HARDWARE_VALIDATION.md), independently establish the
+`?F` clear reply, and return raw responses with units and PASS/FAIL/INCONCLUSIVE
+comparisons. Separately approve any TEST-010D..H writes, limits and abort conditions.
+There are no pending device operations or required human actions for this cleanup.
+
+Disconnect is not laser shutdown. Normal authorized shutdown explicitly closes
+the shutter and enters standby with readbacks; full heater/cooling shutdown follows
+the manual. On uncertain I/O, cease commands and use the physical abort procedure.
+For software rollback, reinstall a reviewed previous checkout while disconnected;
+do not infer or replay laser state. Any new physical integration still requires
+candidate review and the documented clean-session procedure.

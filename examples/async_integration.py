@@ -3,19 +3,18 @@
 import asyncio
 
 from coherent_verdi import (
-    ControllerConfig,
-    Diagnostics,
     Model,
     SimulatedTransport,
     Status,
     VerdiController,
 )
+from coherent_verdi.controller import Diagnostics
 
 
 def read_in_worker() -> tuple[Status, Diagnostics]:
     """Keep operation and cleanup ownership together, including after cancellation."""
-    with VerdiController(SimulatedTransport(Model.V2), ControllerConfig(Model.V2)) as laser:
-        return laser.status(), laser.diagnostics()
+    with VerdiController(SimulatedTransport(Model.V2), model=Model.V2) as laser:
+        return laser.status(), laser.read_diagnostics()
 
 
 async def main() -> None:

@@ -90,3 +90,16 @@ and safety rule against the official Verdi manual. Correct mismatches, missing
 behavior and unsupported assumptions; update the simulator and regression tests.
 Produce a short report of coverage, corrections, uncertainties and remaining
 physical validation. Continue using only simulated hardware for development/tests.
+
+## Compact driver redesign (user request, 2026-09-10)
+
+Review the entire repository and aggressively reduce Python modules, code and
+conceptual overhead. Target controller/protocol/simulator/monitor/gui/errors plus
+package entry points. Replace fragmented configuration, lifecycle/ownership systems,
+wrappers and compatibility layers with direct Python. Keep a small explicit device
+API, optional GUI/logging and a simulator using the same controller interface.
+Preserve only concretely justified hardware reliability and safety behavior.
+Update public imports, tutorials, examples, tests, README and architecture together;
+no external compatibility requirement has been identified. Validate externally
+meaningful behavior and retain documented protocol/physical-uncertainty distinctions.
+This request authorizes software changes only, with no physical access.

@@ -951,3 +951,119 @@ clean-install and watchdog results remain applicable and were not rerun.
 Origin/main fetched and matched HEAD at 82b6db1. Publication is authorized by the
 current request. No hardware accessed; physical validation remains UNTESTED and
 future integration requires the unchanged review gate. All test kernels completed.
+
+## D011
+
+Date: 2026-09-11T03:12:47.397880+00:00. Source: active user compact-driver redesign request, added to PROJECT.md.
+The repository at cfb3f4a had 12 package modules, 1610 Python lines, 25 classes and
+24 root exports. Reduce this to eight modules and direct device operations; no
+external compatibility obligation was identified. Config objects become constructor
+keywords; models move alongside their protocol/results; serial I/O moves into
+protocol.py; optional monitoring/JSON share monitor.py; CLI lives in __main__.py.
+Remove transport replacement, duplicate serial locks/session state, telemetry
+worker/lifecycle/log-handler machinery, QuerySpec metadata registry, three exception
+subclasses and legacy exports/modules. No compatibility aliases are retained.
+
+The backend's three methods and source flag remain as a structural typing contract
+for connection injection. Actual hardware state enums, status/diagnostic results,
+fault records and four actionable exception classes remain. The controller alone
+serializes serial transactions and latches uncertain outcomes. A simulator timeout
+now also latches controller failure; direct fixture inspection does not authorize
+continued application I/O. No replay, flush, negotiation or recovery command exists.
+The simulator implements the exact emitted short-form subset, not extra firmware
+aliases/terminators. All 42 public queries and six public operations are retained;
+manual aliases remain reference data. This deliberately narrows simulator scope
+under the latest cleanup request, superseding that part of E035.
+
+GUI callbacks continue to consume the public monitoring cache; Monitor calls the
+same status() used by scripts. Core and Monitor create no threads. The standalone
+GUI launcher explicitly starts and drains its worker before disconnect. Logging
+uses returned samples/JSON and the application's own sinks. Current REQ-003/005/015
+criteria are explicit lifecycle and useful device behavior, superseding derived
+tests that enforced the deleted ownership/lifecycle internals.
+
+ARCHITECTURE.md now describes the driver as explicitly requested; original template
+hash/provenance remains in records/FRAMEWORK.md and Git. AGENTS.md and the manual
+remain byte-identical. Their preservation checks remain active. No hardware access,
+discovery, physical validation, publication or new external authority is implied.
+
+## E038
+
+Date: 2026-09-11T03:12:47.397880+00:00. TEST-001..009/011..017: compact-driver candidate review and regression.
+Candidate: `8d955e2566827304f4a77689bde146313554eae06670a3e2e0cef3fd4d863aec`. Base: cfb3f4a.
+Final method: `.venv/Scripts/python.exe scripts/validate.py`, Windows/Python 3.12.14,
+Node v24.14.1. All physical serial constructors/discovery prohibited by tests and
+notebook-kernel guards. Fake pySerial handles exercise passive open/close, framing,
+timeouts, byte limits, partial writes, interruption, cleanup retry and concurrency.
+
+Result: 310 tests PASS in 16.94 s, 97% statement coverage (701 statements, 19 missed).
+All eight notebook runs PASS, including disabled-default and operator paths with
+in-memory serial substitutes and explicit fixture clear text. All 11 stages PASS:
+pytest/coverage, lint, formatting, strict mypy (8 modules), dependencies, wheel/sdist,
+CLI, synchronous/async examples, isolated core/extras installation and browser
+watchdog. Installed wheel inventory matches exactly the current eight modules;
+the dependency-free install runs the CLI, examples and four terminal lessons.
+GUI callbacks show NO DATA/LIVE/FAULT/ERROR with bounded history and no acquisition.
+The launcher test proves acquisition finishes before disconnect on Ctrl+C.
+No tests were skipped. One non-failing Windows pyzmq selector-thread warning remains.
+
+TEST-017 review: package modules 12 -> 8 (-33%); Python lines including comments and
+blanks 1610 -> 1333 (-17%); classes 25 -> 17 (-32%); root exports 24 -> 12 (-50%);
+exception classes 7 -> 4. Core dependencies remain zero; serial, GUI and notebook
+extras remain independent. README, API/migration, integration, simulator, architecture,
+physical procedure, all examples and notebook source were updated. Tests for deleted
+registries/factories/lifecycle internals were replaced by device-facing behavior.
+
+Intermediate diagnostics: initial tests exposed stale expectations for implicit fake
+recovery/error formatting and fake physical paths missing verified clear text; fixed
+without relaxing parser behavior. Restricted Windows temporary-directory ACLs prevented
+notebook fixtures; reran guarded tests with normal local permissions. An integrated
+run failed only format checks; corrected formatting and reran all 11 stages. Stale
+generated build output was removed within the verified repository build path before
+building; the wheel inventory check now detects obsolete modules.
+
+Artifacts: records/validation.json (versions, hashes and commands), generated
+records/validation.log, records/junit.xml and records/tutorial-notebooks/. Source
+hashes were unchanged during final validation; preserved manual/AGENTS hashes match.
+The report/checkpoint below are maintained outside the source fingerprint. Previous
+GUI screenshots are historical evidence, not validation of the revised layout;
+current GUI verification covers HTTP/callback/assets and virtual-clock watchdog.
+All validation processes and notebook kernels completed. REQ-010 remains UNTESTED;
+this is software-complete pending candidate review and physical integration.
+
+## E039
+
+Date: 2026-09-11T03:19:24.564854+00:00. Source: user request "holistic review update
+commit push". Reviewed the complete compact-driver change, protocol/serial failure
+paths, simulator, optional monitor/GUI/CLI, tutorial/operator routes, tests,
+packaging and documentation. Commit and push to configured origin/main are now
+explicitly authorized. Origin/main was fetched and matched the base cfb3f4a.
+
+The review reproduced `read_faults(history="False")` emitting `?FH` because of
+truthiness. Require a boolean selector; five regression cases now reject invalid
+values before any I/O and prove the session remains usable for `?F`. The source
+archive omitted tests/conftest.py (physical-access guards and shared fixtures) and
+the operating documents/manual. MANIFEST.in now includes them and install_smoke.py
+checks their presence. Version 0.2.0 marks the breaking API; package checks select
+the configured version rather than obsolete local build artifacts. Refreshed the
+editable installation with pip --no-deps --no-build-isolation and verified the
+installed simulator-only CLI. No additional actionable review findings remain.
+
+TEST-001..009/011..017: `.venv/Scripts/python.exe scripts/validate.py` on Windows,
+Python 3.12.14, Node v24.14.1. Candidate source SHA-256:
+`be0ad6235eb92e38800fe23e6c24f784719d4b5359d43f6b2ac2015a736fa027`.
+All 11 stages PASS: 315 tests in 16.98 s, 97% statement coverage (703 statements,
+19 missed), lint, formatting (39 files), strict mypy (8 modules), pip check,
+wheel/sdist builds, CLI, sync/async examples, isolated core/extras installs and
+watchdog. Eight notebook executions passed with physical serial/discovery guards.
+One non-failing Windows pyzmq warning; no failed/skipped tests. Package metrics are
+8 modules, 1335 Python lines, 17 classes, 12 root exports and 4 exception classes;
+zero required runtime dependencies. E038's design description remains applicable.
+
+Source hashes remained unchanged throughout validation; preserved manual/AGENTS
+hashes match. STATE.md, this record and outputs/REPORT.md are maintained outside
+the source fingerprint and updated to this result before publication. Final package
+hashes and any packaging-only refresh commands/results are in records/validation.json;
+full generated output is in records/validation.log. No physical device was opened
+or discovered. REQ-010 and calibration remain UNTESTED; future hardware integration
+still requires candidate approval. All validation processes and kernels completed.

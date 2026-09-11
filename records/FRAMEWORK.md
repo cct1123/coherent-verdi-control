@@ -5,8 +5,8 @@ Source: https://github.com/cct1123/agentic-engineering-template
 Pinned revision: `724a7f772069d3357ea66dbc4742d25bd874a33e` (2026-09-09 retrieval).
 
 The seven core workspace files were copied into this target repository. The
-template's `.gitignore` was also imported and extended for Python. AGENTS.md and
-ARCHITECTURE.md remain byte-for-byte copies; PROJECT.md was populated from the
+template's `.gitignore` was also imported and extended for Python. AGENTS.md remains a byte-for-byte copy; the compact-driver redesign replaces
+ARCHITECTURE.md with the actual device architecture (original hash below); PROJECT.md was populated from the
 active user request. STATE.md, records/RECORDS.md and outputs/REPORT.md are maintained
 as durable engineering state. README.md was adapted for operating this product.
 

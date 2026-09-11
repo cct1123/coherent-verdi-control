@@ -6,7 +6,9 @@ import os
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 import venv
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,13 +23,16 @@ def run(args: list[str], *, cwd: str | None = None) -> subprocess.CompletedProce
 
 
 def main() -> None:
-    wheels = sorted((ROOT / "dist").glob("coherent_verdi_control-*.whl"))
-    if len(wheels) != 1:
-        raise RuntimeError("build one unambiguous current wheel into dist/ first")
-    sources = sorted((ROOT / "dist").glob("coherent_verdi_control-*.tar.gz"))
-    if len(sources) != 1:
-        raise RuntimeError("build one unambiguous current sdist into dist/ first")
-    with tarfile.open(sources[0]) as archive:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    stem = f"{project['name'].replace('-', '_')}-{project['version']}"
+    wheel = ROOT / "dist" / f"{stem}-py3-none-any.whl"
+    source = ROOT / "dist" / f"{stem}.tar.gz"
+    with zipfile.ZipFile(wheel) as archive:
+        modules = {Path(name).name for name in archive.namelist() if name.endswith(".py")}
+    expected = {path.name for path in (ROOT / "src/coherent_verdi").glob("*.py")}
+    if modules != expected:
+        raise RuntimeError(f"wheel modules differ from current source: {modules ^ expected}")
+    with tarfile.open(source) as archive:
         members = {name.partition("/")[2] for name in archive.getnames()}
     required = {
         "scripts/validate.py",
@@ -36,6 +41,18 @@ def main() -> None:
         "examples/simulated_session.py",
         "examples/async_integration.py",
         "tests/test_validation_runner.py",
+        "tests/conftest.py",
+        "AGENTS.md",
+        "PROJECT.md",
+        "STATE.md",
+        "ARCHITECTURE.md",
+        "HARDWARE_VALIDATION.md",
+        ".gitignore",
+        ".gitattributes",
+        "verdi.manual_v5.pdf",
+        "records/FRAMEWORK.md",
+        "records/requirements-validated.txt",
+        "outputs/REPORT.md",
         "src/coherent_verdi/py.typed",
         "src/coherent_verdi/assets/watchdog.js",
     }
@@ -44,6 +61,7 @@ def main() -> None:
         for p in (ROOT / "examples" / "tutorials").iterdir()
         if p.suffix in (".py", ".ipynb", ".md")
     )
+    required.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md"))
     if missing := required - members:
         raise RuntimeError(f"source distribution lacks supporting files: {sorted(missing)}")
     scratch = ROOT / "tmp"
@@ -52,7 +70,7 @@ def main() -> None:
         env_path = Path(directory) / "env"
         venv.EnvBuilder(with_pip=True).create(env_path)
         executable = env_path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        run([str(executable), "-m", "pip", "install", "--no-deps", "--no-index", str(wheels[0])])
+        run([str(executable), "-m", "pip", "install", "--no-deps", "--no-index", str(wheel)])
         run([str(executable), "-m", "pip", "check"])
         # CWD outside source and isolated mode prove this imports the installed wheel.
         check = run(
@@ -93,7 +111,7 @@ def main() -> None:
         assert missing_gui.returncode == 2
         assert json.loads(missing_gui.stderr)["type"] == "ModuleNotFoundError"
         print(f"PASS: isolated core wheel, assets, CLI, examples; {check.stdout.strip()}")
-        run([str(executable), "-m", "pip", "install", f"{wheels[0]}[serial,gui]"])
+        run([str(executable), "-m", "pip", "install", f"{wheel}[serial,gui]"])
         run([str(executable), "-m", "pip", "check"])
         smoke = run(
             [str(executable), "-I", str(Path(__file__).resolve()), "--gui-smoke"], cwd=directory
@@ -108,13 +126,12 @@ def gui_smoke() -> None:
     import serial.tools.list_ports
 
     from coherent_verdi import (
-        ControllerConfig,
         Model,
         SimulatedTransport,
-        TelemetryService,
         VerdiController,
     )
     from coherent_verdi.gui import create_app
+    from coherent_verdi.monitor import Monitor
 
     def prohibited(*args: object, **kwargs: object) -> None:
         raise AssertionError("physical serial access/discovery prohibited in GUI smoke test")
@@ -125,8 +142,8 @@ def gui_smoke() -> None:
     serial.tools.list_ports.comports = prohibited
     serial.tools.list_ports.grep = prohibited
     sim = SimulatedTransport(Model.V5)
-    with VerdiController(sim, ControllerConfig(Model.V5)) as controller:
-        telemetry = TelemetryService(controller, history_size=2)
+    with VerdiController(sim, model=Model.V5) as controller:
+        telemetry = Monitor(controller, history_size=2)
         app = create_app(telemetry)
         client = app.server.test_client()
         for path in ("/", "/_dash-layout", "/assets/style.css", "/assets/watchdog.js"):
@@ -166,11 +183,10 @@ def gui_smoke() -> None:
         assert error_view["laser"]["children"] == "UNKNOWN"
         assert error_view["power-graph"]["figure"]["data"][0]["y"][-1] is None
         telemetry.poll_once()
-        refresh("LIVE")
-        assert len(telemetry.history) == 2
-        assert not telemetry.running
+        refresh("ERROR")  # Failed sessions never recover implicitly.
+        assert len(telemetry.snapshot()["history"]) == 2
     print(
-        "PASS: installed GUI assets, NO DATA/LIVE/FAULT/ERROR/recovery callbacks, "
+        "PASS: installed GUI assets, NO DATA/LIVE/FAULT/ERROR callbacks, "
         "bounded cache, no callback acquisition; "
         f"Dash {version('dash')}, Plotly {version('plotly')}, pySerial {version('pyserial')}"
     )

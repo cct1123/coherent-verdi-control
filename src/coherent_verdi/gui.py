@@ -1,9 +1,9 @@
-"""Optional Dash monitoring client. All data comes from one TelemetryService."""
+"""Optional Dash monitoring client. All data comes from one Monitor."""
 
 from pathlib import Path
 from typing import Any
 
-from .telemetry import TelemetryService
+from .monitor import Monitor
 
 
 def _source_label(simulated: bool | None) -> str:
@@ -12,28 +12,26 @@ def _source_label(simulated: bool | None) -> str:
     return "SIMULATOR" if simulated else "PHYSICAL / UNVALIDATED"
 
 
-def dashboard_data(service: TelemetryService) -> dict[str, Any]:
+def dashboard_data(service: Monitor) -> dict[str, Any]:
     """Read cached values only; rendering or opening a second tab never polls hardware."""
     snapshot = service.snapshot()
-    samples = snapshot.history
+    samples = snapshot["history"]
     last = samples[-1] if samples else None
     status = last.status if last else None
-    age = snapshot.age_s
-    failed = last is not None and (last.status is None or last.error_type is not None)
+    age = snapshot["age_s"]
+    failed = last is not None and (last.status is None)
     stale = (
         status is not None
         and age is not None
-        and age > max(5.0, 3 * snapshot.interval_s + 2 * status.duration_s)
+        and age > max(5.0, 3 * snapshot["interval_s"] + 2 * status.duration_s)
     )
     return {
-        "simulated": snapshot.simulated,
-        "model": snapshot.model,
+        "simulated": snapshot["simulated"],
+        "model": snapshot["model"],
         "health": "NO DATA"
         if last is None
         else ("ERROR" if failed else "STALE" if stale else "LIVE"),
-        "error": (last.error or last.error_type or "Sample unavailable")
-        if failed and last
-        else None,
+        "error": (last.error or "Sample unavailable") if failed and last else None,
         "age_s": age,
         "status": status,
         "timestamps": [s.attempted_at for s in samples],
@@ -43,7 +41,7 @@ def dashboard_data(service: TelemetryService) -> dict[str, Any]:
     }
 
 
-def create_app(service: TelemetryService) -> Any:
+def create_app(service: Monitor) -> Any:
     """Caller owns service lifecycle. Does not connect, start threads or send commands.
 
     Monitoring-only by design. Use the API for authorized operations. Serve on
@@ -68,14 +66,9 @@ def create_app(service: TelemetryService) -> Any:
         [
             html.Header(
                 [
+                    html.H1("Verdi / Telemetry"),
                     html.Div(
-                        [
-                            html.Div("RESEARCH INSTRUMENTATION", className="eyebrow"),
-                            html.H1(["Verdi", html.Span(" / Telemetry")]),
-                        ]
-                    ),
-                    html.Div(
-                        _source_label(service.snapshot().simulated),
+                        _source_label(service.snapshot()["simulated"]),
                         id="source",
                         className="badge",
                     ),
@@ -84,7 +77,7 @@ def create_app(service: TelemetryService) -> Any:
             html.Div(
                 [
                     html.Span("NO DATA", id="health", className="health"),
-                    html.Span("Waiting for the telemetry service", id="sample-age"),
+                    html.Span("Waiting for a sample", id="sample-age"),
                 ],
                 className="statusbar",
             ),
@@ -101,13 +94,7 @@ def create_app(service: TelemetryService) -> Any:
             ),
             html.Section(
                 [
-                    html.Div(
-                        [
-                            html.H2("Power history"),
-                            html.Span("Bounded telemetry · failed samples shown as gaps"),
-                        ],
-                        className="section-title",
-                    ),
+                    html.H2("Power history"),
                     dcc.Graph(id="power-graph", config={"displayModeBar": False}),
                 ],
                 className="panel",
@@ -124,10 +111,7 @@ def create_app(service: TelemetryService) -> Any:
                 ],
                 className="lower",
             ),
-            html.Footer(
-                "Monitoring client · one shared controller / telemetry service · "
-                "software and simulator validation only; physical behavior untested"
-            ),
+            html.Footer("Monitoring only · physical behavior untested"),
             dcc.Interval(id="refresh", interval=1000, n_intervals=0),
             html.Span(id="server-heartbeat", hidden=True),
         ],
@@ -174,16 +158,8 @@ def create_app(service: TelemetryService) -> Any:
                 "margin": {"l": 52, "r": 24, "t": 12, "b": 38},
                 "height": 290,
                 "font": {"family": "Segoe UI, sans-serif", "color": "#acb9ce"},
-                "xaxis": {
-                    "title": {"text": "Time (UTC)"},
-                    "gridcolor": "#283442",
-                    "zerolinecolor": "#283442",
-                },
-                "yaxis": {
-                    "title": {"text": "Power / W"},
-                    "gridcolor": "#283442",
-                    "zerolinecolor": "#283442",
-                },
+                "xaxis": {"title": {"text": "Time (UTC)"}, "gridcolor": "#283442"},
+                "yaxis": {"title": {"text": "Power / W"}, "gridcolor": "#283442"},
                 "legend": {"orientation": "h", "y": 1.14},
                 "uirevision": "verdi-power",
             },

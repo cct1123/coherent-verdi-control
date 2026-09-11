@@ -2,82 +2,67 @@
 
 ## Status
 
-**AWAITING_HUMAN_REVIEW** for future physical integration. The requested manual
-audit, corrections, simulator/tests, tutorials and short report are software-complete.
-No hardware access is authorized; physical behavior and calibration remain UNTESTED.
+**AWAITING_HUMAN_REVIEW** for future hardware integration. The compact driver and
+holistic software review are complete; the user authorized commit and push. No
+hardware access is authorized; physical behavior
+and calibration remain UNTESTED. No validation process or device operation is pending.
 
-## System
+## System and candidate
 
-[PROJECT.md](PROJECT.md) defines the controller, simulator, telemetry, CLI, Dash
-monitor and tutorials. One controller owns serialized transactions; the simulator
-is an independent peer and Dash reads only cached telemetry. The
-[verification report](outputs/REPORT.md) covers the six operations, 42 queries,
-manual corrections and remaining hardware assumptions.
+Eight package modules, 1335 Python lines, twelve root exports, zero core runtime
+dependencies. Constructor keywords and explicit connection methods replace config
+objects/transport factories. One controller serializes I/O and latches uncertain
+outcomes. Monitor/JSON and Dash are optional; callers own polling and shutdown.
+See [architecture](ARCHITECTURE.md), [API migration](docs/API.md) and
+[candidate report](outputs/REPORT.md). Four visible-function notebooks and the
+operator runner use the same API; hardware defaults remain disabled.
 
-The [tutorial guide](examples/tutorials/README.md) links four self-contained,
-sectioned notebooks and one terminal runner. Hardware defaults remain disabled;
-CONNECT precedes open, ?SV is first, and RUN precedes lesson commands. Physical
-status checks require Stage 1-verified active_fault_clear_reply; writes require
-explicit site limits and the controlled lesson checks all four temperature servos.
+Version 0.2.0; candidate SHA-256 `be0ad6235eb92e38800fe23e6c24f784719d4b5359d43f6b2ac2015a736fa027`.
+[E039](records/RECORDS.md#e039): 315 tests PASS, 97% coverage, eight notebook executions,
+all 11 validation stages PASS; Windows/Python 3.12.14, Node v24.14.1. Lint, format,
+strict typing, dependencies, builds, examples, clean core/GUI installs and watchdog
+passed. Wheel inventory matches the eight source modules; the source archive
+includes test safety guards, manual and operating documents. Source hashes did not
+change during validation. One non-failing pyzmq warning; no skipped tests.
 
-## Requirements status
+## Requirements
 
-PASS covers software/simulation only. Full human criteria remain in PROJECT.md.
+PASS is software/simulation scope only. Full human criteria remain in PROJECT.md.
+Evidence is E039 unless otherwise noted; [D011](records/RECORDS.md#d011) records the
+latest authorized API/simulator-scope changes. E036..038 describe earlier candidates.
 
-| ID / source | Criterion | Method | Status | Evidence |
-| --- | --- | --- | --- | --- |
-| REQ-001 / explicit PROJECT.md | Pinned framework and preserved inputs | TEST-001 hashes | PASS | E036 |
-| REQ-002 / derived | Protocol, framing and errors | TEST-002 golden wire/malformed replies | PASS | E035/E036 |
-| REQ-003 / derived | Typed API, serialized I/O and cleanup | TEST-003 concurrency/deadline/interruption/recovery | PASS | E036 |
-| REQ-004 / derived | Simulator models/faults/warmup/transitions | TEST-004 virtual clock/lost acknowledgments | PASS | E035/E036 |
-| REQ-005 / derived | Bounded telemetry, freshness and errors | TEST-005 lifecycle/cache/source changes | PASS | E036 |
-| REQ-006 / derived | Cache-only Dash and streaming CLI | TEST-006 callbacks/watchdog | PASS | E036; unchanged browser assets E024 |
-| REQ-007 / derived | Packaging and software quality | TEST-007 lint/type/build/core/extras installs | PASS | E036 |
-| REQ-008 / derived | Operating docs and physical-validation procedure | TEST-008 source/output review | PASS | E035/E036 |
-| REQ-009 / explicit PROJECT.md | Entire phase hardware-free | TEST-009/012 serial/discovery guards including kernels | PASS | E036 |
-| REQ-010 / future derived | Physical behavior/calibration | TEST-010 approved operator procedure | UNTESTED | Outside current scope |
-| REQ-011 / explicit tutorial request | Four small examples and clear notebooks/docs | TEST-011 all lessons and notebooks executed | PASS | E036 |
-| REQ-012 / explicit tutorial request | Simulator defaults, safety and reuse | TEST-012 models/inputs/states/errors/no replay | PASS | E036 |
-| REQ-013 / explicit operator clarification | Implemented human-operated hardware paths | TEST-013 simulated configuration/confirmation/serial routing | PASS | E036; no physical validation |
-| REQ-014 / explicit notebook clarification | Visible functions and uncrowded sections | TEST-014 definitions, empty-directory kernels, cell lengths | PASS | E036 |
-| REQ-015 / explicit simplification request | Direct code, preserved features/API/tests and separation | TEST-015 source/API/dependency review + regression | PASS | D009/E033; E036 current regression |
-| REQ-016 / explicit manual-verification request | Full implemented protocol audit and corrections/report | TEST-016 independent manual vectors, source matrix + regression | PASS | D010/E035/E036 |
+| ID / source | Criterion | Validation | Status |
+| --- | --- | --- | --- |
+| REQ-001 / PROJECT explicit | Framework provenance and preserved inputs | TEST-001 hashes; D011 architecture adaptation | PASS |
+| REQ-002 / derived | Protocol, framing, errors | TEST-002 independent manual vectors | PASS |
+| REQ-003 / derived, current cleanup | Explicit API/lifecycle and serialized I/O | TEST-003 read/write/concurrency/interruption/cleanup | PASS |
+| REQ-004 / derived | Simulator models/faults/warmup/transitions | TEST-004 fixture clock and uncertain writes | PASS |
+| REQ-005 / derived, current cleanup | Optional bounded monitoring/freshness | TEST-005 caller-driven acquisition and cached failures | PASS |
+| REQ-006 / derived | Cache-only Dash and streaming CLI | TEST-006 callbacks/launcher shutdown/watchdog | PASS |
+| REQ-007 / derived | Packaging and quality | TEST-007 typing/lint/build/core/extras installs | PASS |
+| REQ-008 / derived | Operations and physical procedure | TEST-008 source/docs review | PASS |
+| REQ-009 / PROJECT explicit | Hardware-free work | TEST-009/012 serial/discovery guards, including kernels | PASS |
+| REQ-010 / future derived | Physical behavior/calibration | TEST-010 approved operator procedure | UNTESTED |
+| REQ-011 / tutorial request | Four clear examples/notebooks | TEST-011 all lessons/notebooks executed | PASS |
+| REQ-012 / tutorial request | Defaults, safety and reuse | TEST-012 models/inputs/states/errors/no replay | PASS |
+| REQ-013 / operator clarification | Implemented human hardware paths | TEST-013 simulated configuration/confirmation/serial routing | PASS |
+| REQ-014 / notebook clarification | Visible functions and clear sections | TEST-014 cell layout/no hidden scripts/empty-directory runs | PASS |
+| REQ-015 / earlier simplification | Direct implementation/features/separation | TEST-015 source/API review and regression | PASS |
+| REQ-016 / manual-verification request | Implemented protocol grounded in manual | TEST-016 42 queries/six commands/error/fault vectors | PASS |
+| REQ-017 / current compact-driver request | Fewer modules, code/types and small reusable API | TEST-017 metrics/import/lifecycle/package review | PASS |
 
-Evidence: [manual audit E035](records/RECORDS.md#e035),
-[integrated validation E036](records/RECORDS.md#e036),
-[publication review E037](records/RECORDS.md#e037).
+Reproduce: install `.[dev,serial,gui]`, run `python scripts/validate.py`.
+[Manifest](records/validation.json) records environment, source/build hashes and commands.
 
-## Current candidate and reproducibility
+## Human action required / next action
 
-Version 0.1.0; source-manifest SHA-256:
-`7cee08deb695a9136e4b07749dd7003c2ff5dff6b9f63fd3641503096d34693f`.
-
-E037 reran **320 tests: PASS**, **96% coverage**, including 75 tutorial/operator
-cases and eight notebook executions. Lint, format, strict typing and dependency
-checks passed. All 52 source hashes still match E036, whose 11-stage integrated
-validation remains applicable. No implementation, test or dependency changed.
-
-Reproduce: install `.[dev,serial,gui]`, then `python scripts/validate.py`.
-[Manifest](records/validation.json) records environment and build hashes;
-[dependencies](records/requirements-validated.txt) pin the tested environment.
-Windows 11/Python 3.12.14; one non-failing pyzmq warning, no failed/skipped tests.
-Executed notebooks in `records/tutorial-notebooks/` are regenerated and uploaded by CI.
-
-## Review and next action
-
-E037 found no remaining actionable code issue or unused dependency. Pruned repeated
-checkpoint prose; retained required features, tests and notebook definitions.
-The user authorized commit/push; origin/main matched 82b6db1 before this review
-commit. Git history records publication. No test session or device operation is pending.
-
-## Human action required
-
-None for this software task. Future integration requires candidate review and
-explicit Stage 1 read-only approval under [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md),
-with actual model, operator-confirmed port/baud and site conditions. Start with
-passive open and one ?SV; return raw replies/front-panel comparisons and independently
-verified ?F clear text. Record units and PASS/FAIL/INCONCLUSIVE evidence.
-Only after Stage 1 may separately approved writes run within approved limits and
-beam/cooling/interlock/abort conditions. Publication and example values grant no
-hardware authority or safe physical limits. Firmware uncertainties remain in the
-[protocol register](docs/PROTOCOL.md#uncertainty-register).
+None for this software review/publication. Commit and push to the configured
+origin/main are explicitly authorized by the current user request. Git history and
+the tracking branch record publication. Future integration requires explicit Stage 1
+read-only approval of this candidate under [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md),
+with actual model, operator-confirmed port/baud and site conditions. Begin with
+passive connect and one ?SV; return raw framing/version/front-panel comparisons
+and independently verified ?F clear text with units and acceptance results.
+Then resume approved read validation. Writes require separate scope, power limits,
+beam/cooling/interlock conditions and an abort procedure. Availability, examples
+and historical publication do not grant hardware authority or physical safe limits.

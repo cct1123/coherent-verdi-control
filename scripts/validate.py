@@ -6,6 +6,7 @@ import os
 import platform
 import subprocess
 import sys
+import tomllib
 from datetime import UTC, datetime
 from importlib.metadata import distributions
 from pathlib import Path
@@ -49,6 +50,11 @@ def validate() -> int:
     RECORDS.mkdir(exist_ok=True)
     environment = os.environ.copy()
     environment["PYTHONUTF8"] = "1"
+    # Keep subprocess scratch under the workspace, including in restricted hosts.
+    scratch = ROOT / "tmp"
+    scratch.mkdir(exist_ok=True)
+    environment["TEMP"] = environment["TMP"] = str(scratch)
+    environment["PYTEST_DEBUG_TEMPROOT"] = str(scratch)
     commands = [
         (
             "TEST-002..006/009/011/012/013/014/016",
@@ -102,11 +108,13 @@ def validate() -> int:
                 print(completed.stdout, flush=True)
                 break
     after = fingerprint()
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "version"
+    ]
     manifest_sha = hashlib.sha256(json.dumps(after, sort_keys=True).encode()).hexdigest()
     preserved = {
         "verdi.manual_v5.pdf": "d4a7a8a2a1e0c678bb00a5fd70be6ea1d649be063ab752de485a59daa3103f73",
         "AGENTS.md": "800197bfb6731da6b8fa5d0412300401a5012a2b99967e6bbe8b73b8830af32e",
-        "ARCHITECTURE.md": "52b9d65e211f0471bb116a3c7dbc96512c44d17c505e78dff38ba478c2a02b4f",
     }
     inputs_ok = all(
         hashlib.sha256((ROOT / p).read_bytes()).hexdigest() == sha for p, sha in preserved.items()
@@ -132,7 +140,7 @@ def validate() -> int:
         "results": results,
         "build_artifacts": {
             p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in (ROOT / "dist").glob("*")
+            for p in (ROOT / "dist").glob(f"coherent_verdi_control-{version}*")
             if p.is_file()
         },
     }

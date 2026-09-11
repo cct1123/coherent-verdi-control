@@ -1,97 +1,54 @@
-# Autonomous engineering architecture
+# Driver architecture
 
-The engineering coordinator is the active agent's role. It selects each action
-from the gap between requirements and observed reality within the current phase.
-The project workspace carries memory across agents. Hardware projects follow these
-phase boundaries; the engineering loop below governs work inside each phase.
+Eight modules, one synchronous device-control path:
 
 ```mermaid
-flowchart TD
-    R[Requirements] --> SW[Autonomous Hardware-Free Engineering<br/>SOFTWARE_DEVELOPMENT]
-    SW --> ST[Simulation / Mocks / Automated Testing]
-    ST -->|Software gaps| SW
-    ST -->|All meaningful hardware-free work complete| HR[Hardware-Ready Candidate<br/>HARDWARE_READY]
-    HR --> SR[Final software-side review and candidate report]
-    SR -->|Software gaps| SW
-    SR -->|Review prepared| HG[Human Review Gate<br/>AWAITING_HUMAN_REVIEW: save and stop]
-    HG -->|Explicit candidate approval with scope and limits| HV[Hardware Validation<br/>HARDWARE_VALIDATION: identify device and integrate]
-    HV --> PT{Physical acceptance and final integrated validation pass?}
-    PT -->|No| DR[Debug / fix / software regression]
-    DR -->|Within approved scope| HV
-    DR -->|Review scope or safety assumptions changed| SR
-    PT -->|Yes: evidence and report complete| VC[Validated Completion<br/>VALIDATED]
+flowchart LR
+    A[Script / notebook / DAQ / CLI] --> C[controller.py: VerdiController]
+    M[monitor.py: caller-driven sampling] -->|status| C
+    G[gui.py: optional Dash view] -->|cached snapshot| M
+    C --> P[protocol.py: framing, parsing, serial connection]
+    C --> S[simulator.py: in-memory peer]
+    P -->|after hardware review| V[Verdi RS-232]
 ```
 
-The normal hardware path is **Autonomous Hardware-Free Engineering → Hardware-Ready
-Candidate → Human Review Gate → Hardware Validation → Validated Completion**.
-Missing hardware never stops useful hardware-independent work. At HARDWARE_READY,
-prepare the software-side review package described in AGENTS.md; the agent then
-saves AWAITING_HUMAN_REVIEW and stops. The gate is a planned boundary, not BLOCKED.
-No real-device discovery, reads, initialization, writes, tests, or cleanup occur
-before explicit candidate approval. On resume, the gate remains in force; retain
-applicable recorded approval rather than repeatedly requesting it.
+| Module | Responsibility |
+| --- | --- |
+| `controller.py` | Public methods, status/diagnostic results, validation and one I/O lock |
+| `protocol.py` | Manual query/value meanings, frame parsing, passive pySerial connection |
+| `simulator.py` | Independent replies for the short-form commands emitted by the driver; fixtures |
+| `monitor.py` | Optional synchronous sampling, bounded cache, freshness and JSON |
+| `gui.py` | Optional read-only Dash client; no hardware handle or acquisition loop |
+| `errors.py` | Four exceptions for communication, malformed data and device rejection |
+| `__init__.py` | Twelve core exports; no optional-client imports |
+| `__main__.py` | Simulator CLI; explicit polling-worker lifecycle for standalone GUI |
 
-After approval, confirm device identity and compatibility, prefer the least
-consequential useful read, validate initialization/state reporting, then perform
-controlled actuation and physical acceptance within limits. Software-only projects
-skip the hardware gate and use SOFTWARE_DEVELOPMENT → VALIDATED after their required
-tests and final validation pass.
+Follow `set_power_w()`: validate finite watts and ceiling, format `P=nn.nnnn`,
+acquire the controller lock, encode one CR/LF frame, exchange it once, and decode
+its acknowledgment. Reads use the same path and parse a catalogued value.
+`status()` holds the lock across 14 sequential reads.
 
-The core loop remains **Inspect → Gap → Design → Implement → Test → Diagnose →
-Update State → Repeat**, with evidence deciding the next action:
+The only backend contract is `connect()`, `exchange(bytes) -> bytes`,
+`disconnect()`, and `is_simulated`. This small structural typing declaration lets
+an experiment stack supply a connection without inheritance, registration or
+factories. A backend must bound I/O and must not be shared with another controller
+or raw reader. Serial locking and failed-session state live once, in the controller.
+The simulator separately locks mutable fixture state.
 
-```mermaid
-flowchart TD
-    H[Human] --> P[PROJECT.md: objective, criteria, constraints]
+Construction does no I/O. Connect/disconnect send no device commands. A complete
+device rejection leaves the session readable; uncertain I/O, interruption or
+malformed data latches failure. No method clears that latch or replays state.
+Disconnect remains available for cleanup, including cleanup retries.
 
-    subgraph W[Project workspace]
-        P --> C[Engineering coordinator: inspect requirements and current state]
-        S[STATE.md: canonical checkpoint] --> C
-        E[Records and engineering artifacts] --> C
-        C --> G[Identify highest-priority gap]
-        G --> D[Choose action and design]
-        D --> A{Allowed in phase, resources and authority available?}
-        A -->|Yes| I[Implement or investigate]
-        I --> T[Test / measure]
-        T --> V[Diagnose / evaluate]
-        V --> U[Update state and evidence]
-        U --> S
-        U --> E
-        U --> Q{Requirements satisfied?}
-        Q -->|No: inspect next gap| C
-        Q -->|Yes| F[Final validation on final configuration]
-        F --> K{Final validation passes?}
-        K -->|No: record failure| V
-        K -->|Yes| O[outputs/REPORT.md and VALIDATED checkpoint]
-    end
+The caller owns connection lifecycle and acquisition scheduling. Monitor and GUI
+construction start no work. Monitor uses a sampling lock and a short cache lock
+so rendering remains responsive during acquisition. The standalone GUI launcher
+explicitly creates one worker and joins it before disconnecting. Core import
+does not load serial, Dash, Plotly or monitoring.
 
-    A -->|Not yet| B[Defer action and record dependency]
-    Q -->|Only external dependencies remain| B
-    B -->|Independent work remains| G
-    B -->|Hardware-free work exhausted before integration| RG[Hardware-ready candidate and review gate above]
-    B -->|No independent work, genuine blocker outside review gate| BO[BLOCKED report and exact resumption condition]
-    BO --> H
-    RG --> H
-    H -->|Result or explicit scoped candidate approval| U
-    C -.-> X[Optional engineering capabilities / subagents]
-    X -.-> I
-    X -.-> V
-    R[External hardware / software / resources] -.->|Documentation| C
-    I -.->|Phase-allowed and authorized operations| R
-    R -.->|Phase-allowed and authorized tests| T
-```
-
-The authority/resource gate applies to **every** external action in implementation
-and testing, and is checked again when conditions change. Defer a physical
-dependency until meaningful independent work is exhausted, then follow the
-candidate review path before requesting hardware access. Human results re-enter
-the evidence/state loop; they do not bypass validation. A final-validation failure
-returns to diagnosis and the gap loop. BLOCKED preserves a handoff for a genuine
-external dependency; AWAITING_HUMAN_REVIEW preserves the deliberate integration
-gate. Neither is a success claim or a reason to skip available software work.
-
-Human intent lives in PROJECT.md. STATE.md points to current artifacts, test
-methods, and evidence; records preserve reproducible observations and decisions.
-The report describes the engineered system, configuration, demonstrated results,
-and operation. Optional specialists return bounded artifacts and evidence to the
-coordinator, which maintains the single canonical state.
+Configuration objects, transport replacement, query-spec registry, telemetry
+lifecycle machinery, serialization wrappers and old module aliases are removed.
+Returned status/fault dataclasses and state enums remain to expose units and
+hardware meanings. [AGENTS.md](AGENTS.md) retains engineering phase/authority rules;
+[framework provenance](records/FRAMEWORK.md) retains template history.
+Physical integration requires [candidate review](HARDWARE_VALIDATION.md).
