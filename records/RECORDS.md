@@ -924,3 +924,30 @@ Publication review: git diff --check PASS; all 52 working source hashes still ma
 the validated manifest. Origin/main fetched and matched HEAD at ef9c472 before
 commit. Only reviewed audit changes are staged under the user's prior commit/push
 authorization; Git history records the final publication revision.
+
+## E037
+
+Date: 2026-09-11 00:38:52 UTC. User requested review, prune, commit and push.
+Reviewed 82b6db1 and its manual-audit diff: fault-clear configuration and session
+failure behavior, model-specific servo restrictions, simulator syntax/transitions,
+tutorial/operator paths, packaging/dependencies, tests and documentation.
+No additional actionable code defect, unused module or unused dependency found.
+Independent simulator/manual vectors and visible notebook functions are purposeful;
+retained them, all required features, tests and hardware/simulator separation.
+Pruned repeated checkpoint prose and linked the existing detailed reports.
+
+TEST-002..009/011..016: pytest -q -p no:cacheprovider
+--basetemp=tmp/publication-review --cov=coherent_verdi --cov-report=term-missing
+--junitxml=tmp/publication-review-junit.xml. Result: 320 PASS in 20.96 s,
+96% library statement coverage; all 75 tutorial/operator cases and eight notebook
+executions. One non-failing Windows pyzmq warning, no failed/skipped tests.
+Ruff lint PASS; formatting PASS (43 files); strict mypy PASS (12 modules);
+pip check PASS. Tests/kernels prohibited physical serial opening/discovery.
+
+All 52 source hashes still match E036's candidate
+7cee08deb695a9136e4b07749dd7003c2ff5dff6b9f63fd3641503096d34693f.
+Only STATE.md, outputs/REPORT.md and this record changed; E036's integrated build,
+clean-install and watchdog results remain applicable and were not rerun.
+Origin/main fetched and matched HEAD at 82b6db1. Publication is authorized by the
+current request. No hardware accessed; physical validation remains UNTESTED and
+future integration requires the unchanged review gate. All test kernels completed.

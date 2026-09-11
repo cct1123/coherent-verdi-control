@@ -72,6 +72,8 @@ Notebooks retain visible helpers and sections; maximum code-cell length is 23 li
 Physical serial opening/discovery was blocked in tests and notebook kernels.
 
 [E035/E036 evidence](../records/RECORDS.md#e035), [validation manifest](../records/validation.json).
+[Publication review E037](../records/RECORDS.md#e037) found no further code defects;
+the same 320 tests and static checks passed again on unchanged implementation files.
 Run: `python scripts/validate.py` after installing `.[dev,serial,gui]`.
 Windows 11, Python 3.12.14, Node 24.19.0; one non-failing pyzmq warning.
 Timestamp: 2026-09-11T00:28:16.330843+00:00. All 52 source hashes and preserved inputs matched.

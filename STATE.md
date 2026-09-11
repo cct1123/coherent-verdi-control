@@ -6,25 +6,19 @@
 audit, corrections, simulator/tests, tutorials and short report are software-complete.
 No hardware access is authorized; physical behavior and calibration remain UNTESTED.
 
-## Objective and architecture
+## System
 
-[PROJECT.md](PROJECT.md): manual-grounded Verdi V2/V5/V6 controller, diagnostics,
-simulator, telemetry, CLI, optional Dash monitor and four beginner tutorials.
-One controller owns serialized transactions. Independent serial/protocol/simulator
-modules preserve framing and test isolation; telemetry publishes bounded immutable
-snapshots and Dash reads only the cache. Six operational methods and all 42 queries
-remain available; one optional configuration field was added for verified physical
-active-fault clear text. No dependency or module was added by the manual audit.
+[PROJECT.md](PROJECT.md) defines the controller, simulator, telemetry, CLI, Dash
+monitor and tutorials. One controller owns serialized transactions; the simulator
+is an independent peer and Dash reads only cached telemetry. The
+[verification report](outputs/REPORT.md) covers the six operations, 42 queries,
+manual corrections and remaining hardware assumptions.
 
-[Tutorial guide](examples/tutorials/README.md): read status, set power in standby,
-one controlled enable/shutter/standby session, and fault/uncertain-write diagnosis.
-Terminal functions live in [run_tutorial.py](examples/tutorials/run_tutorial.py).
-Each notebook defines every demonstration and hardware helper visibly in named
-sections; no notebook loads another tutorial file. Maximum code-cell length: 23 lines.
-Hardware defaults remain disabled, CONNECT precedes open, ?SV is first, and RUN
-precedes lesson commands. Writes require explicit site limits; full physical status
-checks require Stage 1-verified active_fault_clear_reply. All four temperature
-servos must be LOCKED before the controlled tutorial enables the laser.
+The [tutorial guide](examples/tutorials/README.md) links four self-contained,
+sectioned notebooks and one terminal runner. Hardware defaults remain disabled;
+CONNECT precedes open, ?SV is first, and RUN precedes lesson commands. Physical
+status checks require Stage 1-verified active_fault_clear_reply; writes require
+explicit site limits and the controlled lesson checks all four temperature servos.
 
 ## Requirements status
 
@@ -49,48 +43,41 @@ PASS covers software/simulation only. Full human criteria remain in PROJECT.md.
 | REQ-015 / explicit simplification request | Direct code, preserved features/API/tests and separation | TEST-015 source/API/dependency review + regression | PASS | D009/E033; E036 current regression |
 | REQ-016 / explicit manual-verification request | Full implemented protocol audit and corrections/report | TEST-016 independent manual vectors, source matrix + regression | PASS | D010/E035/E036 |
 
-Evidence: [E035](records/RECORDS.md#e035), [E036](records/RECORDS.md#e036),
-[D010](records/RECORDS.md#d010), [E024](records/RECORDS.md#e024).
+Evidence: [manual audit E035](records/RECORDS.md#e035),
+[integrated validation E036](records/RECORDS.md#e036),
+[publication review E037](records/RECORDS.md#e037).
 
 ## Current candidate and reproducibility
 
 Version 0.1.0; source-manifest SHA-256:
 `7cee08deb695a9136e4b07749dd7003c2ff5dff6b9f63fd3641503096d34693f`.
 
-E036: **320 tests PASS**, **96% library statement coverage**, including all
-75 tutorial/operator cases and eight fresh notebook runs (four defaults and four
-simulated hardware branches). All 11 validation stages passed; all 52 source
-hashes stayed unchanged during validation. Manual/framework hashes match.
-No test was removed; the previous module/dependency simplification is retained.
+E037 reran **320 tests: PASS**, **96% coverage**, including 75 tutorial/operator
+cases and eight notebook executions. Lint, format, strict typing and dependency
+checks passed. All 52 source hashes still match E036, whose 11-stage integrated
+validation remains applicable. No implementation, test or dependency changed.
 
 Reproduce: install `.[dev,serial,gui]`, then `python scripts/validate.py`.
-[Manifest](records/validation.json) includes dependencies and build hashes;
-[dependency snapshot](records/requirements-validated.txt) captures the environment.
-Windows 11/Python 3.12.14, Node 24.19.0. One non-failing Windows pyzmq selector-thread
-warning; no skipped/failed tests. Installed extras: Dash 4.4.1, Plotly 7.0.0,
-pySerial 3.5. Normal Windows permissions were needed for test temporary directories.
-Executed notebooks: `records/tutorial-notebooks/` (regenerated, uploaded by CI).
+[Manifest](records/validation.json) records environment and build hashes;
+[dependencies](records/requirements-validated.txt) pin the tested environment.
+Windows 11/Python 3.12.14; one non-failing pyzmq warning, no failed/skipped tests.
+Executed notebooks in `records/tutorial-notebooks/` are regenerated and uploaded by CI.
 
 ## Review and next action
 
-No remaining software gap in this request. See [verification report](outputs/REPORT.md).
-Unresolved firmware details and physical assumptions are explicitly listed in the
-[protocol uncertainty register](docs/PROTOCOL.md#uncertainty-register).
-The prior user request authorizes review, pruning, commit and push; Git HEAD and
-origin/main record publication state. The audit began from ef9c472. Publication
-does not approve hardware access. All test sessions/kernels completed; no pending
-device operation or tutorial polling worker remains.
+E037 found no remaining actionable code issue or unused dependency. Pruned repeated
+checkpoint prose; retained required features, tests and notebook definitions.
+The user authorized commit/push; origin/main matched 82b6db1 before this review
+commit. Git history records publication. No test session or device operation is pending.
 
 ## Human action required
 
-None for this software task. Future physical integration requires review of this
-candidate and explicit Stage 1 read-only approval naming the actual model,
-operator-confirmed port/baud and site conditions in
-[HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md). First interaction: passive open,
-then one ?SV query and comparison of framing/read semantics/firmware reply.
-Return raw replies and front-panel comparisons, including an independently verified
-?F clear response, with the procedure's units and PASS/FAIL/INCONCLUSIVE evidence.
-Only after Stage 1 may separately approved writes/enable/shutter operations run
-within stated limits and beam/cooling/interlock/abort conditions. Example power
-values are synthetic exercises, not safe physical limits. No approval is inferred
-from task resumption or hardware availability.
+None for this software task. Future integration requires candidate review and
+explicit Stage 1 read-only approval under [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md),
+with actual model, operator-confirmed port/baud and site conditions. Start with
+passive open and one ?SV; return raw replies/front-panel comparisons and independently
+verified ?F clear text. Record units and PASS/FAIL/INCONCLUSIVE evidence.
+Only after Stage 1 may separately approved writes run within approved limits and
+beam/cooling/interlock/abort conditions. Publication and example values grant no
+hardware authority or safe physical limits. Firmware uncertainties remain in the
+[protocol register](docs/PROTOCOL.md#uncertainty-register).
