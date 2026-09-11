@@ -1067,3 +1067,23 @@ hashes and any packaging-only refresh commands/results are in records/validation
 full generated output is in records/validation.log. No physical device was opened
 or discovered. REQ-010 and calibration remain UNTESTED; future hardware integration
 still requires candidate approval. All validation processes and kernels completed.
+
+## E040
+
+Date: 2026-09-11. Publication checkpoint following E039. Commit 20cab5f contains
+the reviewed 0.2.0 simplification and validation manifest. Final packaging refresh
+passed; archive checkpoint/guard bytes match the reviewed files and all source
+hashes still match E039. The source manifest records updated build hashes and
+both successful packaging-only commands. Git's staged diff check passed.
+
+`git push origin main` was rejected before execution by automatic approval review:
+publishing private repository contents to the configured destination requires
+trusted user content explicitly naming/authorizing that destination. No workaround
+was attempted. Read-only checks confirmed a clean tree after 20cab5f, one local
+commit ahead of the previously fetched origin/main, and the push destination
+`git@github.com:cct1123/coherent-verdi-control.git`. Await the user's explicit
+approval of this remote and main branch, then push and verify synchronization.
+
+This record and STATE.md change only publication metadata outside the source
+fingerprint. E039 software/build validation remains applicable; the built archive
+contains the pre-publication review checkpoint. No hardware access occurred.

@@ -3,7 +3,9 @@
 ## Status
 
 **AWAITING_HUMAN_REVIEW** for future hardware integration. The compact driver and
-holistic software review are complete; the user authorized commit and push. No
+holistic software review are complete and committed in 20cab5f. The requested push
+was rejected by automatic approval review pending explicit destination approval
+([E040](records/RECORDS.md#e040)). No
 hardware access is authorized; physical behavior
 and calibration remain UNTESTED. No validation process or device operation is pending.
 
@@ -56,9 +58,14 @@ Reproduce: install `.[dev,serial,gui]`, run `python scripts/validate.py`.
 
 ## Human action required / next action
 
-None for this software review/publication. Commit and push to the configured
-origin/main are explicitly authorized by the current user request. Git history and
-the tracking branch record publication. Future integration requires explicit Stage 1
+Software review is complete. Publication is blocked by automatic approval review:
+the user's commit/push request did not explicitly name the destination. Approve
+pushing this reviewed change to `git@github.com:cct1123/coherent-verdi-control.git`,
+branch `main`. This publishes the committed repository contents to that remote.
+After approval, push normally and verify remote synchronization and a clean tree.
+No publication occurred in the rejected attempt; no command is pending.
+
+Future hardware integration requires explicit Stage 1
 read-only approval of this candidate under [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md),
 with actual model, operator-confirmed port/baud and site conditions. Begin with
 passive connect and one ?SV; return raw framing/version/front-panel comparisons
