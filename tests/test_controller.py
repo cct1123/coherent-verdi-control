@@ -60,6 +60,112 @@ def test_controller_config_is_runtime_validated(kwargs):
         ControllerConfig(**kwargs)
 
 
+@pytest.mark.parametrize("reply", [True, "", " ", "1", "30", "1&2", "OK\r\n", "é", "X" * 129])
+def test_invalid_or_fault_code_clear_override_rejected(reply):
+    with pytest.raises(ValueError, match="active_fault_clear_reply"):
+        ControllerConfig(Model.V5, active_fault_clear_reply=reply)
+
+
+@pytest.mark.parametrize("query", [Query.DIODE_SERVO, Query.LBO_SERVO])
+@pytest.mark.parametrize("model,invalid", [(Model.V2, 6), (Model.V6, 5)])
+def test_model_specific_servo_codes_reject_invalid_firmware_data(query, model, invalid):
+    sim = SimulatedTransport(model)
+    sim.inject(f"{invalid}\r\n".encode())
+    with VerdiController(sim, ControllerConfig(model)) as c:
+        with pytest.raises(ProtocolError, match="not documented"):
+            c.query(query)
+        with pytest.raises(ConnectionUnusable):
+            c.power_w()
+    assert len(sim.requests) == 1
+
+
+@pytest.mark.parametrize("query", [Query.DIODE_SERVO, Query.LBO_SERVO])
+@pytest.mark.parametrize(
+    "model,valid", [(Model.V2, 5), (Model.V6, 6), (Model.V5, 5), (Model.V5, 6)]
+)
+def test_model_specific_servo_codes_preserve_supported_and_unresolved_v5_variant(
+    query, model, valid
+):
+    sim = SimulatedTransport(model)
+    sim.inject(f"{valid}\r\n".encode())
+    with VerdiController(sim, ControllerConfig(model)) as c:
+        assert c.query(query) == valid
+
+
+@pytest.mark.parametrize("separator", ["=", ":"])
+@pytest.mark.parametrize("terminator", [b"\r\n", b";"])
+def test_manual_command_aliases_delimiters_and_echo_transition(separator, terminator):
+    sim = SimulatedTransport()
+    try:
+        for name in ("P", "LIGHT", "POWER"):
+            assert sim.exchange(f"{name} {separator} 0.2500".encode() + terminator) == b"\r\n"
+            assert sim.exchange(b"?SP\r\n") == b"0.2500\r\n"
+        sim.set_key(True)
+        for name in ("L", "LASER"):
+            assert sim.exchange(f"{name}{separator}1".encode() + terminator) == b"\r\n"
+            assert sim.exchange(b"?L\r\n") == b"1\r\n"
+        for name in ("S", "SHUTTER"):
+            assert sim.exchange(f"{name}{separator}1".encode() + terminator) == b"\r\n"
+            assert sim.exchange(b"?S\r\n") == b"1\r\n"
+            assert sim.exchange(f"{name}{separator}0".encode() + terminator) == b"\r\n"
+        for name in ("PROMPT", ">"):
+            assert sim.exchange(f"{name}{separator}0".encode() + terminator) == b"\r\n"
+            assert sim.exchange(b"?S\r\n") == b"Verdi> 0\r\n"
+            assert sim.exchange(f"{name}{separator}1".encode() + terminator) == b"Verdi>\r\n"
+        for name in ("E", "ECHO"):
+            assert sim.exchange(f"{name}{separator}1".encode() + terminator) == b"\r\n"
+            assert sim.exchange(b"?S\r\n") == b"?S 0\r\n"
+            off = f"{name}{separator}0".encode()
+            assert sim.exchange(off + terminator) == off + b"\r\n"
+        for name in ("L", "LASER"):
+            assert sim.exchange(f"{name}{separator}0".encode() + terminator) == b"\r\n"
+            assert sim.exchange(b"?L\r\n") == b"0\r\n"
+    finally:
+        sim.close()
+
+
+@pytest.mark.parametrize("operand", ["1e-1", "0_1", "nan", "inf", "-1", "6"])
+def test_simulator_power_rejects_undocumented_numeric_syntax_and_software_limits(operand):
+    sim = SimulatedTransport(Model.V5)
+    try:
+        instruction = f"P={operand}".encode()
+        assert sim.exchange(instruction + b"\r\n") == b"RANGE ERROR: " + instruction + b"\r\n"
+        assert sim.exchange(b"?SP\r\n") == b"0.0000\r\n"
+    finally:
+        sim.close()
+
+
+@pytest.mark.parametrize("wire", [b"?P;L=1;", b"?P\r\nL=1\r\n", b"\xff;", b";"])
+def test_simulator_never_accepts_batched_or_malformed_instructions(wire):
+    sim = SimulatedTransport()
+    try:
+        with pytest.raises(ValueError):
+            sim.exchange(wire)
+        assert sim.exchange(b"?L\r\n") == b"0\r\n"
+    finally:
+        sim.close()
+
+
+def test_closed_shutter_idle_is_not_diode_off_and_fault_cuts_current():
+    sim, c = controller()
+    with c:
+        sim.set_key(True)
+        c.enable_laser()
+        assert c.query(Query.SHUTTER) == 0
+        assert c.query(Query.DIODE_CURRENT) > 0  # Magnitude is a fixture, not a hardware claim.
+        assert c.query(Query.CURRENT) == c.query(Query.DIODE_CURRENT)
+        sim.set_faults(30)
+        assert c.query(Query.DIODE_CURRENT) == 0
+        assert c.query(Query.SHUTTER) == 0
+        assert c.laser_state() == LaserState.FAULT
+
+
+@pytest.mark.parametrize("options", [{"echo": "0"}, {"prompt": "0"}])
+def test_simulator_mode_configuration_does_not_coerce_strings(options):
+    with pytest.raises(ValueError, match="bools"):
+        SimulatedTransport(**options)
+
+
 @pytest.mark.parametrize("model,limit", [(Model.V2, 2), (Model.V5, 5), (Model.V6, 6)])
 def test_model_ceiling_and_units(model, limit):
     sim, c = controller(model)

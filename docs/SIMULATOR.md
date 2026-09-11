@@ -11,7 +11,10 @@ exercise SEEKING -> LOCKED without sleeping. Default runtime clocks use
 
 ## Documented semantics represented
 
-- All 42 query spellings, CR/LF replies, echo and prompt forms, error prefixes.
+- All 42 short and long query spellings, `PRINT ` or `?`, `=` or `:`, CR/LF or
+  semicolon request endings, CR/LF replies, echo/prompt layouts and error prefixes.
+  A transaction still accepts exactly one instruction; batching is rejected.
+  The operational command subset includes `>=n` as the short prompt command.
 - LASER state codes 0/1/2, keyswitch and shutter flags, servo states and fault codes.
 - `L=0` enters STANDBY; `L=1` needs key ON and clears the latched history fixture.
 - Key ON while the simulated LBO is cold reports fault 5 (LBO not locked), as
@@ -20,10 +23,13 @@ exercise SEEKING -> LOCKED without sleeping. Default runtime clocks use
 - Clearing an injected active fault does not automatically enable the simulated
   laser. The caller must explicitly request it again.
 - ECHO settings change the following transaction; PROMPT has reversed 0/1 polarity.
+- A closed shutter leaves the enabled diode at an idle current; STANDBY and faults
+  turn the diode off (Tables 4-1/4-3 and p. 4-13). Idle/current magnitudes are fixtures.
 
 ## Deliberate simulation policies, not firmware predictions
 
-- Temperatures (25 °C diode, 148 °C warm LBO, etc.), operating hours, current,
+- Temperatures (25 °C diode, 148 °C warm LBO, etc.), operating hours, current
+  (1 A at closed-shutter idle, 12 A open),
   undocumented-unit responses and software version are synthetic constants.
 - Warmup uses a simple linear LBO temperature interpolation. It is configurable,
   not a claim about the real warmup duration or thermal response.
@@ -36,11 +42,20 @@ exercise SEEKING -> LOCKED without sleeping. Default runtime clocks use
 - Measured power jumps to the setpoint when enabled, warm, fault-free and the
   simulated shutter is open. Otherwise it is zero. No optical noise, overshoot,
   current calibration, actual idle power or rate dynamics are modeled.
-- The fake closes its shutter on key OFF, STANDBY or injected faults and prevents
+- Fault-triggered shutter closure and zero diode current follow p. 4-13.
+  The fake also closes its shutter on key OFF/STANDBY and prevents
   opening unless its key and laser are ON. These conservative fixture policies
   do not establish the device's command acceptance or physical sequencing.
-- `SYSTEM OK` for no active `?F` faults is an unverified compatibility convention;
-  the manual only explicitly specifies it for `?FH`.
+- `SYSTEM OK` for no active `?F` faults is a simulator convention; the manual only
+  explicitly specifies it for `?FH`. Physical controllers require a separately
+  verified `active_fault_clear_reply` configuration before treating any reply as clear.
+- `set_key()` sets a test fixture, not a physical-key action: setting it ON does not
+  automatically enable a warm simulator. The real keyswitch can turn the laser ON
+  (p. 4-4); do not translate fixture calls into physical actions. The tutorial's
+  key-ON/STANDBY starting state requires an operator-approved RS-232 standby override.
+- Command power ranges use conservative model ratings, not verified firmware bounds.
+  Python-only numeric forms such as underscores/exponents are rejected; the peer
+  accepts the decimal spelling used by the controller. No case-folding is assumed.
 - The old prompt setting formats a setting command's acknowledgment. Transition
   ordering is a fixture choice because the manual does not explicitly define it.
 - A timeout injection can be recovered in the fake because no late bytes exist.

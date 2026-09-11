@@ -12,6 +12,7 @@ from .models import (
     Diagnostics,
     Fault,
     LaserState,
+    Model,
     ServoState,
     Status,
     finite_range,
@@ -55,7 +56,20 @@ class VerdiController:
                 self._transport.exchange(encode_instruction(instruction)),
                 query=query is not None,
             )
-            return parse_value(query, payload) if query is not None else payload
+            if query is None:
+                return payload
+            clear_reply = self.config.active_fault_clear_reply
+            if clear_reply is None and self._transport.is_simulated:
+                clear_reply = "SYSTEM OK"  # Explicit simulator convention, not firmware evidence.
+            value = parse_value(query, payload, active_fault_clear_reply=clear_reply)
+            if query in (Query.DIODE_SERVO, Query.LBO_SERVO) and (
+                (self.config.model == Model.V6 and value == 5)
+                or (self.config.model == Model.V2 and value == 6)
+            ):
+                raise ProtocolError(
+                    f"{query}: servo code {value} is not documented for {self.config.model}"
+                )
+            return value
         except ProtocolError:
             self._failed = True
             raise

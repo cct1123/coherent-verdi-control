@@ -103,6 +103,9 @@ def check_ready(laser: VerdiController) -> None:
         raise RuntimeError("Start from operator-confirmed STANDBY with shutter closed.")
     if not before.keyswitch_on or before.lbo_servo != ServoState.LOCKED or before.faults:
         raise RuntimeError("Require key ON, LBO LOCKED and no active faults; do not auto-enable.")
+    for query in (Query.DIODE_SERVO, Query.ETALON_SERVO, Query.VANADATE_SERVO):
+        if laser.query(query) != ServoState.LOCKED:
+            raise RuntimeError(f"Require all temperature servos LOCKED; {query} is not ready.")
     print(f"Fault history before enable: {laser.faults(history=True)}")
 
 
@@ -240,9 +243,10 @@ def hardware_power_config(
     allow_writes: bool = False,
     target_w: float | None = None,
     power_limit_w: float | None = None,
+    active_fault_clear_reply: str | None = None,
 ) -> ControllerConfig:
     """Validate explicit hardware power settings before opening a connection."""
-    config = ControllerConfig(model, allow_writes=allow_writes, power_limit_w=power_limit_w)
+    config = ControllerConfig(model, allow_writes, power_limit_w, active_fault_clear_reply)
     if allow_writes:
         if power_limit_w is None:
             raise ValueError("Supply the approved power_limit_w; there is no hardware default")
@@ -292,6 +296,7 @@ def run_hardware(
     target_w: float | None = None,
     power_limit_w: float | None = None,
     identify_only: bool = False,
+    active_fault_clear_reply: str | None = None,
 ) -> bool:
     """Human entry point. False means cancelled; exceptions mean STOP, never retry.
 
@@ -306,7 +311,11 @@ def run_hardware(
     writes = lesson in WRITE_LESSONS
     serial_config = SerialConfig(port, baudrate=baudrate, timeout_s=timeout_s)
     config = hardware_power_config(
-        model, allow_writes=writes, target_w=target_w, power_limit_w=power_limit_w
+        model,
+        allow_writes=writes,
+        target_w=target_w,
+        power_limit_w=power_limit_w,
+        active_fault_clear_reply=active_fault_clear_reply,
     )
 
     operation, _ = LESSONS[lesson]
@@ -357,6 +366,10 @@ def main(argv: list[str] | None = None) -> None:
         "--power-limit-w", type=float, help="Approved site ceiling, required for writes"
     )
     parser.add_argument("--identify-only", action="store_true", help="read-status: stop after ?SV")
+    parser.add_argument(
+        "--active-fault-clear-reply",
+        help="Exact ?F clear text verified for this firmware in Stage 1",
+    )
     args = parser.parse_args(argv)
     if not args.hardware:
         hardware_settings = (
@@ -366,6 +379,7 @@ def main(argv: list[str] | None = None) -> None:
             args.timeout_s,
             args.target_w,
             args.power_limit_w,
+            args.active_fault_clear_reply,
         )
         if any(value is not None for value in hardware_settings) or args.identify_only:
             parser.error(
@@ -387,6 +401,7 @@ def main(argv: list[str] | None = None) -> None:
             target_w=args.target_w,
             power_limit_w=args.power_limit_w,
             identify_only=args.identify_only,
+            active_fault_clear_reply=args.active_fault_clear_reply,
         )
     except ValueError as exc:
         parser.error(str(exc))

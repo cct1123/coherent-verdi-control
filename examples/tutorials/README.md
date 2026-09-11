@@ -86,12 +86,16 @@ the distinction between setpoint and reported power, and four-decimal readback.
 
 ## 3. One start–shutter–standby session
 
-After the local simulator key fixture is ON, check `status()` and `?FH`;
+After the local simulator key fixture is ON, check `status()`, `?D1SS, ?ESS, ?VSS`
+and `?FH`;
 send `P=0.2500, ?SP` → `L=1, ?L, ?F, ?S` → `S=1, ?S, ?F, ?P` →
 `S=0, ?S` → `L=0, ?L`. Expect one opening at synthetic 0.250 W, then
 verified shutter closed/STANDBY with the setpoint retained. `L=1` clears fault
 history; read it first. [Lesson 3](03_controlled_session.ipynb) checks initial
-standby, closed shutter, key ON, LBO LOCKED and no active faults, then each result.
+standby, closed shutter, key ON, all four temperature servos LOCKED and no active
+faults, then each result. A real keyswitch can start the laser; `set_key(True)` is
+only a fixture operation. The key-ON/STANDBY starting condition on hardware requires
+an operator-approved RS-232 standby override, established before this lesson.
 The head shutter is a safety shutter, never an experimental modulator. Real idle
 power/ramp time are unverified; see [simulator policies](../../docs/SIMULATOR.md).
 
@@ -117,6 +121,13 @@ require an explicit target and site ceiling in W. There are no physical power
 defaults. The 1 s transaction timeout is configurable with `--timeout-s` and
 must be validated for the actual link.
 
+The manual specifies `SYSTEM OK` for fault history (`?FH`) but does not specify
+the no-active-fault `?F` reply. After Stage 1 verifies its exact text and meaning
+for this firmware, supply `ACTIVE_FAULT_CLEAR_REPLY` in the notebook or
+`--active-fault-clear-reply "<VERIFIED_TEXT>"` in the terminal. Default None rejects
+unverified clear-looking responses; do not copy the simulator convention into a
+physical configuration. Identification-only mode needs no clear-reply setting.
+
 First complete the [hardware review procedure](../../HARDWARE_VALIDATION.md).
 These entry points are prepared for an approved human session; their presence
 does not establish physical validation or authorize the agent to operate hardware.
@@ -132,7 +143,8 @@ python examples/tutorials/run_tutorial.py --help
 ```
 
 **In a notebook:** run section 7's definition cells, then fill `HARDWARE_PORT`, `HARDWARE_MODEL` and
-`HARDWARE_BAUDRATE`. For write lessons, also fill `TARGET_W` and `POWER_LIMIT_W`.
+`HARDWARE_BAUDRATE`, plus the Stage 1-verified `ACTIVE_FAULT_CLEAR_REPLY` for full
+status/fault checks. For write lessons, also fill `TARGET_W` and `POWER_LIMIT_W`.
 Set `RUN_HARDWARE=True` only for an attended, approved session, then run that
 configuration cell followed by its hardware-run cell. Notebook 1 defaults to
 `IDENTIFY_ONLY=True`; use this for the first `?SV` check, then set it to False
@@ -141,6 +153,8 @@ only when broader queries are approved. Return `RUN_HARDWARE` to False afterward
 **From a terminal:** the following are command templates. Replace every `<...>`
 token with operator-verified settings before executing; `<MODEL>` is V2, V5 or V6.
 Do not copy simulator exercise values as physical power limits.
+Append the verified clear-reply option to each full lesson command below;
+omit it for the initial identification-only query.
 
 ```text
 python examples/tutorials/run_tutorial.py read-status --hardware --port <PORT> --model <MODEL> --baudrate <BAUD> --identify-only

@@ -10,7 +10,7 @@ and [application ownership](INTEGRATION.md) before embedding it in a service.
 | Type | Parameters / contract |
 | --- | --- |
 | `Model` | `V2`, `V5`, `V6`; conservative software ceilings are 2, 5, 6 W respectively. Select explicitly from verified identity. |
-| `ControllerConfig` | `model`, `allow_writes=False`, `power_limit_w=None`. A supplied ceiling must be finite, nonnegative, and no greater than the model rating. Frozen. |
+| `ControllerConfig` | `model`, `allow_writes=False`, `power_limit_w=None`, `active_fault_clear_reply=None`. A supplied ceiling must be finite, nonnegative, and no greater than the model rating. Clear-fault text must be verified for the actual firmware; positive fault codes/lists are rejected. Frozen. |
 | `SerialConfig` | Explicit native `port`, `baudrate=19200`, `timeout_s=1.0`, `max_response_bytes=4096`. No discovery or URL ports; validated baud values follow manual Table 5-2. Frozen. |
 | `Status` | Model, UTC `sampled_at`, `duration_s`, laser/key/shutter states, power/setpoint in W, diode current in A, temperatures in °C, LBO servo, active faults, `simulated`. Frozen. |
 | `Diagnostics` | Software version, head/power-supply/diode operating hours, fault history. Frozen. |
@@ -21,6 +21,15 @@ four decimal places and checks the rounded value against the configured ceiling.
 Booleans, NaN, infinity and out-of-range inputs raise `ValueError` before I/O.
 These ceilings constrain software requests; they are not a physical safety system
 or evidence of the firmware's full supported range.
+
+The manual defines `SYSTEM OK` for `?FH`, but leaves the no-active-fault `?F` reply
+unspecified. Physical `faults()`/`status()` calls fail on a clear-looking reply
+until `active_fault_clear_reply` is set to the exact nonempty text verified in
+[Stage 1](../HARDWARE_VALIDATION.md). Simulator transports default to `SYSTEM OK`
+as a fixture convention only. Never copy that value into a hardware configuration
+without verifying its meaning. Fault lists remain readable with the default None.
+Model-specific diode/LBO servo values are checked: V2 excludes code 6 and V6
+excludes code 5; V5/UNO distinctions remain an explicit identification requirement.
 
 ## Controller
 

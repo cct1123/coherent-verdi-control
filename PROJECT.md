@@ -82,3 +82,11 @@ simplify configuration/control flow. Preserve required controller features,
 safety checks, tests and hardware/simulator separation. Keep public APIs stable
 when practical and update tests/documentation. The target is the smallest clean,
 maintainable implementation that still fully supports the Verdi controller.
+
+## Manual verification (user request)
+
+Check every implemented command, query, parameter, response format, limit, error
+and safety rule against the official Verdi manual. Correct mismatches, missing
+behavior and unsupported assumptions; update the simulator and regression tests.
+Produce a short report of coverage, corrections, uncertainties and remaining
+physical validation. Continue using only simulated hardware for development/tests.

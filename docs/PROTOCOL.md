@@ -11,6 +11,9 @@ poorly spaced fault codes 19, 21, 25, 27 and 28. No newer firmware behavior is a
 
 - Section 5, pp. 5-1–5-4: ASCII instruction terminated by CR/LF or semicolon;
   this library emits **CR/LF only**, one instruction per transaction.
+- `PRINT ` and `?` are equivalent query prefixes; `:` and `=` are equivalent
+  command delimiters (p. 5-3). The controller emits catalogued short queries and
+  `=` commands; the simulator also accepts documented long forms and alternatives.
 - Replies end in CR/LF; wait for a complete reply before the next instruction.
 - Table 5-1, p. 5-2: a successful command replies with an empty CR/LF when echo
   and prompt are off. There is no documented `OK` command acknowledgment.
@@ -41,7 +44,7 @@ There is no automatic retry, input-buffer purge, mode normalization or state rep
 | `enable_laser()` | `L=1` | p. 5-5; key must be ON; resets faults and clears fault history |
 | `set_shutter(open=...)` | `S=0/1` | p. 5-6; closes/opens the head shutter |
 | `set_echo(enabled=...)` | `E=0/1` | p. 5-5; change applies to the following command |
-| `set_prompt(enabled=...)` | `PROMPT=0/1` | p. 5-6; **0 enables, 1 disables** prompt |
+| `set_prompt(enabled=...)` | `PROMPT=0/1` | p. 5-6; **0 enables, 1 disables** prompt; `>=n` is its alternate spelling |
 
 Writes require `ControllerConfig(..., allow_writes=True)`. Construction, close,
 replacement and telemetry never issue commands. Mode writes are optional explicit
@@ -74,16 +77,26 @@ States accept only their documented integer codes. Version, servo-drive values,
 photocell values, reference voltage representation, aging factor and `?ACAD`
 remain **raw text** where the manual does not fully specify units or layout.
 No invented second-diode query is added: section 2 describes one diode assembly.
-Servo codes 5/6 are returned as reported; distinctions involving V5 UNO are not
-inferred from the caller's V5 selection.
+For diode/LBO servo queries, code 5 is excluded for V6 and code 6 is excluded
+for V2 (pp. 5-7, 5-9); these mismatches raise `ProtocolError`. V5 can mean standard
+V5 or V5 UNO, so both codes remain representable until its variant is identified.
+
+The complete independent query/unit/code/alias vectors are in
+[test_protocol.py](../tests/test_protocol.py), `MANUAL_QUERIES`. Fault descriptions
+cover the union of Tables 5-4 and 6-1: 22 codes, including battery service code 30.
+Code 1 retains both conflicting manual labels (see below). Code 47 remains known
+from Table 5-4 even though Table 6-1 omits it. Unknown positive codes remain faults.
 
 ## Uncertainty register
 
 1. **No active faults:** `SYSTEM OK` is explicit for `?FH`; the clear reply for
-   `?F` is not explicit. The parser tolerates `SYSTEM OK` for `?F`, and the
-   simulator uses it as a fixture convention. This is not a verified firmware
-   claim. Empty data, `0` and `OK` are rejected. Record the actual reply in the
-   first read-only validation and add a source-grounded fixture before adapting.
+   `?F` is not explicit. Physical controllers therefore reject clear-looking
+   replies unless `ControllerConfig.active_fault_clear_reply` matches the exact
+   text independently verified for that firmware in Stage 1. Its default is None;
+   malformed/unverified data invalidates the session. Positive fault codes/lists
+   cannot be configured as clear tokens. Empty replies remain unsupported.
+   Simulated controllers alone default to the fixture convention `SYSTEM OK`.
+   Do not infer physical compatibility from that simulator convention or from ?FH.
 2. **Echo framing:** the implementation follows Table 5-1's one-line layouts.
    Real character echo timing, any separately terminated echo lines and prompt
    transition ordering require capture; the parser deliberately fails on layouts
@@ -92,7 +105,7 @@ inferred from the caller's V5 selection.
    conservative software ceilings, not claimed firmware maximum setpoint ranges.
    A caller can lower the ceiling. No current, temperature or calibration tuning
    commands are implemented.
-4. **Shutter behavior:** Table 4-2 (p. 4-8) describes idle at minimum power while
+4. **Shutter behavior:** Table 4-3 (p. 4-9) describes idle at minimum power while
    closed and return/ramp after opening. The minimum power and ramp rates are not
    specified. The simulator's zero closed-shutter power is a synthetic fixture;
    **it does not establish the actual `?P` reading with the shutter closed**.
@@ -103,6 +116,17 @@ inferred from the caller's V5 selection.
    warmup. The simulator represents this fault, but retaining a fault latch until
    a fresh explicit enable after warmup is a conservative fixture policy. Real
    recovery/latching and any automatic resumption require physical observation.
+6. **Fault-code conflict:** Table 5-4 calls code 1 a laser head interlock fault;
+   Table 6-1 and Chart 5 call it an emission lamp fault (pp. 6-2, 6-12). The returned
+   description flags both labels; verify against device firmware/Coherent support.
+   Neither label establishes a laser-head cover interlock: p. 6-1 explicitly warns
+   that removing the head cover has no protective cover interlock.
+7. **Safety timing and limits:** indicators precede possible emission by approximately
+   30 s (p. 1-3); cold-start servo stabilization can take 30 minutes (pp. 4-2–4-3).
+   There is no documented per-command delay to substitute for readiness observation.
+   The 0.01 W alignment setting (pp. 4-2/4-4) is not a specified RS-232 lower limit.
+   Table 2-1's stability figures require warmup and measurement conditions; tests
+   do not establish accuracy, calibration, safety or the full firmware setpoint range.
 
 ## Software references
 

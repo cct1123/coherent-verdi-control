@@ -40,6 +40,7 @@ class ControllerConfig:
     model: Model
     allow_writes: bool = False
     power_limit_w: float | None = None
+    active_fault_clear_reply: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, Model):
@@ -48,6 +49,17 @@ class ControllerConfig:
             raise ValueError("allow_writes must be a bool")
         if self.power_limit_w is not None:
             finite_range(self.power_limit_w, 0, self.model.rated_power_w, "power_limit_w")
+        reply = self.active_fault_clear_reply
+        if reply is not None and (
+            not isinstance(reply, str)
+            or not 1 <= len(reply) <= 128
+            or reply != reply.strip(" ")
+            or any(not 32 <= ord(c) <= 126 or c == "&" for c in reply)
+            or (reply.isdecimal() and int(reply) > 0)
+        ):
+            raise ValueError(
+                "active_fault_clear_reply must be verified ASCII text or '0', not a fault code"
+            )
 
     @property
     def effective_power_limit_w(self) -> float:

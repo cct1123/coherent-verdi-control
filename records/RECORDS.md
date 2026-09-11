@@ -841,3 +841,86 @@ evidence for the previous candidate. REQ-010 physical validation remains UNTESTE
 Origin/main fetched and matched HEAD at 0033ecc before commit. The user's earlier
 commit/push authorization remains applicable; Git history records publication.
 All test sessions/kernels completed. No device access or upstream template change.
+
+## D010
+
+Source: user's request to verify every implemented protocol/safety behavior against
+the official manual. Authority remains software/simulator only. Preserve the five
+implemented write families (six API operations), all 42 queries and the service
+command exclusion. Do not infer ?F clear semantics from the documented ?FH clear
+reply: physical controllers now require a caller-supplied, independently verified
+active_fault_clear_reply. The simulator convention remains source-specific.
+Keep ambiguous fault-code 1 labels visible and V5/UNO servo distinctions unresolved;
+reject only model/code combinations explicitly excluded for known V2/V6 models.
+
+## E035
+
+Scope: TEST-016 manual audit, begun at ef9c472; supplied Coherent operator manual
+0171-750-00 Rev IB, 08/2005, SHA-256 unchanged. Read/extracted complete section 5,
+safety pp.1-1..1-3, ratings p.2-5, operation pp.4-1..4-5/4-9/4-13, fault tables
+pp.6-1..6-3 and Charts 5/13; checked shutter/thermal operating principles.
+Visually inspected Tables 5-1..5-4, serial pin figure, Table 4-3, fault handling and
+Table 6-1 to verify columns, spellings, footnotes and conflicting fault labels.
+
+Findings and fixes:
+- Add fault 30 from Table 6-1/Chart 13. Code 1 now flags the Table 5-4 head-interlock
+  versus Table 6-1/Chart 5 emission-lamp conflict; retain code 47 from Table 5-4.
+- Require verified clear-fault text on physical connections; do not silently accept
+  the simulator's SYSTEM OK convention. Fault codes/lists cannot be clear settings.
+- Enforce diode/LBO servo code restrictions (V2 excludes 6; V6 excludes 5); keep
+  V5/UNO ambiguity visible. Controlled tutorials check all four temperature servos.
+- Simulator accepts long query aliases, PRINT, colon delimiters, semicolon
+  termination and short prompt >, while preserving one instruction per transaction.
+  Remove trailing acknowledgment spaces; reject Python-only numeric syntax and
+  non-boolean mode settings. Closed-shutter ON has a positive synthetic idle diode
+  current; faults/standby have zero. Current magnitudes and ?P idle remain fixtures.
+- Correct shutter citation to Table 4-3, p.4-9; clarify physical-key versus fixture
+  semantics and complete-shutdown/warmup prerequisites. Keep undocumented ranges,
+  response latency, no-fault text, fault recovery and optical calibration unverified.
+
+Validation: independent vectors cover all 42 rows/units/types/enum codes/aliases,
+all 12 error-prefix/echo/prompt combinations, command alternatives, all 22 known
+fault codes, explicit-clear profiles, servo restrictions and tutorial readiness.
+Initial notebook checks exposed omitted forwarding of the new configuration in
+four hardware cells; fixed and rerun with non-simulated source metadata on in-memory
+peers so the check cannot use the simulator fallback. A reserved pytest parameter
+name was corrected during test collection. Full pytest then PASS: 320 cases
+(16.62 s), including all eight notebook executions, 75 tutorial/operator cases.
+No test was removed. Ruff and strict typing PASS. Final integrated run follows E036.
+Every physical serial constructor/discovery path remained prohibited; no hardware
+was accessed. No dependency or public operational command was added.
+
+## E036
+
+Date: 2026-09-11T00:28:16.330843+00:00; TEST-001..009/011..016 final manual-audit candidate.
+Candidate: `7cee08deb695a9136e4b07749dd7003c2ff5dff6b9f63fd3641503096d34693f`.
+Method: python scripts/validate.py, Windows 11/Python 3.12.14, Node 24.19.0,
+workspace temporary fixtures with normal local Windows permissions. All physical
+serial constructors/discovery prohibited, including notebook kernels. Hardware
+branches exercise in-memory peers with non-simulated source metadata and explicitly
+verified fixture clear text, so they cannot use the simulator-only clear fallback.
+
+Result: 320 tests PASS (20.82 s), 96% library statement coverage; 75 tutorial/operator
+cases and eight fresh notebook runs. All 11 stages PASS: Ruff lint/format, strict
+typing (12 modules), dependency checks, wheel/sdist builds, CLI, synchronous/async
+examples, clean core/extras installs and Node watchdog. All 52 candidate hashes
+unchanged during validation; preserved manual/framework hashes match. One non-failing
+Windows pyzmq selector-thread warning; no skipped/failed tests. No test was removed.
+
+Review: manual source matrix and independent vectors cover all implemented commands
+and queries, state codes, fault catalogs, framing, errors, limits and safety rules.
+Only one optional configuration field was added; operational APIs and transport
+separation retained. No dependency/module or service write added. Notebook helpers
+remain visible and match terminal functions; maximum code cell is 23 lines.
+Short report and checkpoint updated after validation; these are outside the source
+fingerprint. Previous browser evidence E024 applies to unchanged GUI assets.
+Artifacts: records/validation.json, local validation.log/JUnit and eight executed
+notebooks. All test sessions/kernels completed; no hardware accessed.
+
+Bearing: REQ-016 and affected software requirements PASS for this candidate.
+E034 is historical evidence for the prior revision. REQ-010 remains UNTESTED;
+future physical work is AWAITING_HUMAN_REVIEW, not a validated release.
+Publication review: git diff --check PASS; all 52 working source hashes still match
+the validated manifest. Origin/main fetched and matched HEAD at ef9c472 before
+commit. Only reviewed audit changes are staged under the user's prior commit/push
+authorization; Git history records the final publication revision.

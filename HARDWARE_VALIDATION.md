@@ -51,9 +51,15 @@ documented CR/LF handshaking, recording raw bytes and parsed values:
 | Hours | `?D1H`, `?HH`, `?PSH` | nonnegative hours |
 | Faults | `?F`, `?FH` | preserve raw clear/fault responses and unknown codes |
 
-Record the actual no-active-fault `?F` reply before asserting compatibility with
-the simulator's `SYSTEM OK` convention. Do not clear faults as part of reading
-them. If the manual or operator's firmware documentation identifies a side
+Record the actual no-active-fault `?F` reply and independently verify its meaning
+against the operator's observed state/firmware documentation before setting
+`ControllerConfig.active_fault_clear_reply` to that exact text. `SYSTEM OK` is
+specified only for history. A default physical controller deliberately rejects an
+unverified clear-looking response. For this one approved framing capture, use one
+owner of the serial transport to record the single `?F` exchange before typed
+status sampling; do not introduce a concurrent raw-reader/controller pair.
+An empty clear reply needs a separately reviewed parser change. Do not clear faults
+as part of reading them. If the manual or operator's firmware documentation identifies a side
 effect, revise the read procedure before issuing the affected query.
 
 For comparisons, record front-panel resolution, time separation and an agreed
@@ -80,7 +86,8 @@ link. This transition must not send automatic mode changes or replay prior write
    ramp sequence is supplied. Do not infer the firmware's full range from ratings.
 3. TEST-010F: obtain specific approval for **LASER ON** with key ON and beam path
    conditions confirmed by the operator. **Complete LBO warmup first** and confirm
-   LOCKED servo/front-panel readiness as described on manual pp. 4-2–4-3; the diode
+   LOCKED diode, LBO, etalon and vanadate temperature servos/front-panel readiness
+   as described on manual pp. 4-2–4-3; the diode
    cannot turn on during warmup. Verify the safety shutter is closed before enable.
    Capture fault history first, because `L=1` resets faults/history. Issue the
    single authorized enable, then verify actual state, remaining faults and
@@ -89,7 +96,7 @@ link. This transition must not send automatic mode changes or replay prior write
    shutter operation (`S=1` open, `S=0` close), read `?S`, and confirm physical state.
    Treat the head shutter as a
    safety shutter; never cycle it for experimental modulation. Validate its
-   closed-state `?P` semantics and reopening behavior against p. 4-8.
+   closed-state `?P` semantics and reopening behavior against Table 4-3, p. 4-9.
 
 No service menu, chiller, LBO heater/optimization, front-panel locking, calibration
 or baud-rate write is within this procedure's default scope.
@@ -134,6 +141,12 @@ shutdown scope applies, the operator may command shutter closed and STANDBY and
 verify them. Stop telemetry before releasing the controller. `close()` only
 closes the port. Follow the manual's LBO cool-down and complete-shutdown procedure
 (p. 4-5); do not cut AC or power-cycle as a communication-recovery shortcut.
+For complete shutdown, that procedure retains AC through LBO cooldown and waits
+until LBO temperature is below 40 °C before switching AC off, then stops the chiller.
+Standby leaves temperature servos powered. The approximately 30-second emission
+warning (p. 1-3) and 30-minute cold-start stabilization are hardware behavior to
+verify, not timing guarantees supplied by this software. Fault code 1 has conflicting
+manual labels; record the device-specific meaning without deliberately inducing it.
 
 Physical acceptance remains UNTESTED until these observations are recorded. A
 software/simulator PASS does not establish hardware safety or release readiness.

@@ -4,6 +4,7 @@ The manual defines messages and state meanings, not a numerical laser plant.
 See docs/SIMULATOR.md for every deliberate simplification and uncertain reply.
 """
 
+import re
 from collections import deque
 from collections.abc import Callable
 from threading import RLock
@@ -11,6 +12,52 @@ from time import monotonic
 
 from .errors import ConnectionUnusable, ResponseTimeout
 from .models import LaserState, Model, finite_range
+
+# Table 5-4 long forms; deliberately independent of the controller query catalog.
+_QUERY_NAMES = {
+    "AVG CURRENT AND DELTA": "?ACAD",
+    "BASEPLATE TEMP": "?BT",
+    "BAUD RATE": "?B",
+    "CURRENT": "?C",
+    "DIODE1 CURRENT": "?D1C",
+    "DIODE1 HEATSINK TEMP": "?D1HST",
+    "DIODE1 HOURS": "?D1H",
+    "DIODE1 PHOTOCELL": "?D1PC",
+    "DIODE1 RATED CURRENT FACTOR": "?D1RCF",
+    "DIODE1 RATED CURRENT MAX": "?D1RCM",
+    "DIODE1 SERVO STATUS": "?D1SS",
+    "DIODE1 SET TEMP": "?D1ST",
+    "DIODE1 TEMP DRIVE": "?D1TD",
+    "DIODE1 TEMP": "?D1T",
+    "DIODE1 5VREF SENSE": "?D15V",
+    "DIODE OPTIMIZER STATUS": "?DIOS",
+    "ETALON DRIVE": "?ED",
+    "ETALON SERVO STATUS": "?ESS",
+    "ETALON SET TEMP": "?EST",
+    "ETALON TEMP": "?ET",
+    "FAULTS": "?F",
+    "FAULT HISTORY": "?FH",
+    "HEAD_HOURS": "?HH",
+    "KEYSWITCH": "?K",
+    "LASER": "?L",
+    "LBO DRIVE": "?LBOD",
+    "LBO HEATER": "?LBOH",
+    "LBO OPTIMIZER STATUS": "?LBOOS",
+    "LBO SET TEMP": "?LBOST",
+    "LBO SERVO STATUS": "?LBOSS",
+    "LBO TEMP": "?LBOT",
+    "LIGHT": "?P",
+    "LIGHT REG STATUS": "?LRS",
+    "MODE": "?M",
+    "PS HOURS": "?PSH",
+    "SET LIGHT": "?SP",
+    "SHUTTER": "?S",
+    "SOFTWARE": "?SV",
+    "VANADATE SET TEMP": "?VST",
+    "VANADATE TEMP": "?VT",
+    "VANADATE DRIVE": "?VD",
+    "VANADATE SERVO STATUS": "?VSS",
+}
 
 
 class SimulatedTransport:
@@ -28,6 +75,8 @@ class SimulatedTransport:
         if not isinstance(model, Model):
             raise ValueError("model must be a Model enum")
         finite_range(warmup_s, 0, 86400, "warmup_s")
+        if type(echo) is not bool or type(prompt) is not bool:
+            raise ValueError("echo and prompt must be bools")
         self.model = model
         self._clock = clock
         self._started = clock()
@@ -103,12 +152,14 @@ class SimulatedTransport:
         elapsed = max(0.0, self._clock() - self._started)
         ready = self._ready()
         faults = self._active_faults()
-        emitting = self._laser == LaserState.ON and self._shutter and ready and not faults
-        current = "12.0" if emitting else "0.0"
+        diode_on = self._laser == LaserState.ON and ready and not faults
+        emitting = diode_on and self._shutter
+        # Closed-shutter idle is not diode-off (Tables 4-1/4-3). Values are fixtures.
+        current = ("12.0" if self._shutter else "1.0") if diode_on else "0.0"
         fraction = 1.0 if not self._warmup_s else min(1.0, elapsed / self._warmup_s)
         # Independent literal query mapping deliberately does not import QUERY_SPECS.
         values: dict[str, str] = {
-            "?ACAD": "0.0&0.0",
+            "?ACAD": f"{current}&0.0",
             "?BT": "30.00",
             "?B": "19200",
             "?C": current,
@@ -151,19 +202,22 @@ class SimulatedTransport:
             "?VD": "0.0",
             "?VSS": "1",
         }
-        return values.get(instruction, f"Query Error: {instruction}")
+        name = instruction[1:] if instruction.startswith("?") else instruction[6:]
+        return values.get(_QUERY_NAMES.get(name, "?" + name), f"Query Error: {instruction}")
 
     def _command(self, instruction: str) -> str:
-        name, sep, operand = instruction.partition("=")
+        name, sep, operand = instruction.replace(":", "=", 1).partition("=")
         if not sep:
             return f"Command Error: {instruction}"
         name, operand = name.strip(), operand.strip()
         if name in ("P", "POWER", "LIGHT"):
+            if not re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", operand):
+                return f"RANGE ERROR: {instruction}"
             try:
                 self._power = finite_range(float(operand), 0, self.model.rated_power_w, "power")
             except ValueError:
                 return f"RANGE ERROR: {instruction}"
-        elif name in ("L", "LASER", "S", "SHUTTER", "E", "ECHO", "PROMPT"):
+        elif name in ("L", "LASER", "S", "SHUTTER", "E", "ECHO", "PROMPT", ">"):
             if operand not in ("0", "1"):
                 return f"RANGE ERROR: {instruction}"
             value = operand == "1"
@@ -186,7 +240,7 @@ class SimulatedTransport:
                 self._shutter = value and self._laser == LaserState.ON and self._key
             elif name in ("E", "ECHO"):
                 self._echo = value
-            elif name == "PROMPT":
+            elif name in ("PROMPT", ">"):
                 self._prompt = not value
         else:
             return f"Command Error: {instruction}"
@@ -197,24 +251,30 @@ class SimulatedTransport:
             if self._closed:
                 raise ConnectionUnusable("simulator connection is closed")
             self._requests.append(request)
-            if not request.endswith(b"\r\n"):
-                raise ValueError("simulator expects CR/LF framing")
-            instruction = request[:-2].decode("ascii")
+            if request.endswith(b"\r\n"):
+                body = request[:-2]
+            elif request.endswith(b";"):
+                body = request[:-1]
+            else:
+                raise ValueError("simulator expects CR/LF or semicolon termination")
+            if not body or any(c < 32 or c > 126 or c == 59 for c in body):
+                raise ValueError("simulator accepts one printable ASCII instruction at a time")
+            instruction = body.decode("ascii")
+            query = instruction.startswith(("?", "PRINT "))
             if self._injections:
                 result, after_apply = self._injections.popleft()
-                if after_apply and not instruction.startswith("?"):
+                if after_apply and not query:
                     self._command(instruction)
                 if isinstance(result, Exception):
                     raise result
                 return result
-            prefix = "Verdi> " if self._prompt else ""
-            prefix += instruction + " " if self._echo else ""
-            payload = (
-                self._query(instruction)
-                if instruction.startswith("?")
-                else self._command(instruction)
-            )
-            return (prefix + payload + "\r\n").encode("ascii")
+            parts = ["Verdi>"] if self._prompt else []
+            if self._echo:
+                parts.append(instruction)
+            payload = self._query(instruction) if query else self._command(instruction)
+            if payload:
+                parts.append(payload)
+            return (" ".join(parts) + "\r\n").encode("ascii")
 
     def close(self) -> None:
         with self._lock:

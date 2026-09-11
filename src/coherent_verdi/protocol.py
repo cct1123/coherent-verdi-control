@@ -116,7 +116,8 @@ QUERY_SPECS = MappingProxyType(
 
 FAULT_DESCRIPTIONS = MappingProxyType(
     {
-        1: "Laser head interlock fault",
+        # Table 5-4 conflicts with Table 6-1 / Chart 5; preserve both labels.
+        1: "Laser head interlock / emission lamp fault (manual labels conflict)",
         2: "External interlock fault",
         3: "Power supply cover interlock fault",
         4: "LBO temperature fault",
@@ -134,6 +135,7 @@ FAULT_DESCRIPTIONS = MappingProxyType(
         27: "Laser head EEPROM fault",
         28: "Power supply EEPROM fault",
         29: "Power supply-head mismatch fault",
+        30: "Battery requires service",  # Table 6-1, p.6-2; Chart 13, p.6-21.
         31: "Shutter state mismatch",
         40: "Head-diode mismatch fault",
         47: "Vanadate 2 temperature fault",
@@ -180,10 +182,9 @@ def decode_response(instruction: str, wire: bytes, *, query: bool) -> str:
     return payload
 
 
-def parse_faults(payload: str) -> tuple[Fault, ...]:
-    # SYSTEM OK is explicit for ?FH; accepting it for ?F is a compatibility
-    # assumption, documented in docs/PROTOCOL.md and subject to physical review.
-    if payload == "SYSTEM OK":
+def parse_faults(payload: str, *, clear_reply: str | None = "SYSTEM OK") -> tuple[Fault, ...]:
+    # The default clear text is documented for history only (Table 5-4).
+    if payload == clear_reply:
         return ()
     if not re.fullmatch(r"[1-9][0-9]*(?:\s*&\s*[1-9][0-9]*)*", payload):
         raise ProtocolError(f"invalid fault list {payload!r}")
@@ -204,10 +205,14 @@ def _parse_integer(payload: str) -> int:
         raise ProtocolError("integer reply exceeds the supported conversion limit") from exc
 
 
-def parse_value(query: Query, payload: str) -> QueryResult:
+def parse_value(
+    query: Query, payload: str, *, active_fault_clear_reply: str | None = None
+) -> QueryResult:
     spec = QUERY_SPECS[query]
     if spec.kind == "faults":
-        return parse_faults(payload)
+        return parse_faults(
+            payload, clear_reply=active_fault_clear_reply if query == Query.FAULTS else "SYSTEM OK"
+        )
     if spec.kind == "text":
         return payload
     if spec.kind == "enum":

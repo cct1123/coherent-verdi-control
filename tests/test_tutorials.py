@@ -108,6 +108,9 @@ def test_entrypoints_repeat_and_release_simulators(lessons, name, monkeypatch, c
             b"?ET",
             b"?VT",
             b"?F",
+            b"?D1SS",
+            b"?ESS",
+            b"?VSS",
             b"?FH",
             b"P=0.2500",
             b"?SP",
@@ -303,6 +306,7 @@ def test_notebook_definitions_match_and_execute(name, hardware_path, tmp_path, m
             "    assert config.port == 'SIMULATED_TEST_PORT'\n"
             "    sim = SimulatedTransport(Model.V5)\n"
             "    sim.set_key(True)\n"
+            "    sim.is_simulated = False  # In-memory peer with explicit firmware settings.\n"
             "    return sim\n"
             "coherent_verdi.open_serial = simulated_serial\n"
             "answers = iter(['CONNECT', 'RUN'])\n"
@@ -322,6 +326,7 @@ def test_notebook_definitions_match_and_execute(name, hardware_path, tmp_path, m
             "TARGET_W = 0.25\n"
             "POWER_LIMIT_W = 0.5\n"
             "IDENTIFY_ONLY = False\n"
+            "ACTIVE_FAULT_CLEAR_REPLY = 'SYSTEM OK'\n"
         )
     monkeypatch.setenv("IPYTHONDIR", str(tmp_path / "ipython"))
     monkeypatch.setenv("JUPYTER_RUNTIME_DIR", str(tmp_path))
@@ -546,7 +551,15 @@ def test_operator_cli_defaults_to_simulator(operator_runner, lesson, capsys):
     assert "SIMULATOR: running the lesson" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("options", [["--timeout-s", "2"], ["--port", "TEST_PORT"], ["--hardware"]])
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--timeout-s", "2"],
+        ["--port", "TEST_PORT"],
+        ["--hardware"],
+        ["--active-fault-clear-reply", "SYSTEM OK"],
+    ],
+)
 def test_operator_cli_rejects_incomplete_mode_settings(operator_runner, options):
     namespace, sim, opened = operator_runner
     with pytest.raises(SystemExit) as error:
@@ -557,6 +570,7 @@ def test_operator_cli_rejects_incomplete_mode_settings(operator_runner, options)
 
 def test_operator_cli_parses_hardware_parameters(operator_runner):
     namespace, sim, opened = operator_runner
+    sim.is_simulated = False  # Still an in-memory fixture; require the explicit clear reply.
     namespace["main"](
         [
             "set-power",
@@ -571,6 +585,26 @@ def test_operator_cli_parses_hardware_parameters(operator_runner):
             "0.25",
             "--power-limit-w",
             "0.5",
+            "--active-fault-clear-reply",
+            "SYSTEM OK",
         ]
     )
     assert len(opened) == 1 and writes(sim) == [b"P=0.2500\r\n"]
+
+
+@pytest.mark.parametrize("query", [Query.DIODE_SERVO, Query.ETALON_SERVO, Query.VANADATE_SERVO])
+def test_all_temperature_servos_must_be_locked_before_enable(lessons, monkeypatch, query):
+    sim = SimulatedTransport()
+    sim.set_key(True)
+    original = sim.exchange
+
+    def seeking(request):
+        if request == (query.value + "\r\n").encode():
+            sim.inject(b"2\r\n")
+        return original(request)
+
+    monkeypatch.setattr(sim, "exchange", seeking)
+    with VerdiController(sim, ControllerConfig(Model.V5, allow_writes=True)) as laser:
+        with pytest.raises(RuntimeError, match="all temperature servos LOCKED"):
+            lessons["controlled_session"](laser, 0.25)
+    assert writes(sim) == []

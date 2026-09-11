@@ -11,6 +11,7 @@ from coherent_verdi import (
     ConnectionUnusable,
     ControllerConfig,
     Model,
+    ProtocolError,
     ResponseTimeout,
     SerialConfig,
     SerialTransport,
@@ -252,3 +253,26 @@ def test_failed_close_disables_io_but_allows_cleanup_retry(failure):
     controller.close()
     controller.close()
     assert stream.close_count == 2
+
+
+@pytest.mark.parametrize("reply", [b"SYSTEM OK", b"0", b"OK"])
+def test_unverified_active_fault_clear_cannot_allow_a_following_write(reply):
+    stream = FakeStream([reply + b"\r\n"])
+    with VerdiController(transport(stream), ControllerConfig(Model.V5, allow_writes=True)) as c:
+        with pytest.raises(ProtocolError):
+            c.faults()
+        with pytest.raises(ConnectionUnusable):
+            c.enable_laser()
+    assert stream.writes == [b"?F\r\n"]
+
+
+@pytest.mark.parametrize("clear", ["SYSTEM OK", "0"])
+def test_explicit_verified_clear_reply_applies_only_to_active_faults(clear):
+    stream = FakeStream([clear.encode() + b"\r\n", b"SYSTEM OK\r\n", b"30&999\r\n"])
+    config = ControllerConfig(Model.V5, active_fault_clear_reply=clear)
+    with VerdiController(transport(stream), config) as c:
+        assert c.faults() == ()
+        assert c.faults(history=True) == ()
+        faults = c.faults()
+    assert faults[0].code == 30 and faults[0].known
+    assert faults[1].code == 999 and not faults[1].known

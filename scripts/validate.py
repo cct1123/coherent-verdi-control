@@ -51,7 +51,7 @@ def validate() -> int:
     environment["PYTHONUTF8"] = "1"
     commands = [
         (
-            "TEST-002..006/009/011/012/013/014",
+            "TEST-002..006/009/011/012/013/014/016",
             [
                 "-m",
                 "pytest",

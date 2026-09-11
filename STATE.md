@@ -2,9 +2,9 @@
 
 ## Status
 
-**AWAITING_HUMAN_REVIEW** — the requested software simplification is complete and
-reviewed. Software/simulator validation PASS; physical Verdi behavior and calibration
-remain UNTESTED. No hardware access is authorized or performed.
+**AWAITING_HUMAN_REVIEW** for future physical integration. The requested manual
+audit, corrections, simulator/tests, tutorials and short report are software-complete.
+No hardware access is authorized; physical behavior and calibration remain UNTESTED.
 
 ## Objective and architecture
 
@@ -12,16 +12,19 @@ remain UNTESTED. No hardware access is authorized or performed.
 simulator, telemetry, CLI, optional Dash monitor and four beginner tutorials.
 One controller owns serialized transactions. Independent serial/protocol/simulator
 modules preserve framing and test isolation; telemetry publishes bounded immutable
-snapshots and Dash reads only the cache. Public library APIs remain unchanged.
+snapshots and Dash reads only the cache. Six operational methods and all 42 queries
+remain available; one optional configuration field was added for verified physical
+active-fault clear text. No dependency or module was added by the manual audit.
 
 [Tutorial guide](examples/tutorials/README.md): read status, set power in standby,
 one controlled enable/shutter/standby session, and fault/uncertain-write diagnosis.
-All terminal functions now live in [run_tutorial.py](examples/tutorials/run_tutorial.py).
-The four former script files and dynamic script loading are removed. Each notebook
-still defines every demonstration and hardware helper visibly in named sections;
-no notebook loads another tutorial file. Maximum code-cell length: 22 lines.
+Terminal functions live in [run_tutorial.py](examples/tutorials/run_tutorial.py).
+Each notebook defines every demonstration and hardware helper visibly in named
+sections; no notebook loads another tutorial file. Maximum code-cell length: 23 lines.
 Hardware defaults remain disabled, CONNECT precedes open, ?SV is first, and RUN
-precedes lesson commands. Write limits must be supplied explicitly.
+precedes lesson commands. Writes require explicit site limits; full physical status
+checks require Stage 1-verified active_fault_clear_reply. All four temperature
+servos must be LOCKED before the controlled tutorial enables the laser.
 
 ## Requirements status
 
@@ -29,36 +32,36 @@ PASS covers software/simulation only. Full human criteria remain in PROJECT.md.
 
 | ID / source | Criterion | Method | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| REQ-001 / explicit PROJECT.md | Pinned framework and preserved inputs | TEST-001 hashes | PASS | E034 |
-| REQ-002 / derived | Protocol, framing and errors | TEST-002 golden wire/malformed replies | PASS | E034 |
-| REQ-003 / derived | Typed API, serialized I/O and cleanup | TEST-003 concurrency/deadline/interruption/recovery | PASS | E034 |
-| REQ-004 / derived | Simulator models/faults/warmup/transitions | TEST-004 virtual clock/lost acknowledgments | PASS | E034 |
-| REQ-005 / derived | Bounded telemetry, freshness and errors | TEST-005 lifecycle/cache/source changes | PASS | E034 |
-| REQ-006 / derived | Cache-only Dash and streaming CLI | TEST-006 callbacks/watchdog | PASS | E034; unchanged browser assets E024 |
-| REQ-007 / derived | Packaging and software quality | TEST-007 lint/type/build/core/extras installs | PASS | E034 |
-| REQ-008 / derived | Operating docs and physical-validation procedure | TEST-008 source/output review | PASS | E033/E034 |
-| REQ-009 / explicit PROJECT.md | Entire phase hardware-free | TEST-009/012 serial/discovery guards including kernels | PASS | E034 |
+| REQ-001 / explicit PROJECT.md | Pinned framework and preserved inputs | TEST-001 hashes | PASS | E036 |
+| REQ-002 / derived | Protocol, framing and errors | TEST-002 golden wire/malformed replies | PASS | E035/E036 |
+| REQ-003 / derived | Typed API, serialized I/O and cleanup | TEST-003 concurrency/deadline/interruption/recovery | PASS | E036 |
+| REQ-004 / derived | Simulator models/faults/warmup/transitions | TEST-004 virtual clock/lost acknowledgments | PASS | E035/E036 |
+| REQ-005 / derived | Bounded telemetry, freshness and errors | TEST-005 lifecycle/cache/source changes | PASS | E036 |
+| REQ-006 / derived | Cache-only Dash and streaming CLI | TEST-006 callbacks/watchdog | PASS | E036; unchanged browser assets E024 |
+| REQ-007 / derived | Packaging and software quality | TEST-007 lint/type/build/core/extras installs | PASS | E036 |
+| REQ-008 / derived | Operating docs and physical-validation procedure | TEST-008 source/output review | PASS | E035/E036 |
+| REQ-009 / explicit PROJECT.md | Entire phase hardware-free | TEST-009/012 serial/discovery guards including kernels | PASS | E036 |
 | REQ-010 / future derived | Physical behavior/calibration | TEST-010 approved operator procedure | UNTESTED | Outside current scope |
-| REQ-011 / explicit tutorial request | Four small examples and clear notebooks/docs | TEST-011 all lessons and notebooks executed | PASS | E034 |
-| REQ-012 / explicit tutorial request | Simulator defaults, safety and reuse | TEST-012 models/inputs/states/errors/no replay | PASS | E034 |
-| REQ-013 / explicit operator clarification | Implemented human-operated hardware paths | TEST-013 simulator-substituted configuration/confirmation/serial routing | PASS | E034; no physical validation |
-| REQ-014 / explicit notebook clarification | Visible functions and uncrowded sections | TEST-014 definition/import checks, empty-directory kernel runs, cell lengths | PASS | E034 |
-| REQ-015 / explicit simplification request | Fewer modules/dependencies and direct control flow, features/API/tests retained | TEST-015 source/API/dependency review + full regression | PASS | D009/E033/E034 |
+| REQ-011 / explicit tutorial request | Four small examples and clear notebooks/docs | TEST-011 all lessons and notebooks executed | PASS | E036 |
+| REQ-012 / explicit tutorial request | Simulator defaults, safety and reuse | TEST-012 models/inputs/states/errors/no replay | PASS | E036 |
+| REQ-013 / explicit operator clarification | Implemented human-operated hardware paths | TEST-013 simulated configuration/confirmation/serial routing | PASS | E036; no physical validation |
+| REQ-014 / explicit notebook clarification | Visible functions and uncrowded sections | TEST-014 definitions, empty-directory kernels, cell lengths | PASS | E036 |
+| REQ-015 / explicit simplification request | Direct code, preserved features/API/tests and separation | TEST-015 source/API/dependency review + regression | PASS | D009/E033; E036 current regression |
+| REQ-016 / explicit manual-verification request | Full implemented protocol audit and corrections/report | TEST-016 independent manual vectors, source matrix + regression | PASS | D010/E035/E036 |
 
-Evidence: [E033](records/RECORDS.md#e033), [E034](records/RECORDS.md#e034),
-[D009](records/RECORDS.md#d009), [E024](records/RECORDS.md#e024).
+Evidence: [E035](records/RECORDS.md#e035), [E036](records/RECORDS.md#e036),
+[D010](records/RECORDS.md#d010), [E024](records/RECORDS.md#e024).
 
 ## Current candidate and reproducibility
 
 Version 0.1.0; source-manifest SHA-256:
-`29b070ac92fa9b7bca04287c1ef96afec593e2e873b704684d55f80d4d8906e0`.
+`7cee08deb695a9136e4b07749dd7003c2ff5dff6b9f63fd3641503096d34693f`.
 
-E034: **216 tests PASS**, **95% library statement coverage**, including all
-71 tutorial/operator cases and eight fresh notebook runs (four defaults and four
+E036: **320 tests PASS**, **96% library statement coverage**, including all
+75 tutorial/operator cases and eight fresh notebook runs (four defaults and four
 simulated hardware branches). All 11 validation stages passed; all 52 source
 hashes stayed unchanged during validation. Manual/framework hashes match.
-Python files across library/examples/scripts/tests: **29 -> 25**; lines including
-comments/blanks: **4,221 -> 4,159**. No test file or case was removed.
+No test was removed; the previous module/dependency simplification is retained.
 
 Reproduce: install `.[dev,serial,gui]`, then `python scripts/validate.py`.
 [Manifest](records/validation.json) includes dependencies and build hashes;
@@ -70,11 +73,13 @@ Executed notebooks: `records/tutorial-notebooks/` (regenerated, uploaded by CI).
 
 ## Review and next action
 
-No remaining software gap in this request. See [report](outputs/REPORT.md).
+No remaining software gap in this request. See [verification report](outputs/REPORT.md).
+Unresolved firmware details and physical assumptions are explicitly listed in the
+[protocol uncertainty register](docs/PROTOCOL.md#uncertainty-register).
 The prior user request authorizes review, pruning, commit and push; Git HEAD and
-origin/main record publication state. Origin matched HEAD at 0033ecc before commit.
-Publication does not approve hardware access. All test sessions/kernels completed;
-no pending device operation or tutorial polling worker remains.
+origin/main record publication state. The audit began from ef9c472. Publication
+does not approve hardware access. All test sessions/kernels completed; no pending
+device operation or tutorial polling worker remains.
 
 ## Human action required
 
@@ -82,7 +87,9 @@ None for this software task. Future physical integration requires review of this
 candidate and explicit Stage 1 read-only approval naming the actual model,
 operator-confirmed port/baud and site conditions in
 [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md). First interaction: passive open,
-then one `?SV` query and comparison of framing/read semantics/firmware reply.
+then one ?SV query and comparison of framing/read semantics/firmware reply.
+Return raw replies and front-panel comparisons, including an independently verified
+?F clear response, with the procedure's units and PASS/FAIL/INCONCLUSIVE evidence.
 Only after Stage 1 may separately approved writes/enable/shutter operations run
 within stated limits and beam/cooling/interlock/abort conditions. Example power
 values are synthetic exercises, not safe physical limits. No approval is inferred

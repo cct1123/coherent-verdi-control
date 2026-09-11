@@ -2,7 +2,7 @@
 
 import pytest
 
-from coherent_verdi import DeviceError, ProtocolError, Query
+from coherent_verdi import DeviceError, ProtocolError, Query, SimulatedTransport
 from coherent_verdi.protocol import (
     QUERY_SPECS,
     decode_response,
@@ -122,3 +122,129 @@ def test_undocumented_fault_replies_are_not_assumed_clear(payload):
 def test_catalog_complete_with_manual_references():
     assert len(QUERY_SPECS) == len(Query) == 42
     assert all(spec.page in {"5-6", "5-7", "5-8", "5-9", "5-10"} for spec in QUERY_SPECS.values())
+
+
+# TEST-016: independent transcription of all Table 5-4 rows, pp.5-6..5-10.
+# Payloads are representative software vectors, not physical measurements.
+MANUAL_QUERIES = [
+    ("?ACAD", "AVG CURRENT AND DELTA", "5-6", None, "12&0", "12&0", ()),
+    ("?BT", "BASEPLATE TEMP", "5-6", "degC", "30.00", 30.0, ()),
+    (
+        "?B",
+        "BAUD RATE",
+        "5-6",
+        "baud",
+        "19200",
+        19200,
+        (1200, 2400, 4800, 9600, 19200, 38400, 57600),
+    ),
+    ("?C", "CURRENT", "5-6", "A", "12.0", 12.0, ()),
+    ("?D1C", "DIODE1 CURRENT", "5-6", "A", "12.0", 12.0, ()),
+    ("?D1HST", "DIODE1 HEATSINK TEMP", "5-6", "degC", "28.00", 28.0, ()),
+    ("?D1H", "DIODE1 HOURS", "5-6", "h", "42", 42.0, ()),
+    ("?D1PC", "DIODE1 PHOTOCELL", "5-6", None, "0.0", "0.0", ()),
+    ("?D1RCF", "DIODE1 RATED CURRENT FACTOR", "5-6", None, "1.0", "1.0", ()),
+    ("?D1RCM", "DIODE1 RATED CURRENT MAX", "5-6", "A", "30.0", 30.0, ()),
+    ("?D1SS", "DIODE1 SERVO STATUS", "5-7", None, "1", 1, (0, 1, 2, 3, 4, 5, 6)),
+    ("?D1ST", "DIODE1 SET TEMP", "5-7", "degC", "25.00", 25.0, ()),
+    ("?D1TD", "DIODE1 TEMP DRIVE", "5-7", None, "-100", "-100", ()),
+    ("?D1T", "DIODE1 TEMP", "5-7", "degC", "25.00", 25.0, ()),
+    ("?D15V", "DIODE1 5VREF SENSE", "5-7", None, "5.0", "5.0", ()),
+    ("?DIOS", "DIODE OPTIMIZER STATUS", "5-7", None, "1", 1, (0, 1)),
+    ("?ED", "ETALON DRIVE", "5-7", None, "-10", "-10", ()),
+    ("?ESS", "ETALON SERVO STATUS", "5-7", None, "1", 1, (0, 1, 2, 3)),
+    ("?EST", "ETALON SET TEMP", "5-7", "degC", "50.00", 50.0, ()),
+    ("?ET", "ETALON TEMP", "5-7", "degC", "50.00", 50.0, ()),
+    ("?F", "FAULTS", "5-8", None, "3&5&6", (3, 5, 6), ()),
+    ("?FH", "FAULT HISTORY", "5-8", None, "SYSTEM OK", (), ()),
+    ("?HH", "HEAD_HOURS", "5-8", "h", "100", 100.0, ()),
+    ("?K", "KEYSWITCH", "5-8", None, "1", 1, (0, 1)),
+    ("?L", "LASER", "5-8", None, "2", 2, (0, 1, 2)),
+    ("?LBOD", "LBO DRIVE", "5-8", None, "-100", "-100", ()),
+    ("?LBOH", "LBO HEATER", "5-8", None, "1", 1, (0, 1)),
+    ("?LBOOS", "LBO OPTIMIZER STATUS", "5-8", None, "1", 1, (0, 1)),
+    ("?LBOST", "LBO SET TEMP", "5-8", "degC", "148.00", 148.0, ()),
+    ("?LBOSS", "LBO SERVO STATUS", "5-9", None, "1", 1, (0, 1, 2, 3, 4, 5, 6)),
+    ("?LBOT", "LBO TEMP", "5-9", "degC", "148.00", 148.0, ()),
+    ("?P", "LIGHT", "5-9", "W", "1.234", 1.234, ()),
+    ("?LRS", "LIGHT REG STATUS", "5-9", None, "1", 1, (0, 1, 2, 3)),
+    ("?M", "MODE", "5-9", None, "1", 1, (0, 1)),
+    ("?PSH", "PS HOURS", "5-9", "h", "120", 120.0, ()),
+    ("?SP", "SET LIGHT", "5-9", "W", "1.2345", 1.2345, ()),
+    ("?S", "SHUTTER", "5-9", None, "0", 0, (0, 1)),
+    ("?SV", "SOFTWARE", "5-9", None, "1.23", "1.23", ()),
+    ("?VST", "VANADATE SET TEMP", "5-9", "degC", "30.00", 30.0, ()),
+    ("?VT", "VANADATE TEMP", "5-9", "degC", "30.00", 30.0, ()),
+    ("?VD", "VANADATE DRIVE", "5-10", None, "-100", "-100", ()),
+    ("?VSS", "VANADATE SERVO STATUS", "5-10", None, "1", 1, (0, 1, 2, 3)),
+]
+
+
+@pytest.mark.parametrize("short,long,page,unit,payload,expected,choices", MANUAL_QUERIES)
+def test_every_manual_query_format_units_codes_and_aliases(
+    short, long, page, unit, payload, expected, choices
+):
+    query = Query(short)
+    spec = QUERY_SPECS[query]
+    assert (spec.page, spec.unit, spec.choices) == (page, unit, choices)
+    value = parse_value(query, payload)
+    if isinstance(expected, tuple):
+        assert tuple(fault.code for fault in value) == expected
+    else:
+        assert value == expected and type(value) is type(expected)
+    for code in choices:
+        assert parse_value(query, str(code)) == code
+    if choices:
+        with pytest.raises(ProtocolError):
+            parse_value(query, str(max(choices) + 1))
+    sim = SimulatedTransport()
+    try:
+        canonical = sim.exchange((short + "\r\n").encode())
+        for alias in ("?" + long, "PRINT " + long, "PRINT " + short[1:]):
+            for terminator in ("\r\n", ";"):
+                assert sim.exchange((alias + terminator).encode()) == canonical
+    finally:
+        sim.close()
+
+
+def test_manual_query_inventory_is_exact():
+    assert {row[0] for row in MANUAL_QUERIES} == {query.value for query in Query}
+    assert len(MANUAL_QUERIES) == len(Query)
+
+
+@pytest.mark.parametrize(
+    "echo,prompt", [(False, False), (False, True), (True, False), (True, True)]
+)
+@pytest.mark.parametrize(
+    "instruction,error",
+    [("P=9", "RANGE ERROR:"), ("BAD=0", "Command Error:"), ("?BAD", "Query Error:")],
+)
+def test_table_5_1_error_layouts_preserve_instruction_and_error(echo, prompt, instruction, error):
+    prefix = ("Verdi> " if prompt else "") + (instruction + " " if echo else "")
+    wire = (prefix + error + " " + instruction + "\r\n").encode()
+    with pytest.raises(DeviceError) as caught:
+        decode_response(instruction, wire, query=instruction.startswith("?"))
+    assert caught.value.response == error + " " + instruction
+    sim = SimulatedTransport(echo=echo, prompt=prompt)
+    try:
+        assert sim.exchange((instruction + "\r\n").encode()) == wire
+    finally:
+        sim.close()
+
+
+def test_complete_fault_catalog_including_manual_disagreement():
+    # Table 5-4 plus Table 6-1. Code 47 is absent from Table 6-1 but retained.
+    codes = (1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 16, 18, 19, 21, 25, 27, 28, 29, 30, 31, 40, 47)
+    faults = parse_faults("&".join(map(str, codes)))
+    assert tuple(fault.code for fault in faults) == codes
+    assert all(fault.known for fault in faults)
+    assert "interlock / emission lamp" in faults[0].description
+    assert next(f for f in faults if f.code == 30).description == "Battery requires service"
+
+
+def test_history_clear_does_not_establish_active_fault_clear_semantics():
+    assert parse_value(Query.FAULT_HISTORY, "SYSTEM OK") == ()
+    for payload in ("SYSTEM OK", "0", "OK", ""):
+        with pytest.raises(ProtocolError):
+            parse_value(Query.FAULTS, payload)
+    assert parse_value(Query.FAULTS, "SYSTEM OK", active_fault_clear_reply="SYSTEM OK") == ()

@@ -187,7 +187,8 @@ def test_source_badge_tracks_sample_and_history_never_mixes_source_kinds(callbac
     class NonSimulatedFake(SimulatedTransport):
         is_simulated = False
 
-    with VerdiController(SimulatedTransport(), ControllerConfig(Model.V5)) as controller:
+    config = ControllerConfig(Model.V5, active_fault_clear_reply="SYSTEM OK")
+    with VerdiController(SimulatedTransport(), config) as controller:
         service = TelemetryService(controller)
         service.poll_once()
         app = create_app(service)

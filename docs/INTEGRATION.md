@@ -31,6 +31,11 @@ unsupported data; it is never converted to a nominal state. `ConnectionUnusable`
 requires explicit replacement. Bad local inputs raise `ValueError` before I/O;
 disabled writes raise `WritesDisabled`. Automatic retries are intentionally absent.
 
+Before physical status acquisition, complete Stage 1 and configure the verified
+`active_fault_clear_reply`. The manual's `?FH` clear text does not establish `?F`
+clear semantics. The default physical configuration rejects unverified clear-looking
+replies rather than treating them as healthy. See [protocol uncertainties](PROTOCOL.md#uncertainty-register).
+
 `replace_transport(fresh)` closes the old transport and installs a caller-prepared
 new one without replaying commands. The caller owns establishing a truly clean
 physical session after later authorization. It cannot replace a closed controller.
