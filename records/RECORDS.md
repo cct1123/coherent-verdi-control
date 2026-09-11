@@ -1174,3 +1174,25 @@ the full-suite candidate above, every code cell and every other fingerprinted
 file is byte-identical. No runtime/test behavior changed; the full-suite evidence
 remains applicable. records/validation.json explicitly preserves both fingerprints
 and this check. Rebuild/installation checks cover the amended package artifacts.
+
+## E042
+
+Date: 2026-09-11. Final packaging refresh for E041 passed: wheel/sdist rebuilt,
+isolated core/extras installations passed, archive checkpoint/guard bytes matched,
+and the source fingerprint remained unchanged. Manifest records the final hashes
+and commands. Git staged-diff checking passed; commit 99072c6 contains the reviewed
+0.3.0 implementation, clean migration and evidence.
+
+The requested `git push origin main` was rejected before execution by automatic
+approval review. Its reason: the trusted user text authorizes pushing generically
+but does not explicitly specify the GitHub destination or payload. No workaround
+or alternate push was attempted. The configured destination remains
+git@github.com:cct1123/coherent-verdi-control.git; origin/main was fetched without
+divergence. Request explicit authorization to publish all local main commits since
+origin/main, including this reviewed code and its checkpoint/evidence, to that
+repository's main branch. Then push and verify remote equality and a clean tree.
+
+This publication checkpoint changes only STATE.md, outputs/REPORT.md and this
+record outside the source fingerprint. E041's software/package evidence remains
+applicable; built archives contain the reviewed pre-publication checkpoint.
+No physical device operation occurred or remains pending.
