@@ -88,11 +88,9 @@ def main() -> None:
             ],
             cwd=directory,
         )
-        cli = run(
-            [str(executable), "-I", "-m", "coherent_verdi", "--demo", "status"], cwd=directory
-        )
+        cli = run([str(executable), "-I", "-m", "coherent_verdi", "status"], cwd=directory)
         data = json.loads(cli.stdout)
-        assert data["simulated"] is True and data["result"]["power_w"] == 1.0
+        assert data["simulated"] is True and data["power_w"] == 0.0
         for example in ("simulated_session.py", "async_integration.py"):
             run([str(executable), "-I", str(ROOT / "examples" / example)], cwd=directory)
         tutorial = str(ROOT / "examples" / "tutorials" / "run_tutorial.py")
@@ -100,7 +98,7 @@ def main() -> None:
             run([str(executable), "-I", tutorial, *lesson], cwd=directory)
         entrypoint = env_path / ("Scripts/verdi.exe" if os.name == "nt" else "bin/verdi")
         result = json.loads(run([str(entrypoint), "query", "?SV"], cwd=directory).stdout)
-        assert result["result"] == "SIMULATOR-0.1"
+        assert result == "SIMULATOR-0.1"
         missing_gui = subprocess.run(
             [str(executable), "-I", "-m", "coherent_verdi", "gui"],
             cwd=directory,
@@ -126,12 +124,9 @@ def gui_smoke() -> None:
     import serial.tools.list_ports
 
     from coherent_verdi import (
-        Model,
-        SimulatedTransport,
-        VerdiController,
+        SimulatedVerdi,
     )
-    from coherent_verdi.gui import create_app
-    from coherent_verdi.monitor import Monitor
+    from coherent_verdi.gui import Monitor, create_app
 
     def prohibited(*args: object, **kwargs: object) -> None:
         raise AssertionError("physical serial access/discovery prohibited in GUI smoke test")
@@ -141,8 +136,8 @@ def gui_smoke() -> None:
     serial.serial_for_url = prohibited
     serial.tools.list_ports.comports = prohibited
     serial.tools.list_ports.grep = prohibited
-    sim = SimulatedTransport(Model.V5)
-    with VerdiController(sim, model=Model.V5) as controller:
+    sim = SimulatedVerdi("V5")
+    with sim as controller:
         telemetry = Monitor(controller, history_size=2)
         app = create_app(telemetry)
         client = app.server.test_client()

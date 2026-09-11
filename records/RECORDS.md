@@ -1087,3 +1087,90 @@ approval of this remote and main branch, then push and verify synchronization.
 This record and STATE.md change only publication metadata outside the source
 fingerprint. E039 software/build validation remains applicable; the built archive
 contains the pre-publication review checkpoint. No hardware access occurred.
+
+## D012
+
+Date: 2026-09-11. Source: renewed user requests for further aggressive pruning,
+reduced data structures/modules, clean migration, holistic review, commit and push.
+The user repeated publication after the explicit destination question for
+github.com/cct1123/coherent-verdi-control, main. No physical access is authorized.
+
+Version 0.3.0 merges protocol/serial/errors into controller.py and the optional
+monitor cache into gui.py. SimulatedVerdi inherits the public operations and
+failure handling, overriding only private open/close/exchange with independent
+fixture responses. Remove Connection/SerialConnection, Model/Query/state enums,
+Status/Diagnostics/Fault/Sample records and the JSON adapter. Results are ordinary
+dictionaries, ISO UTC strings, numbers and integer fault lists. Two errors remain:
+DeviceError for complete device rejection and VerdiError for unusable/uncertain
+communication. Core parsing no longer trusts the display-source flag to recognize
+an unverified clear-fault reply; simulator initialization supplies its own fixture
+clear text. Serial configuration is private and set through constructor validation.
+
+Remove CLI write switches/demo setup/result envelopes and the monitor sequence
+counter; retain direct read/status/diagnostics/watch/GUI commands. Control workflows
+remain in the Python API and visible tutorials. Monitoring stays optional, with
+one application polling caller, a bounded copied cache and no lifecycle workers.
+Delete redundant docs/INTEGRATION.md and tests/test_monitor.py after merging useful
+content into README/API and client tests. Preserve historical screenshot/manual
+evidence, all four self-contained notebooks, hardware gates and actual protocol
+vectors. No deprecated imports or runtime compatibility aliases remain.
+
+Review retained all 42 queries, six command forms, model-specific code checks,
+range/rounded-ceiling checks, bounded serial deadlines, deterministic cleanup and
+failure latching without replay. New tests cover invalid public queries before I/O,
+JSON/result mutation isolation, source-label independence and complete device
+rejection in the write example. The latter must propagate DeviceError, rather than
+mislabel a complete rejection as a lost reply. Monitor snapshots are independent
+copies. Tests of removed metadata/CLI operations were pruned without dropping the
+manual wire vectors, simulator behavior, serial faults, concurrency or operator paths.
+
+Metrics versus 0.2.0: 8 -> 5 modules; 1335 -> 1057 Python lines including comments
+and blanks; 703 -> 521 executable statements; 17 -> 5 classes; 12 -> 4 root exports;
+4 -> 2 errors. No custom result/configuration types or required runtime dependencies.
+Compared with the original 12-module design, 7 modules and 553 Python lines are gone.
+
+## E041
+
+Date: 2026-09-11T03:55:58.287795+00:00. TEST-001..009/011..017: final 0.3.0 software review
+and regression following D012, base 7878823. Source candidate:
+`b96549fbe358b16cd644e4336e001378efc8f393e3ce591b14fc0cc0bfb54f75`. Command: `.venv/Scripts/python.exe scripts/validate.py`.
+Windows/Python 3.12.14, Node v24.14.1. Result: 322 PASS in 19.25 s, 97% statement
+coverage (521 statements, 17 missed), no skipped tests, one non-failing Windows
+pyzmq warning. All 11 integrated stages PASS, including eight fresh notebook-kernel
+executions, lint, formatting (34 files), strict typing (5 modules), pip check,
+wheel/sdist builds, CLI, sync/async examples, isolated core/extras installs and
+watchdog. Tests/kernels prohibited physical serial opening and discovery.
+
+The final holistic audit confirmed all active documentation links resolve, all
+visible notebook functions match the terminal runner, outputs are cleared in source
+notebooks, and the source archive has no removed runtime modules. The installed
+wheel contains exactly five modules; core-only imports start no workers or optional
+dependencies. New regression checks preserve plain-result/cache isolation, public
+input rejection before I/O, verified fault parsing independent of source labels,
+and DeviceError propagation from the write tutorial. No further useful runtime
+abstraction or scaffolding was identified for removal. Historical evidence files,
+manual vectors and explicit notebook source remain purposeful.
+
+Intermediate migration failures exposed stale attribute/tuple/enum expectations
+and a missing operator model check; all corrected before the final run. Review then
+fixed a complete device rejection being labelled UNKNOWN by the migrated example,
+and removed the final stale fault-metadata documentation reference. The full suite
+was rerun on the resulting fingerprint. Windows generated-artifact ACLs required
+normal local permissions for guarded notebooks and archive reads. No hardware
+authority was expanded. The editable installation was refreshed to 0.3.0.
+
+Source hashes stayed unchanged during final validation; manual/AGENTS preservation
+hashes match. STATE.md, this record and outputs/REPORT.md are updated outside the
+source fingerprint. Final package hashes and packaging-only refresh results live
+in records/validation.json, with output appended to records/validation.log. Origin
+was fetched successfully; main was two local commits ahead with no remote divergence
+before this change. The user's renewed publication request follows the explicit
+destination question; push targets origin/main without force. No test kernel or
+device operation remains pending. REQ-010 and calibration remain UNTESTED.
+
+Final documentation amendment to E041: source `56bbd1fce0bfa82fd92e747684961a913c9264d10a7b965de96f5aa5bbffe5c4` removes one stale
+`known=False` phrase from a markdown cell in 04_handle_faults.ipynb. Compared with
+the full-suite candidate above, every code cell and every other fingerprinted
+file is byte-identical. No runtime/test behavior changed; the full-suite evidence
+remains applicable. records/validation.json explicitly preserves both fingerprints
+and this check. Rebuild/installation checks cover the amended package artifacts.

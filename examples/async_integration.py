@@ -1,27 +1,20 @@
-"""Async stacks can offload the synchronous API without creating another serial owner."""
+"""Offload a complete synchronous session; keep operation and cleanup in one worker."""
 
 import asyncio
 
-from coherent_verdi import (
-    Model,
-    SimulatedTransport,
-    Status,
-    VerdiController,
-)
-from coherent_verdi.controller import Diagnostics
+from coherent_verdi import SimulatedVerdi
 
 
-def read_in_worker() -> tuple[Status, Diagnostics]:
-    """Keep operation and cleanup ownership together, including after cancellation."""
-    with VerdiController(SimulatedTransport(Model.V2), model=Model.V2) as laser:
+def read_in_worker() -> tuple[dict, dict]:
+    with SimulatedVerdi("V2") as laser:
         return laser.status(), laser.read_diagnostics()
 
 
 async def main() -> None:
-    # Cancellation stops awaiting this result, not the worker or its command.
-    # asyncio.run drains its executor before exit; a larger stack must also drain.
+    # Cancelling the await cannot stop serial I/O. The application must drain its
+    # executor before exit; asyncio.run does so here, including on cancellation.
     status, diagnostics = await asyncio.to_thread(read_in_worker)
-    print(f"{status.model.value}: {status.power_w:.3f} W; {diagnostics.software_version}")
+    print(f"{status['model']}: {status['power_w']:.3f} W; {diagnostics['software_version']}")
 
 
 if __name__ == "__main__":

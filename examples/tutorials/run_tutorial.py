@@ -4,46 +4,34 @@ import argparse
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from coherent_verdi import (
-    Fault,
-    LaserState,
-    Model,
-    ProtocolError,
-    Query,
-    ServoState,
-    SimulatedTransport,
-    Status,
-    TransportError,
-    VerdiController,
-    VerdiError,
-)
+from coherent_verdi import DeviceError, SimulatedVerdi, VerdiController, VerdiError
 
 
 # %% Read-only application code: accepts an already prepared controller.
-def read_status(laser: VerdiController) -> Status:
-    version = laser.read(Query.SOFTWARE)  # ?SV: query, not model discovery.
+def read_status(laser: VerdiController) -> dict:
+    version = laser.read("?SV")  # ?SV: query, not model discovery.
     status = laser.status()  # Fourteen sequential queries, not one atomic reading.
     diagnostics = laser.read_diagnostics()
-    source = "SIMULATOR" if status.simulated else "HARDWARE"
-    print(f"Source: {source}; configured model: {status.model}; software: {version}")
+    source = "SIMULATOR" if status["simulated"] else "HARDWARE"
+    print(f"Source: {source}; configured model: {status['model']}; software: {version}")
     print(
-        f"State: {status.laser_state.name}; key ON: {status.keyswitch_on}; "
-        f"shutter open: {status.shutter_open}"
+        f"State: {status['laser_state']}; key ON: {status['keyswitch_on']}; "
+        f"shutter open: {status['shutter_open']}"
     )
-    print(f"Setpoint: {status.set_power_w:.4f} W; reported power: {status.power_w:.3f} W")
-    print(f"LBO: {status.lbo_temp_c:.2f} degC / {status.lbo_servo.name}")
-    print(f"Head operating hours: {diagnostics.head_hours:.1f} h")
-    print(f"Active faults: {status.faults}; history: {diagnostics.fault_history}")
-    if status.faults:
+    print(f"Setpoint: {status['set_power_w']:.4f} W; reported power: {status['power_w']:.3f} W")
+    print(f"LBO: {status['lbo_temp_c']:.2f} degC / {status['lbo_servo']}")
+    print(f"Head operating hours: {diagnostics['head_hours']:.1f} h")
+    print(f"Active faults: {status['faults']}; history: {diagnostics['fault_history']}")
+    if status["faults"]:
         print("STOP: active faults need diagnosis; this tutorial never resets or enables.")
     return status
 
 
 # %% Simulator-only entry point; run again to create a fresh fixture.
 def simulate_read_status() -> None:
-    sim = SimulatedTransport(Model.V5)
+    laser = SimulatedVerdi("V5")
     try:
-        with VerdiController(sim, model=Model.V5) as laser:
+        with laser:
             read_status(laser)
             try:
                 laser.set_power_w(0.25)
@@ -57,16 +45,16 @@ def simulate_read_status() -> None:
 
 # %% Application code: target and ceiling are explicit, in watts.
 def set_standby_power(laser: VerdiController, target_w: float) -> float:
-    if laser.read_laser_state() != LaserState.STANDBY or laser.read(Query.SHUTTER) != 0:
+    if laser.read_laser_state() != 0 or laser.read("?S") != 0:
         raise RuntimeError("Require STANDBY and a closed shutter before changing the setpoint.")
     if laser.read_faults():
         raise RuntimeError("Active faults require diagnosis before changing settings.")
     laser.set_power_w(target_w)  # Validates finite value, ceiling and rounded wire value.
-    readback = float(laser.read(Query.SET_POWER))  # ?SP, not the measured-power query ?P.
+    readback = float(laser.read("?SP"))  # ?SP, not the measured-power query ?P.
     expected = float(f"{target_w:.4f}")
     if readback != expected:
         raise RuntimeError(f"Setpoint mismatch: requested {expected:.4f} W, read {readback} W.")
-    if laser.read_laser_state() != LaserState.STANDBY or laser.read(Query.SHUTTER) != 0:
+    if laser.read_laser_state() != 0 or laser.read("?S") != 0:
         raise RuntimeError("State changed unexpectedly; stop and verify with the operator.")
     print(f"Verified setpoint: {readback:.4f} W; STANDBY; shutter closed.")
     print(f"Reported power: {laser.read_power_w():.3f} W (separate from the setpoint).")
@@ -75,15 +63,15 @@ def set_standby_power(laser: VerdiController, target_w: float) -> float:
 
 # %% Simulator-only entry point; these numbers are exercises, not safe hardware limits.
 def simulate_set_power() -> None:
-    sim = SimulatedTransport(Model.V5)
+    laser = SimulatedVerdi("V5", allow_writes=True, power_limit_w=0.5)
     try:
-        with VerdiController(sim, allow_writes=True, power_limit_w=0.5) as laser:
+        with laser:
             set_standby_power(laser, 0.25)
             try:
                 laser.set_power_w(0.6)  # Above this exercise's 0.5 W software ceiling.
             except ValueError as exc:
                 print(f"Expected rejection before transmission: {exc}")
-            print(f"Setpoint after rejection: {laser.read(Query.SET_POWER):.4f} W")
+            print(f"Setpoint after rejection: {laser.read('?SP'):.4f} W")
             set_standby_power(laser, 0.0)  # Explicit normal completion, not implicit close.
     except (VerdiError, ValueError, RuntimeError) as exc:
         print(f"STOP: {type(exc).__name__}: {exc}. No retry or further state changes.")
@@ -94,12 +82,12 @@ def simulate_set_power() -> None:
 # %% Check the starting state before any writes.
 def check_ready(laser: VerdiController) -> None:
     before = laser.status()
-    if before.laser_state != LaserState.STANDBY or before.shutter_open:
+    if before["laser_state"] != 0 or before["shutter_open"]:
         raise RuntimeError("Start from operator-confirmed STANDBY with shutter closed.")
-    if not before.keyswitch_on or before.lbo_servo != ServoState.LOCKED or before.faults:
+    if not before["keyswitch_on"] or before["lbo_servo"] != 1 or before["faults"]:
         raise RuntimeError("Require key ON, LBO LOCKED and no active faults; do not auto-enable.")
-    for query in (Query.DIODE_SERVO, Query.ETALON_SERVO, Query.VANADATE_SERVO):
-        if laser.read(query) != ServoState.LOCKED:
+    for query in ("?D1SS", "?ESS", "?VSS"):
+        if laser.read(query) != 1:
             raise RuntimeError(f"Require all temperature servos LOCKED; {query} is not ready.")
     print(f"Fault history before enable: {laser.read_faults(history=True)}")
 
@@ -107,12 +95,12 @@ def check_ready(laser: VerdiController) -> None:
 # %% Set power and enable while retaining a closed shutter.
 def enable_at_power(laser: VerdiController, target_w: float) -> None:
     laser.set_power_w(target_w)
-    if laser.read(Query.SET_POWER) != float(f"{target_w:.4f}"):
+    if laser.read("?SP") != float(f"{target_w:.4f}"):
         raise RuntimeError("Setpoint readback mismatch; enable was not requested.")
     laser.start()  # L=1 also resets faults and clears their history.
-    if laser.read_laser_state() != LaserState.ON or laser.read_faults():
+    if laser.read_laser_state() != 1 or laser.read_faults():
         raise RuntimeError("Enable did not produce ON without faults.")
-    if laser.read(Query.SHUTTER) != 0:
+    if laser.read("?S") != 0:
         raise RuntimeError("Shutter unexpectedly open after enable.")
     print("Laser ON; shutter still closed.")
 
@@ -120,7 +108,7 @@ def enable_at_power(laser: VerdiController, target_w: float) -> None:
 # %% Open the safety shutter once and take one immediate reading.
 def sample_with_shutter_open(laser: VerdiController) -> float:
     laser.set_shutter(open=True)
-    if laser.read(Query.SHUTTER) != 1 or laser.read_faults():
+    if laser.read("?S") != 1 or laser.read_faults():
         raise RuntimeError("Open-shutter state was not verified without faults.")
     power_w = laser.read_power_w()
     print(f"Shutter open; reported power: {power_w:.3f} W")
@@ -130,10 +118,10 @@ def sample_with_shutter_open(laser: VerdiController) -> float:
 # %% Normal completion must be commanded and verified, not inferred from disconnect().
 def close_and_standby(laser: VerdiController) -> None:
     laser.set_shutter(open=False)
-    if laser.read(Query.SHUTTER) != 0:
+    if laser.read("?S") != 0:
         raise RuntimeError("Shutter closure was not confirmed.")
     laser.stop()
-    if laser.read_laser_state() != LaserState.STANDBY:
+    if laser.read_laser_state() != 0:
         raise RuntimeError("STANDBY was not confirmed.")
     print("Shutter closed; STANDBY confirmed. Setpoint retained for inspection.")
 
@@ -155,23 +143,22 @@ def controlled_session(laser: VerdiController, target_w: float) -> float:
 
 # %% Simulator-only setup. set_key is a fixture operation, never an RS-232 command.
 def simulate_controlled_session() -> None:
-    sim = SimulatedTransport(Model.V5)  # Warm by default; no artificial warmup wait.
-    sim.set_key(True)
-    with VerdiController(sim, allow_writes=True, power_limit_w=0.5) as laser:
+    laser = SimulatedVerdi("V5", allow_writes=True, power_limit_w=0.5)  # Warm fixture.
+    laser.set_key(True)
+    with laser:
         controlled_session(laser, 0.25)
     print("Connection released after the verified normal-completion sequence.")
 
 
 # %% Application code: diagnosis reads do not clear faults or restart the laser.
-def read_fault_report(laser: VerdiController) -> tuple[tuple[Fault, ...], tuple[Fault, ...]]:
+def read_fault_report(laser: VerdiController) -> tuple[list[int], list[int]]:
     state = laser.read_laser_state()  # ?L
     active = laser.read_faults()  # ?F
     history = laser.read_faults(history=True)  # ?FH
-    print(f"Laser state: {state.name}")
+    print(f"Laser state: {state}")
     for label, faults in (("Active", active), ("History", history)):
-        print(f"{label} fault codes: {[fault.code for fault in faults]}")
-        for fault in faults:
-            print(f"  {fault.code}: {fault.description}; known={fault.known}")
+        print(f"{label} fault codes: {faults}")
+        print("See docs/PROTOCOL.md for documented meanings; preserve unknown codes.")
     if active:
         print("STOP: diagnose every active code, including unknown codes. No automatic reset.")
     return active, history
@@ -181,7 +168,9 @@ def set_power_once(laser: VerdiController, target_w: float) -> bool:
     """One attempted write in an already approved state; caller closes on False."""
     try:
         laser.set_power_w(target_w)
-    except (TransportError, ProtocolError) as exc:
+    except DeviceError:
+        raise  # Complete rejection; preserve its instruction and reply for the caller.
+    except VerdiError as exc:
         print(f"{type(exc).__name__}: {exc}")
         print("Outcome UNKNOWN: the setpoint may have changed. Do not retry or continue querying.")
         return False
@@ -190,12 +179,12 @@ def set_power_once(laser: VerdiController, target_w: float) -> bool:
 
 # %% First simulator exercise: inspect and retain fault evidence.
 def demonstrate_faults() -> None:
-    sim = SimulatedTransport(Model.V5)
-    sim.set_faults(2, 999)  # External interlock plus an intentionally unknown fixture code.
+    laser = SimulatedVerdi("V5")
+    laser.set_faults(2, 999)  # External interlock plus an intentionally unknown fixture code.
     try:
-        with VerdiController(sim, model=Model.V5) as laser:
+        with laser:
             read_fault_report(laser)
-            sim.set_faults()  # Remove synthetic active conditions; NOT a real reset command.
+            laser.set_faults()  # Remove synthetic active conditions; NOT a real reset command.
             print("\nFixture conditions removed; read again without enabling:")
             read_fault_report(laser)
     except VerdiError as exc:
@@ -205,12 +194,12 @@ def demonstrate_faults() -> None:
 
 # %% Second simulator exercise: a write can execute before its reply is lost.
 def demonstrate_lost_reply() -> None:
-    sim = SimulatedTransport(Model.V5)
-    with VerdiController(sim, allow_writes=True, power_limit_w=0.5) as laser:
-        sim.inject_timeout(after_apply=True)  # Fake applies P, then drops its acknowledgment.
+    laser = SimulatedVerdi("V5", allow_writes=True, power_limit_w=0.5)
+    with laser:
+        laser.inject_timeout(after_apply=True)  # Fake applies P, then drops its acknowledgment.
         if not set_power_once(laser, 0.25):
             print("Ending this session now. No reconnect, state replay or enable.")
-    print(f"Simulator wire requests: {sim.requests!r}")
+    print(f"Simulator wire requests: {laser.requests!r}")
     print("Connection released. Communication close did not undo the attempted setpoint.")
 
 
@@ -231,9 +220,11 @@ WRITE_LESSONS = {"set-power", "controlled-session"}
 
 
 def validate_power(
-    model: Model, target_w: float | None, power_limit_w: float | None, *, allow_writes: bool
+    model: str, target_w: float | None, power_limit_w: float | None, *, allow_writes: bool
 ) -> None:
     """Require site values before a physical write; simulator defaults are not limits."""
+    if model not in ("V2", "V5", "V6"):
+        raise ValueError("model must be V2, V5 or V6")
     if not allow_writes:
         if target_w is not None or power_limit_w is not None:
             raise ValueError("Read-only lessons do not accept power settings")
@@ -241,7 +232,7 @@ def validate_power(
     if (
         isinstance(power_limit_w, bool)
         or not isinstance(power_limit_w, (int, float))
-        or not 0 <= power_limit_w <= model.rated_power_w
+        or not 0 <= power_limit_w <= float(model[1:])
     ):
         raise ValueError("Supply the approved power_limit_w within the model rating")
     if (
@@ -262,7 +253,7 @@ def hardware_connection(laser: VerdiController) -> Iterator[VerdiController | No
         return
     try:
         with laser:
-            print(f"Reported software: {laser.read(Query.SOFTWARE)}")
+            print(f"Reported software: {laser.read('?SV')}")
             yield laser
     except BaseException:
         print("STOP: state may be unknown. No retries or blind cleanup writes.")
@@ -276,7 +267,7 @@ def run_hardware(
     lesson: str,
     *,
     port: str,
-    model: Model,
+    model: str,
     baudrate: int,
     timeout_s: float = 1.0,
     target_w: float | None = None,
@@ -295,7 +286,7 @@ def run_hardware(
     if identify_only and lesson != "read-status":
         raise ValueError("identify_only is available only for read-status")
     writes = lesson in WRITE_LESSONS
-    model = Model(model)
+    model = model
     validate_power(model, target_w, power_limit_w, allow_writes=writes)
     controller = VerdiController(
         port,
@@ -344,7 +335,7 @@ def main(argv: list[str] | None = None) -> None:
         "--hardware", action="store_true", help="Explicit human-operated serial mode"
     )
     parser.add_argument("--port", help="Operator-verified native port; never discovered")
-    parser.add_argument("--model", choices=[model.value for model in Model])
+    parser.add_argument("--model", choices=["V2", "V5", "V6"])
     parser.add_argument("--baudrate", type=int, help="Must match the front-panel setting")
     parser.add_argument(
         "--timeout-s", type=float, help="Hardware transaction deadline (default: 1 s)"
@@ -385,7 +376,7 @@ def main(argv: list[str] | None = None) -> None:
         run_hardware(
             args.lesson,
             port=args.port,
-            model=Model(args.model),
+            model=args.model,
             baudrate=args.baudrate,
             timeout_s=1.0 if args.timeout_s is None else args.timeout_s,
             target_w=args.target_w,

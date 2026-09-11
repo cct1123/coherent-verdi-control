@@ -1,54 +1,43 @@
 # Driver architecture
 
-Eight modules, one synchronous device-control path:
-
-```mermaid
-flowchart LR
-    A[Script / notebook / DAQ / CLI] --> C[controller.py: VerdiController]
-    M[monitor.py: caller-driven sampling] -->|status| C
-    G[gui.py: optional Dash view] -->|cached snapshot| M
-    C --> P[protocol.py: framing, parsing, serial connection]
-    C --> S[simulator.py: in-memory peer]
-    P -->|after hardware review| V[Verdi RS-232]
-```
+Three substantive modules and two package entry points:
 
 | Module | Responsibility |
 | --- | --- |
-| `controller.py` | Public methods, status/diagnostic results, validation and one I/O lock |
-| `protocol.py` | Manual query/value meanings, frame parsing, passive pySerial connection |
-| `simulator.py` | Independent replies for the short-form commands emitted by the driver; fixtures |
-| `monitor.py` | Optional synchronous sampling, bounded cache, freshness and JSON |
-| `gui.py` | Optional read-only Dash client; no hardware handle or acquisition loop |
-| `errors.py` | Four exceptions for communication, malformed data and device rejection |
-| `__init__.py` | Twelve core exports; no optional-client imports |
-| `__main__.py` | Simulator CLI; explicit polling-worker lifecycle for standalone GUI |
+| `controller.py` | Public hardware API, serial I/O, manual parsing, validation and two errors |
+| `simulator.py` | Same public API with independent in-memory wire replies and fixture controls |
+| `gui.py` | Optional caller-scheduled cache and Dash view |
+| `__init__.py` | Four exports; imports no optional clients |
+| `__main__.py` | Read-only simulator CLI and explicit GUI worker lifecycle |
 
-Follow `set_power_w()`: validate finite watts and ceiling, format `P=nn.nnnn`,
-acquire the controller lock, encode one CR/LF frame, exchange it once, and decode
-its acknowledgment. Reads use the same path and parse a catalogued value.
-`status()` holds the lock across 14 sequential reads.
+Follow `set_power_w()`: validate watts and the rounded ceiling, format `P=nn.nnnn`,
+lock the controller, encode one CR/LF request, exchange once and decode one reply.
+`read()` follows the same path and parses the documented representation. `status()`
+holds the lock across fourteen reads. The complete physical path is in controller.py.
 
-The only backend contract is `connect()`, `exchange(bytes) -> bytes`,
-`disconnect()`, and `is_simulated`. This small structural typing declaration lets
-an experiment stack supply a connection without inheritance, registration or
-factories. A backend must bound I/O and must not be shared with another controller
-or raw reader. Serial locking and failed-session state live once, in the controller.
-The simulator separately locks mutable fixture state.
+SimulatedVerdi inherits those public operations, input checks and failure handling.
+It overrides only the private open/close/exchange operations; its reply generator
+does not reuse the production parser. There is no transport object, factory,
+registry, ownership manager, protocol interface or public raw-command escape hatch.
 
-Construction does no I/O. Connect/disconnect send no device commands. A complete
-device rejection leaves the session readable; uncertain I/O, interruption or
-malformed data latches failure. No method clears that latch or replays state.
-Disconnect remains available for cleanup, including cleanup retries.
+Both implementations keep explicit connected/failed state and one I/O lock.
+Construction is passive; connect/disconnect issue no laser instructions. A complete
+DeviceError consumes a rejection without invalidating the session. Timeout,
+malformed reply, interruption or unexpected transaction error latches failure.
+Cleanup can be retried, but cannot clear that latch, replay state or undo commands.
 
-The caller owns connection lifecycle and acquisition scheduling. Monitor and GUI
-construction start no work. Monitor uses a sampling lock and a short cache lock
-so rendering remains responsive during acquisition. The standalone GUI launcher
-explicitly creates one worker and joins it before disconnecting. Core import
-does not load serial, Dash, Plotly or monitoring.
+Results are plain dictionaries, numbers, strings and fault-code lists. There are
+no model/query/state enums, dataclasses, serialization adapters or compatibility
+imports. Fault descriptions and uncertain hardware behavior live in the protocol
+documentation. Four root exports suffice: VerdiController, SimulatedVerdi,
+VerdiError and DeviceError.
 
-Configuration objects, transport replacement, query-spec registry, telemetry
-lifecycle machinery, serialization wrappers and old module aliases are removed.
-Returned status/fault dataclasses and state enums remain to expose units and
-hardware meanings. [AGENTS.md](AGENTS.md) retains engineering phase/authority rules;
-[framework provenance](records/FRAMEWORK.md) retains template history.
-Physical integration requires [candidate review](HARDWARE_VALIDATION.md).
+The experiment owns connection lifetime, polling and logging. Optional Monitor
+calls the public status API; one caller acquires while a short cache lock protects
+copied snapshots. Dash only reads that cache. The simulator CLI explicitly starts
+and drains its GUI worker before disconnecting; core/Monitor construction starts none.
+pySerial loads at physical connect and Dash loads at app creation.
+
+[API and migration](docs/API.md) describe integration. [AGENTS.md](AGENTS.md) and
+[provenance](records/FRAMEWORK.md) preserve engineering continuity. Hardware work
+requires the [candidate review gate](HARDWARE_VALIDATION.md).

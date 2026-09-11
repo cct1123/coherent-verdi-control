@@ -9,15 +9,7 @@ import nbformat
 import pytest
 from nbclient import NotebookClient
 
-from coherent_verdi import (
-    LaserState,
-    Model,
-    ProtocolError,
-    Query,
-    SimulatedTransport,
-    TransportError,
-    VerdiController,
-)
+from coherent_verdi import DeviceError, SimulatedVerdi, VerdiError
 
 ROOT = Path(__file__).resolve().parents[1]
 TUTORIALS = ROOT / "examples" / "tutorials"
@@ -33,25 +25,34 @@ def writes(sim):
     return [request for request in sim.requests if not request.startswith(b"?")]
 
 
-@pytest.mark.parametrize("model", list(Model))
+def test_write_example_preserves_complete_device_rejection(lessons):
+    with SimulatedVerdi(allow_writes=True) as laser:
+        laser.inject(b"RANGE ERROR: P=0.2500\r\n")
+        with pytest.raises(DeviceError):
+            lessons["set_power_once"](laser, 0.25)
+        assert laser.read_power_w() == 0
+        assert writes(laser) == [b"P=0.2500\r\n"]
+
+
+@pytest.mark.parametrize("model", ["V2", "V5", "V6"])
 def test_reusable_workflows_all_models(lessons, model):
-    sim = SimulatedTransport(model)
-    with VerdiController(sim, model=model) as laser:
+    sim = SimulatedVerdi(model)
+    with sim as laser:
         status = lessons["read_status"](laser)
-        assert status.simulated and status.model == model
-        assert status.laser_state == LaserState.STANDBY
-        assert not status.shutter_open and not status.faults
+        assert status["simulated"] and status["model"] == model
+        assert status["laser_state"] == 0
+        assert not status["shutter_open"] and not status["faults"]
         assert writes(sim) == []
-    sim = SimulatedTransport(model)
-    with VerdiController(sim, model=model, allow_writes=True, power_limit_w=0.5) as laser:
+    sim = SimulatedVerdi(model, allow_writes=True, power_limit_w=0.5)
+    with sim as laser:
         assert lessons["set_standby_power"](laser, 0.25) == 0.25
-        assert laser.read_laser_state() == LaserState.STANDBY
+        assert laser.read_laser_state() == 0
         assert laser.read_power_w() == 0
         sim.set_key(True)
         assert lessons["controlled_session"](laser, 0.25) == 0.25
-        assert laser.read_laser_state() == LaserState.STANDBY
-        assert laser.read(Query.SHUTTER) == 0
-        assert laser.read(Query.SET_POWER) == 0.25
+        assert laser.read_laser_state() == 0
+        assert laser.read("?S") == 0
+        assert laser.read("?SP") == 0.25
         assert writes(sim) == [
             b"P=0.2500\r\n",
             b"P=0.2500\r\n",
@@ -67,20 +68,20 @@ def test_entrypoints_repeat_and_release_simulators(lessons, name, monkeypatch, c
     instances = []
 
     def factory(*args, **kwargs):
-        sim = SimulatedTransport(*args, **kwargs)
+        sim = SimulatedVerdi(*args, **kwargs)
         instances.append(sim)
         return sim
 
     main = lessons[f"simulate_{name}"]
-    monkeypatch.setitem(main.__globals__, "SimulatedTransport", factory)
+    monkeypatch.setitem(main.__globals__, "SimulatedVerdi", factory)
     main()
     first_output = capsys.readouterr().out
     main()
     assert capsys.readouterr().out == first_output
     assert len(instances) == (4 if name == "handle_faults" else 2)
     for sim in instances:
-        with pytest.raises(TransportError):
-            sim.exchange(b"?L\r\n")
+        with pytest.raises(VerdiError):
+            sim.read_laser_state()
     if name == "read_status":
         assert "Expected PermissionError" in first_output
         assert not any(writes(sim) for sim in instances)
@@ -124,15 +125,15 @@ def test_entrypoints_repeat_and_release_simulators(lessons, name, monkeypatch, c
         ]
         assert instances[0].requests == tuple(request + b"\r\n" for request in expected)
     else:
-        assert "known=False" in first_output and "Outcome UNKNOWN" in first_output
+        assert "999" in first_output and "Outcome UNKNOWN" in first_output
         assert writes(instances[0]) == []
         assert instances[1].requests == (b"P=0.2500\r\n",)
 
 
 @pytest.mark.parametrize("target", [-0.1, 0.6, float("nan"), float("inf"), True, "0.25"])
 def test_bad_setpoints_never_transmit(lessons, target):
-    sim = SimulatedTransport()
-    with VerdiController(sim, model=Model.V5, allow_writes=True, power_limit_w=0.5) as c:
+    sim = SimulatedVerdi(model="V5", allow_writes=True, power_limit_w=0.5)
+    with sim as c:
         with pytest.raises(ValueError):
             lessons["set_standby_power"](c, target)
         assert not writes(sim)
@@ -140,9 +141,11 @@ def test_bad_setpoints_never_transmit(lessons, target):
 
 @pytest.mark.parametrize("state", ["key_off", "cold", "fault", "already_on", "open_shutter"])
 def test_session_preconditions_prevent_writes(lessons, state):
-    sim = SimulatedTransport(clock=lambda: 0.0, warmup_s=10 if state == "cold" else 0)
+    sim = SimulatedVerdi(
+        clock=lambda: 0.0, warmup_s=10 if state == "cold" else 0, model="V5", allow_writes=True
+    )
     sim.set_key(state != "key_off")
-    with VerdiController(sim, model=Model.V5, allow_writes=True) as c:
+    with sim as c:
         if state == "fault":
             sim.set_faults(999)
         if state in ("already_on", "open_shutter"):
@@ -157,8 +160,8 @@ def test_session_preconditions_prevent_writes(lessons, state):
 
 @pytest.mark.parametrize("state", ["on", "fault", "writes_disabled"])
 def test_standby_setpoint_preconditions(lessons, state):
-    sim = SimulatedTransport()
-    with VerdiController(sim, model=Model.V5, allow_writes=state != "writes_disabled") as c:
+    sim = SimulatedVerdi(model="V5", allow_writes=state != "writes_disabled")
+    with sim as c:
         if state == "on":
             sim.set_key(True)
             c.start()
@@ -173,18 +176,18 @@ def test_standby_setpoint_preconditions(lessons, state):
 
 @pytest.mark.parametrize("instruction", [b"P=0.2500", b"L=1", b"S=1", b"S=0", b"L=0"])
 def test_session_lost_ack_stops_without_replay_or_cleanup(lessons, instruction, monkeypatch):
-    sim = SimulatedTransport()
+    sim = SimulatedVerdi(model="V5", allow_writes=True)
     sim.set_key(True)
-    exchange = sim.exchange
+    exchange = sim._exchange
 
     def fail_selected(request):
         if request == instruction + b"\r\n":
             sim.inject_timeout(after_apply=True)
         return exchange(request)
 
-    monkeypatch.setattr(sim, "exchange", fail_selected)
-    with VerdiController(sim, model=Model.V5, allow_writes=True) as c:
-        with pytest.raises(TransportError):
+    monkeypatch.setattr(sim, "_exchange", fail_selected)
+    with sim as c:
+        with pytest.raises(VerdiError):
             lessons["controlled_session"](c, 0.25)
     assert sim.requests[-1] == instruction + b"\r\n"
     assert sim.requests.count(instruction + b"\r\n") == 1
@@ -195,9 +198,9 @@ def test_session_lost_ack_stops_without_replay_or_cleanup(lessons, instruction, 
     [(b"?SP", b"0.1\r\n"), (b"?SP", b"bad\r\n"), (b"S=1", KeyboardInterrupt())],
 )
 def test_session_bad_readback_or_interrupt_stops(lessons, instruction, response, monkeypatch):
-    sim = SimulatedTransport()
+    sim = SimulatedVerdi(model="V5", allow_writes=True)
     sim.set_key(True)
-    exchange = sim.exchange
+    exchange = sim._exchange
 
     def fail_selected(request):
         # First ?SP is part of preflight status. Fail only after the power write.
@@ -207,9 +210,9 @@ def test_session_bad_readback_or_interrupt_stops(lessons, instruction, response,
             sim.inject(response)
         return exchange(request)
 
-    monkeypatch.setattr(sim, "exchange", fail_selected)
-    with VerdiController(sim, model=Model.V5, allow_writes=True) as c:
-        with pytest.raises((RuntimeError, ProtocolError, KeyboardInterrupt)):
+    monkeypatch.setattr(sim, "_exchange", fail_selected)
+    with sim as c:
+        with pytest.raises((RuntimeError, VerdiError, KeyboardInterrupt)):
             lessons["controlled_session"](c, 0.25)
     assert b"S=0\r\n" not in writes(sim) and b"L=0\r\n" not in writes(sim)
     if instruction == b"?SP":
@@ -217,23 +220,23 @@ def test_session_bad_readback_or_interrupt_stops(lessons, instruction, response,
 
 
 def test_fault_evidence_preserved_without_enable(lessons):
-    sim = SimulatedTransport()
+    sim = SimulatedVerdi(model="V5")
     sim.set_faults(2, 999)
-    with VerdiController(sim, model=Model.V5) as c:
+    with sim as c:
         active, history = lessons["read_fault_report"](c)
-        assert [fault.code for fault in active] == [2, 999]
-        assert not active[1].known and active == history
+        assert active == [2, 999]
+        assert active[1] == 999 and active == history
         sim.set_faults()
         after, retained = lessons["read_fault_report"](c)
-        assert after == () and retained == history
-        assert c.read_laser_state() == LaserState.FAULT
+        assert after == [] and retained == history
+        assert c.read_laser_state() == 2
     assert writes(sim) == []
 
 
 @pytest.mark.parametrize("after_apply", [False, True])
 def test_unknown_write_outcome_is_not_retried(lessons, after_apply, capsys):
-    sim = SimulatedTransport()
-    with VerdiController(sim, model=Model.V5, allow_writes=True) as c:
+    sim = SimulatedVerdi(model="V5", allow_writes=True)
+    with sim as c:
         sim.inject_timeout(after_apply=after_apply)
         assert lessons["set_power_once"](c, 0.25) is False
     assert sim.requests == (b"P=0.2500\r\n",)
@@ -279,17 +282,17 @@ def test_self_contained_notebooks_execute(name, hardware_path, tmp_path, monkeyp
     original_setup = None
     if hardware_path:
         guard.source += (
-            "from coherent_verdi import SimulatedTransport, Model\n"
-            "import coherent_verdi.protocol as protocol\n"
+            "from coherent_verdi import SimulatedVerdi\n"
+            "import coherent_verdi.controller as protocol\n"
             "def simulated_connect(connection):\n"
-            "    assert connection.port == 'SIMULATED_TEST_PORT'\n"
-            "    sim = SimulatedTransport(Model.V5)\n"
+            "    assert connection._port == 'SIMULATED_TEST_PORT'\n"
+            "    sim = SimulatedVerdi('V5')\n"
             "    sim.set_key(True)\n"
             "    sim.connect()\n"
             "    connection.fixture = sim\n"
-            "protocol.SerialConnection.connect = simulated_connect\n"
-            "protocol.SerialConnection.exchange = lambda c, request: c.fixture.exchange(request)\n"
-            "protocol.SerialConnection.disconnect = lambda c: c.fixture.disconnect()\n"
+            "protocol.VerdiController._open = simulated_connect\n"
+            "protocol.VerdiController._exchange = lambda c, request: c.fixture._exchange(request)\n"
+            "protocol.VerdiController._close = lambda c: c.fixture.disconnect()\n"
             "answers = iter(['CONNECT', 'RUN'])\n"
             # A notebook global survives IPykernel's per-cell builtins.input reset.
             "input = lambda prompt: next(answers)\n"
@@ -301,7 +304,7 @@ def test_self_contained_notebooks_execute(name, hardware_path, tmp_path, monkeyp
         setup.source = (
             "RUN_HARDWARE = True\n"
             "HARDWARE_PORT = 'SIMULATED_TEST_PORT'\n"
-            "HARDWARE_MODEL = Model.V5\n"
+            "HARDWARE_MODEL = 'V5'\n"
             "HARDWARE_BAUDRATE = 19200\n"
             "HARDWARE_TIMEOUT_S = 1.0\n"
             "TARGET_W = 0.25\n"
@@ -365,21 +368,21 @@ def test_self_contained_notebooks_execute(name, hardware_path, tmp_path, monkeyp
 @pytest.fixture
 def operator_runner(monkeypatch):
     namespace = runpy.run_path(str(TUTORIALS / "run_tutorial.py"))
-    sim = SimulatedTransport(Model.V5)
+    sim = SimulatedVerdi("V5")
     sim.set_key(True)
     opened = []
 
-    from coherent_verdi.protocol import SerialConnection
+    from coherent_verdi import VerdiController
 
     def substitute(connection):
         opened.append(connection)
         sim.connect()
 
-    monkeypatch.setattr(SerialConnection, "connect", substitute)
+    monkeypatch.setattr(VerdiController, "_open", substitute)
     monkeypatch.setattr(
-        SerialConnection, "exchange", lambda connection, request: sim.exchange(request)
+        VerdiController, "_exchange", lambda connection, request: sim._exchange(request)
     )
-    monkeypatch.setattr(SerialConnection, "disconnect", lambda connection: sim.disconnect())
+    monkeypatch.setattr(VerdiController, "_close", lambda connection: sim.disconnect())
     answers = iter(["CONNECT", "RUN"])
     monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
     yield namespace, sim, opened
@@ -398,14 +401,14 @@ def test_operator_path_uses_configured_connection_without_fixtures(
         raise AssertionError("The operator path must not use simulator fixtures")
 
     for method in ("__init__", "set_key", "set_faults", "inject", "inject_timeout"):
-        monkeypatch.setattr(SimulatedTransport, method, prohibited)
+        monkeypatch.setattr(SimulatedVerdi, method, prohibited)
     writes_allowed = lesson in {"set-power", "controlled-session"}
     power = {"target_w": 0.25, "power_limit_w": 0.5} if writes_allowed else {}
     assert (
         namespace["run_hardware"](
             lesson,
             port="SIMULATED_TEST_PORT",
-            model=Model.V5,
+            model="V5",
             baudrate=9600,
             timeout_s=2.0,
             active_fault_clear_reply="SYSTEM OK",
@@ -415,8 +418,8 @@ def test_operator_path_uses_configured_connection_without_fixtures(
     )
     assert len(opened) == 1
     config = opened[0]
-    assert config.port == "SIMULATED_TEST_PORT"
-    assert config.baudrate == 9600 and config.timeout_s == 2.0
+    assert config._port == "SIMULATED_TEST_PORT"
+    assert config._baudrate == 9600 and config._timeout_s == 2.0
     assert sim.requests[0] == b"?SV\r\n"
     if lesson == "set-power":
         assert writes(sim) == [b"P=0.2500\r\n"]  # No fixture demo/reset-to-zero.
@@ -426,8 +429,8 @@ def test_operator_path_uses_configured_connection_without_fixtures(
         assert writes(sim) == []
         if lesson == "faults":
             assert sim.requests == (b"?SV\r\n", b"?L\r\n", b"?F\r\n", b"?FH\r\n")
-    with pytest.raises(TransportError):
-        sim.exchange(b"?L\r\n")
+    with pytest.raises(VerdiError):
+        sim.read_laser_state()
 
 
 @pytest.mark.parametrize("answers", [["cancel"], ["CONNECT", "cancel"]])
@@ -439,7 +442,7 @@ def test_operator_can_cancel_before_connection_or_commands(operator_runner, monk
         namespace["run_hardware"](
             "controlled-session",
             port="SIMULATED_TEST_PORT",
-            model=Model.V5,
+            model="V5",
             baudrate=19200,
             target_w=0.25,
             power_limit_w=0.5,
@@ -455,7 +458,7 @@ def test_identify_only_is_one_read(operator_runner):
     namespace["run_hardware"](
         "read-status",
         port="SIMULATED_TEST_PORT",
-        model=Model.V5,
+        model="V5",
         baudrate=19200,
         identify_only=True,
     )
@@ -486,7 +489,7 @@ def test_operator_configuration_rejected_before_open(operator_runner, changed):
     options = dict(
         lesson="set-power",
         port="SIMULATED_TEST_PORT",
-        model=Model.V5,
+        model="V5",
         baudrate=19200,
         target_w=0.25,
         power_limit_w=0.5,
@@ -500,18 +503,18 @@ def test_operator_configuration_rejected_before_open(operator_runner, changed):
 def test_operator_timeout_never_reconnects_or_continues(operator_runner):
     namespace, sim, opened = operator_runner
     sim.inject_timeout()
-    with pytest.raises(TransportError):
+    with pytest.raises(VerdiError):
         namespace["run_hardware"](
             "controlled-session",
             port="SIMULATED_TEST_PORT",
-            model=Model.V5,
+            model="V5",
             baudrate=19200,
             target_w=0.25,
             power_limit_w=0.5,
         )
     assert len(opened) == 1 and sim.requests == (b"?SV\r\n",)
-    with pytest.raises(TransportError):
-        sim.exchange(b"?L\r\n")
+    with pytest.raises(VerdiError):
+        sim.read_laser_state()
 
 
 def test_operator_open_failure_never_falls_back_to_simulation(operator_runner, monkeypatch):
@@ -520,14 +523,14 @@ def test_operator_open_failure_never_falls_back_to_simulation(operator_runner, m
     def fail_open(*args, **kwargs):
         raise OSError("injected open failure")
 
-    from coherent_verdi.protocol import SerialConnection
+    from coherent_verdi import VerdiController
 
-    monkeypatch.setattr(SerialConnection, "connect", fail_open)
+    monkeypatch.setattr(VerdiController, "_open", fail_open)
     with pytest.raises(OSError, match="injected open failure"):
         namespace["run_hardware"](
             "read-status",
             port="SIMULATED_TEST_PORT",
-            model=Model.V5,
+            model="V5",
             baudrate=19200,
         )
 
@@ -559,7 +562,6 @@ def test_operator_cli_rejects_incomplete_mode_settings(operator_runner, options)
 
 def test_operator_cli_parses_hardware_parameters(operator_runner):
     namespace, sim, opened = operator_runner
-    sim.is_simulated = False  # Still an in-memory fixture; require the explicit clear reply.
     namespace["main"](
         [
             "set-power",
@@ -581,19 +583,19 @@ def test_operator_cli_parses_hardware_parameters(operator_runner):
     assert len(opened) == 1 and writes(sim) == [b"P=0.2500\r\n"]
 
 
-@pytest.mark.parametrize("query", [Query.DIODE_SERVO, Query.ETALON_SERVO, Query.VANADATE_SERVO])
+@pytest.mark.parametrize("query", ["?D1SS", "?ESS", "?VSS"])
 def test_all_temperature_servos_must_be_locked_before_enable(lessons, monkeypatch, query):
-    sim = SimulatedTransport()
+    sim = SimulatedVerdi(model="V5", allow_writes=True)
     sim.set_key(True)
-    original = sim.exchange
+    original = sim._exchange
 
     def seeking(request):
-        if request == (query.value + "\r\n").encode():
+        if request == (query + "\r\n").encode():
             sim.inject(b"2\r\n")
         return original(request)
 
-    monkeypatch.setattr(sim, "exchange", seeking)
-    with VerdiController(sim, model=Model.V5, allow_writes=True) as laser:
+    monkeypatch.setattr(sim, "_exchange", seeking)
+    with sim as laser:
         with pytest.raises(RuntimeError, match="all temperature servos LOCKED"):
             lessons["controlled_session"](laser, 0.25)
     assert writes(sim) == []

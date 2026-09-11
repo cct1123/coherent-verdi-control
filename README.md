@@ -1,123 +1,112 @@
 # Coherent Verdi Control
 
-A small synchronous Python driver for Coherent Verdi V-2/V-5/V-6 lasers.
-Six device operations, all 42 documented queries, a simulator, and optional
-monitoring, JSON logging and a Dash GUI. The core has no third-party dependencies
-and starts no threads.
+A small synchronous Python driver for Coherent Verdi V-2/V-5/V-6 lasers: direct
+serial I/O, 42 manual queries, six command forms and a hardware-free simulator.
+Three substantive modules, four public exports, no required runtime dependencies.
+GUI and monitoring are optional. The driver starts no threads.
 
-Version **0.2.0** introduces the compact API. Existing 0.1.0 callers should follow
-the [migration guide](docs/API.md#migration-from-010-to-020) and reinstall the package.
+**0.3.0 is a breaking simplification.** Results are plain dictionaries, strings,
+numbers and fault-code lists. Follow the [migration guide](docs/API.md#migration-to-030)
+and reinstall the package. This checkout has software/simulator validation only;
+physical behavior and calibration remain untested. See [results](outputs/REPORT.md)
+and the [hardware review procedure](HARDWARE_VALIDATION.md).
 
-**Software/simulator validation only.** Wiring, firmware behavior and calibration
-remain untested. No physical ports are opened or enumerated during development.
-See [current results](outputs/REPORT.md) and the
-[hardware review procedure](HARDWARE_VALIDATION.md).
-
-## Install
+## Install and read
 
 Python 3.11 or later, from this checkout:
 
 ```sh
-python -m pip install -e .             # Controller + simulator
-python -m pip install -e ".[serial]"  # pySerial for approved hardware use
-python -m pip install -e ".[gui]"     # Dash / Plotly
+python -m pip install -e .             # Core and simulator
+python -m pip install -e ".[serial]"  # pySerial, for approved hardware use
+python -m pip install -e ".[gui]"     # Optional Dash / Plotly
 ```
 
-Optional imports occur only when used. Installing an extra does not connect to
-anything. For notebooks install `.[tutorials]`; for development install
-`.[dev,serial,gui]`. These commands do not assume a published PyPI release.
-
-## Use the controller
-
 ```python
-from coherent_verdi import SimulatedTransport, VerdiController
+import json
+from coherent_verdi import SimulatedVerdi
 
-with VerdiController(SimulatedTransport(), model="V5") as laser:
+with SimulatedVerdi("V5") as laser:
     print(laser.read_power_w(), "W")
     print(laser.read("?LBOT"), "°C")
-    print(laser.status())
+    print(json.dumps(laser.status(), indent=2))
 ```
 
-Construction is passive. `with` calls `connect()` then `disconnect()`. An experiment
-stack can instead call those methods explicitly and share the connected controller
-among its own clients. One controller serializes all I/O on one connection.
+For approved hardware use, construct `VerdiController(port, model=model,
+baudrate=baudrate)` with an operator-identified native port. Both classes expose
+the same `connect`, `disconnect`, `read_*`, `set_*`, `start`, `stop` and `status`
+methods. Construction does nothing; `with` connects and disconnects. An experiment
+stack can call those methods explicitly and share one connected object among clients.
+All I/O, including complete status groups, is serialized by that object.
 
-A complete **simulated** control sequence:
+There is no port discovery, automatic initialization, reconnect or command replay.
+Begin approved physical integration with passive `connect()` and one `read("?SV")`.
+Full status needs independently verified `active_fault_clear_reply` for that firmware.
+
+## Control and shutdown
+
+This complete example operates only on a simulator:
 
 ```python
-sim = SimulatedTransport("V2")
-sim.set_key(True)  # Fixture only; no remote physical-keyswitch command exists.
-with VerdiController(sim, model="V2", allow_writes=True, power_limit_w=0.5) as laser:
+with SimulatedVerdi("V2", allow_writes=True, power_limit_w=0.5) as laser:
+    laser.set_key(True)  # Fixture only; the real keyswitch is physical.
     laser.set_power_w(0.25)
-    laser.start()  # L=1 also resets faults and clears fault history.
+    laser.start()  # L=1 also resets faults and clears their history.
     laser.set_shutter(open=True)
-    print(laser.read_power_w(), "W")
+    print(laser.status()["power_w"], "W")
     laser.set_shutter(open=False)
     laser.stop()  # Standby; temperature servos remain powered.
 ```
 
-After candidate review and operator approval, pass an explicit native port instead
-of the simulator: `VerdiController(port, model=model, baudrate=baudrate)`.
-There is no discovery, initialization command, mode negotiation or automatic retry.
-For the first approved interaction, call `connect()` followed by `read("?SV")`.
-Full physical status also requires independently verified `active_fault_clear_reply`;
-see [protocol uncertainties](docs/PROTOCOL.md#uncertainty-register).
+Writes default to disabled. Inputs and the rounded wire setpoint must fit the
+configured ceiling. The example ceiling and model ratings are not site safety limits.
+`disconnect()` releases communication; it never changes laser or shutter state.
+After timeout, malformed reply or interruption, cease commands and retire the session.
+Use the site's physical abort procedure if needed; closing/reopening cannot prove
+late untagged replies have cleared. See [API behavior](docs/API.md).
 
-`disconnect()` releases communication only. It never changes laser, shutter,
-power or heater state. The shutter is a safety shutter, not a modulation device.
-An uncertain reply or interrupted transaction disables that controller session;
-verify device state and establish a clean connection before creating another.
-Reopening a port alone does not prove delayed replies have cleared.
+## Integrate, log or display
 
-## Optional monitoring and GUI
+Log ordinary results with `json.dumps(laser.status())` or your application's logger.
+There is no custom serializer or logging service. The [async example](examples/async_integration.py)
+keeps connect/read/cleanup together in one worker. Cancelling an await cannot stop
+serial I/O; drain the worker before releasing its connection.
 
-```python
-from coherent_verdi.monitor import Monitor, to_json
-
-with VerdiController(SimulatedTransport()) as laser:
-    monitor = Monitor(laser, history_size=100)
-    sample = monitor.poll_once()  # Caller schedules every sample.
-    print(to_json(sample))  # Or write to your existing logging system.
-```
-
-Monitor has no worker or connection lifecycle. Its bounded cache records failed
-samples as gaps. `coherent_verdi.gui.create_app(monitor)` builds a read-only Dash
-client of this cache. Monitor acquires through the same public `status()` API.
+For a GUI, import `Monitor` and `create_app` from `coherent_verdi.gui`. One application
+caller schedules `monitor.poll_once()`; browser callbacks read only `snapshot()`.
+The cache is bounded, copies returned data, marks stale readings and records errors
+as gaps. Neither object opens connections or starts workers. Dash loads only when
+`create_app(monitor)` is called.
 
 ```sh
 verdi status
 verdi query '?SV'
-verdi --demo watch --count 5 --interval 0.1
-verdi --demo gui
+verdi watch --count 5 --interval 0.1
+verdi gui
 ```
 
-The CLI always uses a fresh simulator. `--demo` prepares a synthetic 1 W beam.
-`watch` emits flushed JSON Lines; `gui` serves
-[localhost:8050](http://127.0.0.1:8050/) with debug/reloader off. Its launcher
-explicitly starts and joins the polling worker; Ctrl+C ends it before disconnect.
-Browser callbacks never query the device. Errors show unknown values, old data is
-marked stale, and a browser watchdog warns if server updates stop.
+The CLI is read-only and always uses a fresh simulator. `watch` emits flushed JSON
+Lines. `gui` serves [localhost:8050](http://127.0.0.1:8050/) and explicitly starts
+and joins its polling worker. Ctrl+C drains acquisition before disconnecting.
+Keep debug/reloader off; larger web stacks should share one controller, not create
+one per web worker. The display and its connection watchdog are not interlocks.
 
-## Learn, integrate and validate
+## Examples and validation
 
 - [Four self-contained notebooks and operator runner](examples/tutorials/README.md)
-- [Public API and migration](docs/API.md)
-- [Integration, concurrency, async use and shutdown](docs/INTEGRATION.md)
-- [Eight-module architecture](ARCHITECTURE.md)
-- [Protocol](docs/PROTOCOL.md) and [simulator policies](docs/SIMULATOR.md)
+- [API, result fields and migration](docs/API.md)
+- [Architecture](ARCHITECTURE.md), [protocol](docs/PROTOCOL.md), [simulator policies](docs/SIMULATOR.md)
 
 ```sh
 python -m pip install -e ".[dev,serial,gui]"
 python scripts/validate.py
 ```
 
-Validation covers behavior tests, hardware-guarded notebook kernels, lint/format,
-strict typing, builds, installed-wheel/core/GUI checks, examples and the browser
-watchdog. Node.js is required (`VERDI_NODE` can specify its path). The extras check
-uses pip's registry/cache. Results and source hashes go to `records/validation.json`;
-generated logs and notebook outputs accompany it. CI declares Windows/Linux and
-Python 3.11–3.13; only executed environments have PASS evidence.
+Notebooks additionally need `.[tutorials]` for JupyterLab. Validation exercises
+guarded notebook kernels, protocol/serial behavior, lint/format, strict typing,
+builds, isolated installations, examples and the browser watchdog. Node.js is
+required (`VERDI_NODE` can specify its path); extras installation uses pip's registry/cache.
+`records/validation.json` captures results and source hashes. CI declares Windows/Linux
+and Python 3.11–3.13; only executed environments have PASS evidence.
 
-[STATE.md](STATE.md), [PROJECT.md](PROJECT.md) and [records](records/RECORDS.md)
-preserve engineering continuity and the hardware review gate. [Template
-provenance](records/FRAMEWORK.md) remains independent of runtime device control.
+[STATE.md](STATE.md), [PROJECT.md](PROJECT.md), [records](records/RECORDS.md) and
+[template provenance](records/FRAMEWORK.md) preserve engineering continuity.

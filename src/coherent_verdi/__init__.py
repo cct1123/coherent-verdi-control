@@ -1,21 +1,6 @@
-"""Small Verdi driver; imports never open ports or load optional clients."""
+"""Small Verdi driver. Imports and constructors never touch hardware."""
 
-from .controller import Status, VerdiController
-from .errors import DeviceError, ProtocolError, TransportError, VerdiError
-from .protocol import Fault, LaserState, Model, Query, ServoState
-from .simulator import SimulatedTransport
+from .controller import DeviceError, VerdiController, VerdiError
+from .simulator import SimulatedVerdi
 
-__all__ = [
-    "VerdiController",
-    "SimulatedTransport",
-    "Status",
-    "Fault",
-    "Model",
-    "LaserState",
-    "ServoState",
-    "Query",
-    "VerdiError",
-    "TransportError",
-    "ProtocolError",
-    "DeviceError",
-]
+__all__ = ["VerdiController", "SimulatedVerdi", "VerdiError", "DeviceError"]

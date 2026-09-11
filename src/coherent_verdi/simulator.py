@@ -7,39 +7,42 @@ See docs/SIMULATOR.md for every deliberate simplification and uncertain reply.
 import re
 from collections import deque
 from collections.abc import Callable
-from threading import RLock
 from time import monotonic
 
-from .errors import TransportError
-from .protocol import LaserState, Model, finite_range
+from .controller import VerdiController, VerdiError, finite_range
 
 
-class SimulatedTransport:
+class SimulatedVerdi(VerdiController):
     is_simulated = True
 
     def __init__(
         self,
-        model: Model | str = Model.V5,
+        model: str = "V5",
         *,
+        allow_writes: bool = False,
+        power_limit_w: float | None = None,
         clock: Callable[[], float] = monotonic,
         warmup_s: float = 0.0,
         echo: bool = False,
         prompt: bool = False,
     ) -> None:
-        model = Model(model)
+        super().__init__(
+            "SIMULATOR",
+            model=model,
+            allow_writes=allow_writes,
+            power_limit_w=power_limit_w,
+            active_fault_clear_reply="SYSTEM OK",
+        )
         finite_range(warmup_s, 0, 86400, "warmup_s")
         if type(echo) is not bool or type(prompt) is not bool:
             raise ValueError("echo and prompt must be bools")
-        self.model = model
         self._clock = clock
         self._started = clock()
         self._warmup_s = warmup_s
         self._echo = echo
         self._prompt = prompt
-        self._closed = True
-        self._lock = RLock()
         self._key = False
-        self._laser = LaserState.STANDBY
+        self._laser = 0
         self._shutter = False
         self._power = 0.0
         self._faults: tuple[int, ...] = ()
@@ -60,7 +63,7 @@ class SimulatedTransport:
         with self._lock:
             self._key = on
             if not on:
-                self._laser = LaserState.STANDBY
+                self._laser = 0
                 self._shutter = False
                 self._warmup_fault = False
             elif not self._ready():
@@ -74,7 +77,7 @@ class SimulatedTransport:
             self._faults = tuple(dict.fromkeys(codes))
             self._history = tuple(dict.fromkeys((*self._history, *codes)))
             if codes:
-                self._laser = LaserState.FAULT
+                self._laser = 2
                 self._shutter = False
 
     def inject(self, response: bytes | Exception, *, after_apply: bool = False) -> None:
@@ -84,7 +87,7 @@ class SimulatedTransport:
 
     def inject_timeout(self, *, after_apply: bool = False) -> None:
         """Model a lost request or an applied command whose acknowledgment is lost."""
-        self.inject(TransportError("simulated response timeout"), after_apply=after_apply)
+        self.inject(VerdiError("simulated response timeout"), after_apply=after_apply)
 
     def _ready(self) -> bool:
         return self._clock() - self._started >= self._warmup_s
@@ -93,7 +96,7 @@ class SimulatedTransport:
         # Manual p.4-2: key ON before LBO operating temperature reports fault 5.
         self._warmup_fault = True
         self._history = tuple(dict.fromkeys((*self._history, 5)))
-        self._laser = LaserState.FAULT
+        self._laser = 2
         self._shutter = False
 
     def _active_faults(self) -> tuple[int, ...]:
@@ -105,7 +108,7 @@ class SimulatedTransport:
         elapsed = max(0.0, self._clock() - self._started)
         ready = self._ready()
         faults = self._active_faults()
-        diode_on = self._laser == LaserState.ON and ready and not faults
+        diode_on = self._laser == 1 and ready and not faults
         emitting = diode_on and self._shutter
         # Closed-shutter idle is not diode-off (Tables 4-1/4-3). Values are fixtures.
         current = ("12.0" if self._shutter else "1.0") if diode_on else "0.0"
@@ -157,7 +160,7 @@ class SimulatedTransport:
         }
         return values.get(instruction, f"Query Error: {instruction}")
 
-    def _command(self, instruction: str) -> str:
+    def _apply(self, instruction: str) -> str:
         name, sep, operand = instruction.partition("=")
         if not sep:
             return f"Command Error: {instruction}"
@@ -166,7 +169,7 @@ class SimulatedTransport:
             if not re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", operand):
                 return f"RANGE ERROR: {instruction}"
             try:
-                self._power = finite_range(float(operand), 0, self.model.rated_power_w, "power")
+                self._power = finite_range(float(operand), 0, float(self.model[1:]), "power")
             except ValueError:
                 return f"RANGE ERROR: {instruction}"
         elif name in ("L", "S", "E", "PROMPT"):
@@ -179,17 +182,17 @@ class SimulatedTransport:
                     if self._key and not self._ready():
                         self._latch_warmup_fault()
                     elif self._active_faults():
-                        self._laser = LaserState.FAULT
+                        self._laser = 2
                     elif self._key:
-                        self._laser = LaserState.ON
+                        self._laser = 1
                         self._warmup_fault = False
                 else:
-                    self._laser = LaserState.STANDBY
+                    self._laser = 0
                     self._shutter = False
                     self._warmup_fault = False
             elif name == "S":
                 # Conservative simulation policy; not a claim about rejected hardware writes.
-                self._shutter = value and self._laser == LaserState.ON and self._key
+                self._shutter = value and self._laser == 1 and self._key
             elif name == "E":
                 self._echo = value
             elif name == "PROMPT":
@@ -198,10 +201,8 @@ class SimulatedTransport:
             return f"Command Error: {instruction}"
         return ""
 
-    def exchange(self, request: bytes) -> bytes:
+    def _exchange(self, request: bytes) -> bytes:
         with self._lock:
-            if self._closed:
-                raise TransportError("simulator connection is closed")
             self._requests.append(request)
             if request.endswith(b"\r\n"):
                 body = request[:-2]
@@ -214,23 +215,20 @@ class SimulatedTransport:
             if self._injections:
                 result, after_apply = self._injections.popleft()
                 if after_apply and not query:
-                    self._command(instruction)
+                    self._apply(instruction)
                 if isinstance(result, Exception):
                     raise result
                 return result
             parts = ["Verdi>"] if self._prompt else []
             if self._echo:
                 parts.append(instruction)
-            payload = self._query(instruction) if query else self._command(instruction)
+            payload = self._query(instruction) if query else self._apply(instruction)
             if payload:
                 parts.append(payload)
             return (" ".join(parts) + "\r\n").encode("ascii")
 
-    def disconnect(self) -> None:
-        with self._lock:
-            self._closed = True
+    def _open(self) -> None:
+        pass  # Keep fixture state across an explicit reconnect.
 
-    def connect(self) -> None:
-        """Open the fake connection without resetting its plant state."""
-        with self._lock:
-            self._closed = False
+    def _close(self) -> None:
+        pass  # Disconnect never changes simulated laser state.

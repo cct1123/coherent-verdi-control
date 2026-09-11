@@ -43,13 +43,13 @@ python examples/tutorials/run_tutorial.py controlled-session
 python examples/tutorials/run_tutorial.py faults
 ```
 
-These commands replace the former separate `read_status.py`, `set_power.py`,
-`controlled_session.py` and `handle_faults.py` files. Notebook filenames and the
-runner's arguments are unchanged.
-
 If an import fails, check that the selected kernel uses the environment where
 you installed the checkout. Install packages in the terminal, then restart the
 kernel. Do not add serial connection code to resolve a notebook setup error.
+
+Results use dictionaries (`status["power_w"]`), integer state codes and integer
+fault-code lists. Both SimulatedVerdi and VerdiController expose the same API;
+only simulator setup offers fixture operations such as `set_key`.
 
 ## Common command vocabulary
 
@@ -60,7 +60,7 @@ off; no `OK` acknowledgment is expected. Construction and `disconnect()` send no
 
 `status()` expands to `?L, ?K, ?S, ?P, ?SP, ?D1C, ?D1T, ?D1HST, ?BT, ?LBOT,
 ?LBOSS, ?ET, ?VT, ?F`. It is a sequential sample, not a simultaneous measurement.
-`diagnostics()` expands to `?SV, ?HH, ?PSH, ?D1H, ?FH`. The configured V5 model
+`read_diagnostics()` expands to `?SV, ?HH, ?PSH, ?D1H, ?FH`. The configured V5 model
 is supplied by the caller; `?SV` reports software, not model identity.
 
 These commands follow the supplied [operator manual](../../verdi.manual_v5.pdf),
@@ -69,7 +69,7 @@ Tables 5-1, 5-3 and 5-4 (printed pp. 5-2, 5-5 through 5-10). See the
 
 ## 1. Read status and diagnostics
 
-Query `?SV`, `status()` and `diagnostics()`. The simulator reports V5,
+Query `?SV`, `status()` and `read_diagnostics()`. The simulator reports V5,
 STANDBY, key OFF, shutter closed, 0 W, LBO 148 °C / LOCKED, 100 head hours
 and no faults. The write-protection exercise catches `PermissionError` without
 transmitting a command. Query failures stop the run rather than present partial

@@ -1,19 +1,15 @@
-"""Run with python examples/simulated_session.py; never touches physical hardware."""
+"""Run with python examples/simulated_session.py; no physical hardware is accessed."""
 
-from coherent_verdi import (
-    Model,
-    SimulatedTransport,
-    VerdiController,
-)
-from coherent_verdi.monitor import Monitor, to_json
+import json
 
-sim = SimulatedTransport(Model.V5)
-sim.set_key(True)  # Fixture configuration, not an RS-232 command.
-with VerdiController(sim, model=Model.V5, allow_writes=True) as laser:
+from coherent_verdi import SimulatedVerdi
+
+with SimulatedVerdi(allow_writes=True, power_limit_w=0.5) as laser:
+    laser.set_key(True)  # Simulator fixture only; hardware keyswitches are physical.
     laser.set_power_w(0.5)
-    laser.start()  # Explicit, even in this simulated example.
+    laser.start()
     laser.set_shutter(open=True)
-    service = Monitor(laser, history_size=5)
-    print(to_json(service.poll_once()))
+    print(json.dumps(laser.status(), indent=2, allow_nan=False))
+    # Normal completion only. On uncertain I/O, stop commands and use the site abort procedure.
     laser.set_shutter(open=False)
     laser.stop()

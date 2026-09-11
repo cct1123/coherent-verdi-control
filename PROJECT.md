@@ -103,3 +103,11 @@ Update public imports, tutorials, examples, tests, README and architecture toget
 no external compatibility requirement has been identified. Validate externally
 meaningful behavior and retain documented protocol/physical-uncertainty distinctions.
 This request authorizes software changes only, with no physical access.
+
+## Further pruning (user request, 2026-09-10)
+
+Reduce data structures and strip most remaining module boundaries. Make a clean
+API migration and update all documentation, examples and README. Perform another
+holistic review, fix findings, prune obsolete code/tests and commit/push the result.
+The renewed push request follows the explicit destination question for
+github.com/cct1123/coherent-verdi-control, main. Hardware-free limits still apply.

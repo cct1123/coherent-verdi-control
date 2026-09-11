@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 import serial
 
-from coherent_verdi import ProtocolError, TransportError, VerdiController
+from coherent_verdi import VerdiController, VerdiError
 
 
 class FakeSerial:
@@ -81,7 +81,7 @@ def test_invalid_connection_settings_never_open(peer, options):
 def test_passive_explicit_lifecycle_and_framing(peer):
     laser = VerdiController("FAKE-ONLY")
     assert peer.opens == 0
-    with pytest.raises(TransportError, match="disconnected"):
+    with pytest.raises(VerdiError, match="disconnected"):
         laser.read_power_w()
     laser.connect()
     laser.connect()
@@ -126,13 +126,13 @@ def test_passive_explicit_lifecycle_and_framing(peer):
 def test_failed_read_blocks_late_replies_and_reconnect(peer, reply, error):
     peer.responses.extend([reply, b"9.000\r\n"])
     with VerdiController("FAKE-ONLY") as laser:
-        with pytest.raises((TransportError, ProtocolError), match=error):
+        with pytest.raises((VerdiError, VerdiError), match=error):
             laser.read_power_w()
         for action in (laser.read_power_w, laser.connect):
-            with pytest.raises(TransportError, match="failed"):
+            with pytest.raises(VerdiError, match="failed"):
                 action()
         laser.disconnect()
-        with pytest.raises(TransportError, match="failed"):
+        with pytest.raises(VerdiError, match="failed"):
             laser.connect()
     assert peer.writes == [b"?P\r\n"]
 
@@ -148,17 +148,17 @@ def test_uncertain_write_is_never_replayed(peer, failure):
         peer.read_failure = RuntimeError("adapter failure")
     peer.responses.append(b"\r\n")
     with VerdiController("FAKE-ONLY", allow_writes=True) as laser:
-        with pytest.raises((TransportError, KeyboardInterrupt, RuntimeError)):
+        with pytest.raises((VerdiError, KeyboardInterrupt, RuntimeError)):
             laser.start()
         for action in (laser.start, laser.stop, laser.read_power_w):
-            with pytest.raises(TransportError):
+            with pytest.raises(VerdiError):
                 action()
     assert peer.writes in ([], [b"L=1\r\n"])
 
 
 def test_one_deadline_includes_write_and_all_bytes(peer, monkeypatch):
     now = [0.0]
-    monkeypatch.setattr("coherent_verdi.protocol.monotonic", lambda: now[0])
+    monkeypatch.setattr("coherent_verdi.controller.monotonic", lambda: now[0])
     read = peer.read
 
     def delayed(size):
@@ -168,14 +168,14 @@ def test_one_deadline_includes_write_and_all_bytes(peer, monkeypatch):
     monkeypatch.setattr(peer, "read", delayed)
     peer.responses.append(b"1.234\r\n")
     with VerdiController("FAKE-ONLY", timeout_s=0.01) as laser:
-        with pytest.raises(TransportError, match="timed out"):
+        with pytest.raises(VerdiError, match="timed out"):
             laser.read_power_w()
     assert now[0] == 0.012
 
 
 def test_complete_reply_after_deadline_rejected(peer, monkeypatch):
     now = [0.0]
-    monkeypatch.setattr("coherent_verdi.protocol.monotonic", lambda: now[0])
+    monkeypatch.setattr("coherent_verdi.controller.monotonic", lambda: now[0])
     read = peer.read
 
     def late_terminator(size):
@@ -187,7 +187,7 @@ def test_complete_reply_after_deadline_rejected(peer, monkeypatch):
     monkeypatch.setattr(peer, "read", late_terminator)
     peer.responses.append(b"\r\n")
     with VerdiController("FAKE-ONLY", timeout_s=0.01, allow_writes=True) as laser:
-        with pytest.raises(TransportError, match="timed out"):
+        with pytest.raises(VerdiError, match="timed out"):
             laser.start()
 
 
@@ -203,10 +203,10 @@ def test_many_callers_cannot_mix_replies(peer):
 def test_failed_open_cleans_up_without_commands(peer, failure):
     peer.open_failure = failure
     laser = VerdiController("FAKE-ONLY")
-    with pytest.raises((TransportError, KeyboardInterrupt)):
+    with pytest.raises((VerdiError, KeyboardInterrupt)):
         laser.connect()
     assert peer.closes == 1 and not peer.writes
-    with pytest.raises(TransportError):
+    with pytest.raises(VerdiError):
         laser.connect()
 
 
@@ -214,15 +214,15 @@ def test_cleanup_failure_can_be_retried_without_reviving_connection(peer):
     laser = VerdiController("FAKE-ONLY")
     laser.connect()
     peer.close_failure = OSError("close failure")
-    with pytest.raises(TransportError):
+    with pytest.raises(VerdiError):
         laser.disconnect()
-    with pytest.raises(TransportError):
+    with pytest.raises(VerdiError):
         laser.read_power_w()
     peer.close_failure = None
     laser.disconnect()
     laser.disconnect()
     assert peer.closes == 2
-    with pytest.raises(TransportError):
+    with pytest.raises(VerdiError):
         laser.connect()
 
 
@@ -238,10 +238,19 @@ def test_primary_error_survives_failed_context_cleanup(peer):
 def test_unverified_active_clear_reply_blocks_writes(peer, reply):
     peer.responses.append(reply + b"\r\n")
     with VerdiController("FAKE-ONLY", allow_writes=True) as laser:
-        with pytest.raises(ProtocolError):
+        with pytest.raises(VerdiError):
             laser.read_faults()
-        with pytest.raises(TransportError):
+        with pytest.raises(VerdiError):
             laser.start()
+    assert peer.writes == [b"?F\r\n"]
+
+
+def test_display_source_flag_cannot_enable_unverified_fault_parsing(peer):
+    peer.responses.append(b"SYSTEM OK\r\n")
+    with VerdiController("FAKE-ONLY") as laser:
+        laser.is_simulated = True
+        with pytest.raises(VerdiError):
+            laser.read_faults()
     assert peer.writes == [b"?F\r\n"]
 
 
@@ -249,7 +258,7 @@ def test_unverified_active_clear_reply_blocks_writes(peer, reply):
 def test_verified_clear_reply_is_used_only_for_active_faults(peer, clear):
     peer.responses.extend([clear.encode() + b"\r\n", b"SYSTEM OK\r\n", b"30&999\r\n"])
     with VerdiController("FAKE-ONLY", active_fault_clear_reply=clear) as laser:
-        assert laser.read_faults() == laser.read_faults(history=True) == ()
+        assert laser.read_faults() == laser.read_faults(history=True) == []
         known, unknown = laser.read_faults()
-        assert known.code == 30 and known.known
-        assert unknown.code == 999 and not unknown.known
+        assert known == 30
+        assert unknown == 999

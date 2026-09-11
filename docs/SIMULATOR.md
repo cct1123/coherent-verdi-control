@@ -1,6 +1,7 @@
 # Simulator contract
 
-`SimulatedTransport` is an in-memory protocol peer. It does not import pySerial,
+`SimulatedVerdi` is a hardware-free controller with the same public operations.
+It inherits validation/lifecycle and supplies independent in-memory wire replies. It does not import pySerial,
 enumerate ports, open sockets to devices or access a laser. All simulator fixture
 operations are local. They are never presented as undocumented RS-232 commands.
 
@@ -65,17 +66,16 @@ exercise SEEKING -> LOCKED without sleeping. Default runtime clocks use
 ## Failure injection and use
 
 ```python
-from coherent_verdi import Model, SimulatedTransport, VerdiController
+from coherent_verdi import SimulatedVerdi
 
 clock = [0.0]
-sim = SimulatedTransport(Model.V6, clock=lambda: clock[0], warmup_s=30)
-with VerdiController(sim, model=Model.V6) as laser:
-    assert laser.status().lbo_servo.name == "SEEKING"
+with SimulatedVerdi("V6", clock=lambda: clock[0], warmup_s=30) as laser:
+    assert laser.status()["lbo_servo"] == 2  # Seeking
     clock[0] = 30
-    assert laser.status().lbo_servo.name == "LOCKED"
-    sim.set_faults(2, 999)  # Includes an unknown fault: preserved, not discarded.
-    print(laser.read_faults())
-    sim.inject_timeout()  # Next request raises TransportError.
+    assert laser.status()["lbo_servo"] == 1  # Locked
+    laser.set_faults(2, 999)  # Unknown positive codes are preserved.
+    assert laser.read_faults() == [2, 999]
+    laser.inject_timeout()  # The next operation fails and latches session failure.
 ```
 
 `inject(b"malformed\r\n")` overrides the next response. `inject(Exception(...))`

@@ -22,8 +22,8 @@ poorly spaced fault codes 19, 21, 25, 27 and 28. No newer firmware behavior is a
   during connection. Additional lines, control bytes and malformed replies fail.
 - Error prefixes: `RANGE ERROR:`, `Command Error:`, `Query Error:`. A device error
   preserves the instruction and reply. It is not retried.
-- Multiple results use `&`. Fault codes remain numeric; unknown positive codes
-  are retained with `known=False`, never discarded or treated as clear.
+- Multiple results use `&`. Faults are returned as integer lists; unknown positive
+  codes are preserved, never discarded or treated as clear.
 - Table 5-2: 8 data bits, no parity, 1 stop bit, no hardware/software handshaking.
   Baud rates: 1200, 2400, 4800, 9600, **19200 factory default**, 38400, 57600.
 - The port is DCE; only pins 2, 3, 5 are used. No electrical/cable validation has
@@ -53,15 +53,15 @@ communication handle and **does not place the laser in STANDBY**.
 
 The manual also documents service/front-panel operations (baud-rate changes,
 chiller, FLASH, LBO heater/optimization, panel lock and menu buttons). They are
-outside the public operational API in 0.2.0. There is no unrestricted raw-write
+outside the public operational API in 0.3.0. There is no unrestricted raw-write
 escape hatch. Chiller operand details and service sequencing are insufficiently
 specified for this controller's scope. Extending this subset needs a documented
 use case, source review and software tests.
 
 ## Query coverage
 
-All **42** short-form queries from Table 5-4 are represented by `Query`.
-Direct parsing groups in [protocol.py](../src/coherent_verdi/protocol.py) distinguish
+All **42** short-form queries from Table 5-4 are accepted by `read()` as short strings.
+Direct parsing groups in [controller.py](../src/coherent_verdi/controller.py) distinguish
 raw text, documented integer codes and decimal numbers. Source pages are below;
 independent test vectors retain units and long names as manual reference data.
 
@@ -79,14 +79,41 @@ photocell values, reference voltage representation, aging factor and `?ACAD`
 remain **raw text** where the manual does not fully specify units or layout.
 No invented second-diode query is added: section 2 describes one diode assembly.
 For diode/LBO servo queries, code 5 is excluded for V6 and code 6 is excluded
-for V2 (pp. 5-7, 5-9); these mismatches raise `ProtocolError`. V5 can mean standard
+for V2 (pp. 5-7, 5-9); these mismatches raise `VerdiError`. V5 can mean standard
 V5 or V5 UNO, so both codes remain representable until its variant is identified.
 
 The complete independent query/unit/code vectors are in
-[test_protocol.py](../tests/test_protocol.py), `MANUAL_QUERIES`. Fault descriptions
-cover the union of Tables 5-4 and 6-1: 22 codes, including battery service code 30.
-Code 1 retains both conflicting manual labels (see below). Code 47 remains known
-from Table 5-4 even though Table 6-1 omits it. Unknown positive codes remain faults.
+[test_protocol.py](../tests/test_protocol.py), `MANUAL_QUERIES`. The driver returns
+integer fault codes without metadata wrappers. Unknown positive
+codes remain faults. The reference below covers the union of Tables 5-4 and 6-1;
+code 47 is listed in Table 5-4 but omitted from Table 6-1.
+
+## Fault-code reference
+
+| Code | Manual meaning |
+| --- | --- |
+| 1 | Laser head interlock / emission lamp fault (manual labels conflict) |
+| 2 | External interlock fault |
+| 3 | Power supply cover interlock fault |
+| 4 | LBO temperature fault |
+| 5 | LBO not locked at set temperature |
+| 6 | Vanadate temperature fault |
+| 7 | Etalon temperature fault |
+| 8 | Diode 1 temperature fault |
+| 10 | Baseplate temperature fault |
+| 11 | Heatsink 1 temperature fault |
+| 16 | Diode 1 over current fault |
+| 18 | Over current fault |
+| 19 | Diode 1 under voltage fault |
+| 21 | Diode 1 over voltage fault |
+| 25 | Diode 1 EEPROM fault |
+| 27 | Laser head EEPROM fault |
+| 28 | Power supply EEPROM fault |
+| 29 | Power supply-head mismatch fault |
+| 30 | Battery requires service |
+| 31 | Shutter state mismatch |
+| 40 | Head-diode mismatch fault |
+| 47 | Vanadate 2 temperature fault |
 
 ## Uncertainty register
 
@@ -118,8 +145,7 @@ from Table 5-4 even though Table 6-1 omits it. Unknown positive codes remain fau
    a fresh explicit enable after warmup is a conservative fixture policy. Real
    recovery/latching and any automatic resumption require physical observation.
 6. **Fault-code conflict:** Table 5-4 calls code 1 a laser head interlock fault;
-   Table 6-1 and Chart 5 call it an emission lamp fault (pp. 6-2, 6-12). The returned
-   description flags both labels; verify against device firmware/Coherent support.
+   Table 6-1 and Chart 5 call it an emission lamp fault (pp. 6-2, 6-12). The reference below preserves both labels; verify against device firmware/Coherent support.
    Neither label establishes a laser-head cover interlock: p. 6-1 explicitly warns
    that removing the head cover has no protective cover interlock.
 7. **Safety timing and limits:** indicators precede possible emission by approximately

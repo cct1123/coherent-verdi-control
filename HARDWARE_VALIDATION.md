@@ -56,7 +56,7 @@ against the operator's observed state/firmware documentation before setting
 `active_fault_clear_reply` to that exact text. `SYSTEM OK` is
 specified only for history. A default physical controller deliberately rejects an
 unverified clear-looking response. For this one approved framing capture, use one
-owner of the serial transport to record the single `?F` exchange before typed
+owner of the serial transport to record the single `?F` exchange before full
 status sampling; do not introduce a concurrent raw-reader/controller pair.
 An empty clear reply needs a separately reviewed parser change. Do not clear faults
 as part of reading them. If the manual or operator's firmware documentation identifies a side

@@ -2,8 +2,9 @@
 
 import pytest
 
-from coherent_verdi import DeviceError, ProtocolError, Query, SimulatedTransport
-from coherent_verdi.protocol import (
+from coherent_verdi import DeviceError, SimulatedVerdi, VerdiError
+from coherent_verdi.controller import (
+    QUERIES,
     decode_response,
     encode_instruction,
     parse_faults,
@@ -48,23 +49,23 @@ def test_documented_errors(instruction, wire):
     "wire", [b"", b"1\n", b"1\r", b"1\r\n2\r\n", b"\xff\r\n", b"\r\n", b"\x001\r\n", b"?P\r\n"]
 )
 def test_bad_query_framing(wire):
-    with pytest.raises(ProtocolError):
+    with pytest.raises(VerdiError):
         decode_response("?P", wire, query=True)
 
 
 def test_no_generic_ok_ack():
-    with pytest.raises(ProtocolError):
+    with pytest.raises(VerdiError):
         decode_response("L=0", b"OK\r\n", query=False)
 
 
 @pytest.mark.parametrize("wire", [b"\t1\r\n", b"1\x0b\r\n", b"\x0c1\r\n"])
 def test_control_whitespace_is_not_trimmed_into_valid_data(wire):
-    with pytest.raises(ProtocolError):
+    with pytest.raises(VerdiError):
         decode_response("?L", wire, query=True)
 
 
 def test_control_whitespace_is_not_an_acknowledgment():
-    with pytest.raises(ProtocolError):
+    with pytest.raises(VerdiError):
         decode_response("L=1", b"\t\r\n", query=False)
 
 
@@ -75,46 +76,45 @@ def test_command_injection_rejected(instruction):
 
 
 def test_golden_query_and_units():
-    assert encode_instruction(Query.SET_POWER.value) == b"?SP\r\n"
-    assert parse_value(Query.POWER, "1.234") == 1.234
-    assert parse_value(Query.LBO_TEMP, "148.00") == 148.0
-    assert parse_value(Query.LASER, "2") == 2
-    assert parse_value(Query.SOFTWARE, "1.23") == "1.23"
-    assert parse_value(Query.AVG_CURRENT_AND_DELTA, "12&0") == "12&0"
+    assert encode_instruction("?SP") == b"?SP\r\n"
+    assert parse_value("?P", "1.234") == 1.234
+    assert parse_value("?LBOT", "148.00") == 148.0
+    assert parse_value("?L", "2") == 2
+    assert parse_value("?SV", "1.23") == "1.23"
+    assert parse_value("?ACAD", "12&0") == "12&0"
 
 
 @pytest.mark.parametrize(
     "query,payload",
     [
-        (Query.POWER, "nan"),
-        (Query.POWER, "inf"),
-        (Query.POWER, "1_000"),
-        (Query.POWER, "1.5 W"),
-        (Query.POWER, "-1"),
-        (Query.POWER, "9" * 400),
-        (Query.LASER, "3"),
-        (Query.LASER, "1.0"),
-        (Query.LASER, "True"),
-        (Query.ETALON_SERVO, "4"),
-        (Query.HEAD_HOURS, "-3"),
+        ("?P", "nan"),
+        ("?P", "inf"),
+        ("?P", "1_000"),
+        ("?P", "1.5 W"),
+        ("?P", "-1"),
+        ("?P", "9" * 400),
+        ("?L", "3"),
+        ("?L", "1.0"),
+        ("?L", "True"),
+        ("?ESS", "4"),
+        ("?HH", "-3"),
     ],
 )
 def test_invalid_values_not_coerced_to_good_states(query, payload):
-    with pytest.raises(ProtocolError):
+    with pytest.raises(VerdiError):
         parse_value(query, payload)
 
 
 def test_fault_code_mapping_and_unknown_preservation():
     faults = parse_faults("3&5&6&21&999")
-    assert [f.code for f in faults] == [3, 5, 6, 21, 999]
-    assert faults[3].description == "Diode 1 over voltage fault"
-    assert not faults[4].known
-    assert parse_faults("SYSTEM OK") == ()
+    assert faults == [3, 5, 6, 21, 999]
+    assert all(type(code) is int for code in faults)
+    assert parse_faults("SYSTEM OK") == []
 
 
 @pytest.mark.parametrize("payload", ["", "0", "1&", "1,2", "-1", "OK", "1&&2"])
 def test_undocumented_fault_replies_are_not_assumed_clear(payload):
-    with pytest.raises(ProtocolError):
+    with pytest.raises(VerdiError):
         parse_faults(payload)
 
 
@@ -176,22 +176,22 @@ MANUAL_QUERIES = [
 
 @pytest.mark.parametrize("short,long,page,unit,payload,expected,choices", MANUAL_QUERIES)
 def test_every_manual_query_value_and_codes(short, long, page, unit, payload, expected, choices):
-    query = Query(short)
+    query = short
     value = parse_value(query, payload)
     if isinstance(expected, tuple):
-        assert tuple(fault.code for fault in value) == expected
+        assert tuple(value) == expected
     else:
         assert value == expected and type(value) is type(expected)
     for code in choices:
         assert parse_value(query, str(code)) == code
     if choices:
-        with pytest.raises(ProtocolError):
+        with pytest.raises(VerdiError):
             parse_value(query, str(max(choices) + 1))
 
 
 def test_manual_query_inventory_is_exact():
-    assert {row[0] for row in MANUAL_QUERIES} == {query.value for query in Query}
-    assert len(MANUAL_QUERIES) == len(Query)
+    assert {row[0] for row in MANUAL_QUERIES} == set(QUERIES)
+    assert len(MANUAL_QUERIES) == len(QUERIES)
 
 
 @pytest.mark.parametrize(
@@ -207,27 +207,17 @@ def test_table_5_1_error_layouts_preserve_instruction_and_error(echo, prompt, in
     with pytest.raises(DeviceError) as caught:
         decode_response(instruction, wire, query=instruction.startswith("?"))
     assert caught.value.response == error + " " + instruction
-    sim = SimulatedTransport(echo=echo, prompt=prompt)
+    sim = SimulatedVerdi(echo=echo, prompt=prompt)
     sim.connect()
     try:
-        assert sim.exchange((instruction + "\r\n").encode()) == wire
+        assert sim._exchange((instruction + "\r\n").encode()) == wire
     finally:
         sim.disconnect()
 
 
-def test_complete_fault_catalog_including_manual_disagreement():
-    # Table 5-4 plus Table 6-1. Code 47 is absent from Table 6-1 but retained.
-    codes = (1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 16, 18, 19, 21, 25, 27, 28, 29, 30, 31, 40, 47)
-    faults = parse_faults("&".join(map(str, codes)))
-    assert tuple(fault.code for fault in faults) == codes
-    assert all(fault.known for fault in faults)
-    assert "interlock / emission lamp" in faults[0].description
-    assert next(f for f in faults if f.code == 30).description == "Battery requires service"
-
-
 def test_history_clear_does_not_establish_active_fault_clear_semantics():
-    assert parse_value(Query.FAULT_HISTORY, "SYSTEM OK") == ()
+    assert parse_value("?FH", "SYSTEM OK") == []
     for payload in ("SYSTEM OK", "0", "OK", ""):
-        with pytest.raises(ProtocolError):
-            parse_value(Query.FAULTS, payload)
-    assert parse_value(Query.FAULTS, "SYSTEM OK", active_fault_clear_reply="SYSTEM OK") == ()
+        with pytest.raises(VerdiError):
+            parse_value("?F", payload)
+    assert parse_value("?F", "SYSTEM OK", active_fault_clear_reply="SYSTEM OK") == []

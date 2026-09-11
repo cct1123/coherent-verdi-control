@@ -74,7 +74,7 @@ def validate() -> int:
         ("TEST-007 typing", ["-m", "mypy"]),
         ("TEST-007 dependencies", ["-m", "pip", "check"]),
         ("TEST-007 build", ["-m", "build", "--no-isolation"]),
-        ("TEST-007 CLI", ["-m", "coherent_verdi", "--demo", "status"]),
+        ("TEST-007 CLI", ["-m", "coherent_verdi", "status"]),
         ("TEST-007 example", ["examples/simulated_session.py"]),
         ("TEST-007 async", ["examples/async_integration.py"]),
         ("TEST-007 install", ["scripts/install_smoke.py"]),

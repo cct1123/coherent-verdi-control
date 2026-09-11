@@ -1,14 +1,63 @@
-"""Optional Dash monitoring client. All data comes from one Monitor."""
+"""Optional caller-scheduled monitoring and Dash client; no implicit worker."""
 
+from collections import deque
+from collections.abc import Callable
+from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 from typing import Any
 
-from .monitor import Monitor
+from .controller import VerdiController, finite_range
 
 
-def _source_label(simulated: bool | None) -> str:
-    if simulated is None:
-        return "SOURCE UNAVAILABLE"
+class Monitor:
+    """One caller polls; GUI clients read copied snapshots without waiting for I/O."""
+
+    def __init__(
+        self,
+        controller: VerdiController,
+        *,
+        interval_s: float = 1.0,
+        history_size: int = 600,
+        clock: Callable[[], float] = monotonic,
+    ) -> None:
+        self.interval_s = finite_range(interval_s, 0.001, 86400, "interval_s")
+        if type(history_size) is not int or not 1 <= history_size <= 100000:
+            raise ValueError("history_size must be an integer in [1, 100000]")
+        self._controller = controller
+        self._clock = clock
+        self._started: float | None = None
+        self._history: deque[dict[str, Any]] = deque(maxlen=history_size)
+        self._lock = Lock()
+
+    def poll_once(self) -> dict[str, Any]:
+        started = self._clock()
+        sample: dict[str, Any] = {"attempted_at": datetime.now(UTC).isoformat()}
+        try:
+            sample.update(status=self._controller.status(), error=None)
+        except Exception as exc:
+            sample.update(status=None, error=f"{type(exc).__name__}: {exc}".rstrip())
+        with self._lock:
+            self._started = started
+            self._history.append(sample)
+            return deepcopy(sample)
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "model": self._controller.model,
+                "simulated": self._controller.is_simulated,
+                "history": deepcopy(list(self._history)),
+                "age_s": max(0.0, self._clock() - self._started)
+                if self._started is not None and self._history[-1]["status"]
+                else None,
+                "interval_s": self.interval_s,
+            }
+
+
+def _source_label(simulated: bool) -> str:
     return "SIMULATOR" if simulated else "PHYSICAL / UNVALIDATED"
 
 
@@ -17,13 +66,13 @@ def dashboard_data(service: Monitor) -> dict[str, Any]:
     snapshot = service.snapshot()
     samples = snapshot["history"]
     last = samples[-1] if samples else None
-    status = last.status if last else None
+    status = last["status"] if last else None
     age = snapshot["age_s"]
-    failed = last is not None and (last.status is None)
+    failed = last is not None and (last["status"] is None)
     stale = (
         status is not None
         and age is not None
-        and age > max(5.0, 3 * snapshot["interval_s"] + 2 * status.duration_s)
+        and age > max(5.0, 3 * snapshot["interval_s"] + 2 * status["duration_s"])
     )
     return {
         "simulated": snapshot["simulated"],
@@ -31,12 +80,12 @@ def dashboard_data(service: Monitor) -> dict[str, Any]:
         "health": "NO DATA"
         if last is None
         else ("ERROR" if failed else "STALE" if stale else "LIVE"),
-        "error": (last.error or "Sample unavailable") if failed and last else None,
+        "error": (last["error"] or "Sample unavailable") if failed and last else None,
         "age_s": age,
         "status": status,
-        "timestamps": [s.attempted_at for s in samples],
-        "power_w": [s.status.power_w if s.status else None for s in samples],
-        "set_power_w": [s.status.set_power_w if s.status else None for s in samples],
+        "timestamps": [s["attempted_at"] for s in samples],
+        "power_w": [s["status"]["power_w"] if s["status"] else None for s in samples],
+        "set_power_w": [s["status"]["set_power_w"] if s["status"] else None for s in samples],
         "count": len(samples),
     }
 
@@ -169,7 +218,7 @@ def create_app(service: Monitor) -> Any:
             return html.Div([html.Span(label), html.Strong(value)], className="data-row")
 
         thermal = [
-            row(label, f"{getattr(s, field):.2f} °C" if s else "—")
+            row(label, f"{s[field]:.2f} °C" if s else "—")
             for label, field in [
                 ("Diode 1", "diode_temp_c"),
                 ("Heatsink", "heatsink_temp_c"),
@@ -180,15 +229,13 @@ def create_app(service: Monitor) -> Any:
             ]
         ]
         instrument = [
-            row("Configured model", data["model"].value),
-            row("Keyswitch", ("ON" if s.keyswitch_on else "OFF") if s else "—"),
-            row("Diode current", f"{s.diode_current_a:.1f} A" if s else "—"),
-            row("LBO servo", s.lbo_servo.name if s else "—"),
+            row("Configured model", data["model"]),
+            row("Keyswitch", ("ON" if s["keyswitch_on"] else "OFF") if s else "—"),
+            row("Diode current", f"{s['diode_current_a']:.1f} A" if s else "—"),
+            row("LBO servo", str(s["lbo_servo"]) if s else "—"),
             row(
                 "Reported faults",
-                ", ".join(f"{f.code}: {f.description}" for f in s.faults) or "None reported"
-                if s
-                else "Unknown",
+                ", ".join(map(str, s["faults"])) or "None reported" if s else "Unknown",
             ),
             row("History samples", str(data["count"])),
         ]
@@ -201,10 +248,10 @@ def create_app(service: Monitor) -> Any:
             data["health"],
             age,
             data["error"] or "",
-            f"{s.power_w:.3f}" if s else "—",
-            f"{s.set_power_w:.4f}" if s else "—",
-            s.laser_state.name if s else "UNKNOWN",
-            ("OPEN" if s.shutter_open else "CLOSED") if s else "UNKNOWN",
+            f"{s['power_w']:.3f}" if s else "—",
+            f"{s['set_power_w']:.4f}" if s else "—",
+            ("STANDBY", "ON", "FAULT")[s["laser_state"]] if s else "UNKNOWN",
+            ("OPEN" if s["shutter_open"] else "CLOSED") if s else "UNKNOWN",
             figure,
             thermal,
             instrument,

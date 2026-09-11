@@ -1,93 +1,92 @@
-# Compact Verdi driver — candidate review
+# Verdi 0.3.0 — reviewed software candidate
 
-Software-complete and hardware-ready for review. **Physical behavior, wiring,
-timing and calibration remain UNTESTED.** This software work authorizes no hardware
-access. Candidate SHA-256: `be0ad6235eb92e38800fe23e6c24f784719d4b5359d43f6b2ac2015a736fa027`; version 0.2.0, based on cfb3f4a.
+The aggressive simplification is software-complete and hardware-ready for review.
+**Physical behavior, wiring, timing and calibration remain UNTESTED.** No physical
+ports were opened or discovered. Source SHA-256: `56bbd1fce0bfa82fd92e747684961a913c9264d10a7b965de96f5aa5bbffe5c4`; base 7878823.
 
-## Simplification
+## Result
 
-| Measure | Before | After |
+| Measure | 0.2.0 | 0.3.0 |
 | --- | ---: | ---: |
-| Package Python modules | 12 | 8 |
-| Package Python lines, including comments/blanks | 1610 | 1335 |
-| Classes, including enums, exceptions and typing protocols | 25 | 17 |
-| Root public exports | 24 | 12 |
-| Exception classes | 7 | 4 |
-| Core runtime dependencies | 0 | 0 |
+| Package modules | 8 | 5 |
+| Python lines including comments/blanks | 1335 | 1057 |
+| Executable statements | 703 | 521 |
+| Classes | 17 | 5 |
+| Root exports | 12 | 4 |
+| Exception classes | 4 | 2 |
+| Required runtime dependencies | 0 | 0 |
 
-Final modules: controller, protocol, simulator, monitor, gui, errors, __init__,
-__main__. Configuration/model fragmentation, separate transport/serialization/CLI
-files, query-spec registry, transport replacement, telemetry lifecycle/logging
-machinery and compatibility exports were removed. Core operations use direct
-keywords and explicit connect/disconnect/read/set/start/stop/status methods.
-See [architecture](../ARCHITECTURE.md) and [API migration](../docs/API.md).
-This intentionally changes the previous interface; callers must migrate before use.
+The final layout is controller.py, simulator.py, gui.py, __init__.py and __main__.py.
+The complete physical path is in controller.py: validate, encode, exchange once,
+decode. One lock serializes transactions and full status groups. SimulatedVerdi
+inherits the public API and failure handling and supplies independent wire replies.
+All 42 manual queries and six command forms remain supported.
 
-## Device-control path and behavior
+Removed transport classes/interfaces, configuration/state/query enums, result
+dataclasses, fault metadata objects, serialization adapters, monitor sequence
+counters and three thin modules. Returned dictionaries/lists can be serialized
+directly and cannot mutate hardware or subsequent samples. Fault meanings moved
+to the protocol reference. The CLI is now read-only and prints results directly;
+the Python control examples retain explicit writes and verified normal shutdown.
+Redundant integration documentation and monitor test files were merged. No runtime
+compatibility aliases remain; [migration instructions](../docs/API.md#migration-to-030)
+cover earlier releases. Across both pruning passes, 12 modules became 5 and 1610
+Python lines became 1057.
 
-One controller locks one backend. Each operation validates input, encodes one
-CR/LF request, exchanges once and decodes one reply. Status holds the lock for 14
-sequential reads. Six operations and all 42 manual short queries remain, with
-documented units/state codes and preservation of unknown positive fault codes.
-The simulator supports this emitted subset using independent in-memory replies;
-extra firmware aliases are no longer emulated. Its dynamics are fixtures.
+## Reliability and integration
 
-Import/construction cause no I/O. Connect passively opens the explicit port;
-disconnect sends no device commands. Timeout, partial write, interruption or
-malformed replies permanently invalidate that controller session. DeviceError
-denotes a complete rejection whose session remains readable. No automatic replay,
-flush, reconnect, mode change or state restoration is implemented. Failed cleanup
-can be retried; it does not revive the session or replace an existing error.
+Import/construction cause no I/O. Connect passively opens an explicit native port;
+disconnect sends no commands. The experiment owns lifetime, polling and logging.
+Timeout, partial write, malformed reply or interruption latches failure. A failed
+controller cannot reconnect/replay; cleanup remains retryable. Complete DeviceError
+rejections retain their instruction/reply and leave the session usable. The GUI's
+source label does not control fault parsing; physical ?F clear text must be verified.
 
-Monitoring is optional and synchronous, with a bounded cache and monotonic age.
-Applications own scheduling/log sinks. Dash consumes only that cache; Monitor
-calls the public status API. The standalone GUI launcher explicitly creates and
-joins its polling thread. Core imports do not load monitoring, pySerial, Dash or
-Plotly, and simulator/controller/Monitor use starts no implicit thread.
+The optional Monitor in gui.py polls the public status API from one application
+caller and protects copied bounded snapshots with a short lock. Dash only reads
+the cache. Neither starts a worker; the standalone simulator GUI launcher explicitly
+starts and drains its worker before disconnect. No core import loads pySerial,
+Dash or Plotly. Ordinary json.dumps and the application's logger replace custom
+logging/serialization. See [architecture](../ARCHITECTURE.md) and [README](../README.md).
 
-## Validation
+## Validation and review
 
-[E039](../records/RECORDS.md#e039): **315 tests PASS, 97% coverage, all 11 integrated
-stages PASS**, including eight notebook executions, all operator paths with fake
-serial connections, strict typing, lint/format, dependencies, wheel/sdist, CLI and
-examples, isolated core/GUI installs and watchdog tests. The wheel contains exactly
-the eight source modules; core-only installation runs without optional dependencies.
-Tests prohibit physical opening/discovery, including in notebook kernels.
+[E041](../records/RECORDS.md#e041): **322 tests PASS, 97% coverage, all 11 stages PASS**.
+Includes eight guarded notebook executions, fake serial I/O/failure/concurrency,
+all operator paths using simulation, lint/format, strict typing, pip check,
+wheel/sdist builds, CLI/examples, isolated core/GUI installs and browser watchdog.
+Final review checked active documentation links, visible notebook functions against
+the terminal runner, package inventory and removal of obsolete imports. No remaining
+actionable software review finding was identified. Source hashes remained unchanged
+during the full run; a later markdown-only notebook note correction is recorded in
+the manifest, with all code cells and other source files verified unchanged.
 
-The final review fixed non-boolean fault-history selectors that silently selected
-the history query, and added five regressions proving rejection before I/O. It also
-restored missing test guards, operating documents and the manual to the source
-archive, with explicit package checks. Version 0.2.0 identifies the intentional API
-break; build validation selects that version's artifacts and the local editable
-CLI installation was refreshed. The current user authorized commit and push.
+Environment: Windows, Python 3.12.14, Node v24.14.1. No failed/skipped tests; one
+non-failing pyzmq selector-thread warning. GUI validation covers HTTP routes,
+callbacks, assets and watchdog behavior; retained screenshots are historical evidence.
+[validation.json](../records/validation.json) contains versions, commands and current
+source/build hashes; logs/notebook outputs are regenerable. Final packaging is
+refreshed after this checkpoint; its result is recorded in that manifest.
 
-Environment: Windows, Python 3.12.14, Node v24.14.1. One non-failing pyzmq warning;
-no failed/skipped tests. Full versions, source/build hashes and commands are in
-[validation.json](../records/validation.json). Reproduce with `.[dev,serial,gui]`
-installed and `python scripts/validate.py`. GUI verification covers routes,
-callbacks, assets and watchdog behavior; old screenshots are historical.
+## Physical limits and next phase
 
-## Remaining hardware assumptions and first interactions
+The supplied manual remains authoritative. Actual framing/latency, ?F clear text,
+V5/UNO servo variant, closed-shutter power, fault recovery and calibration remain
+unverified. Model ratings are conservative software ceilings, not site safety limits
+or proven firmware ranges. Simulator temperatures, currents, warmup and dynamics are
+fixtures. See [protocol uncertainties](../docs/PROTOCOL.md#uncertainty-register).
 
-The supplied manual remains authoritative. Hardware framing, actual response
-latency, `?F` no-fault text, V5/UNO servo variant, shutter-closed power reporting,
-startup/fault recovery behavior and calibration remain unverified. Model ratings
-are conservative software ceilings, not proven firmware bounds or site safety
-limits. No service, heater, chiller or calibration writes are exposed. See the
-[uncertainty register](../docs/PROTOCOL.md#uncertainty-register).
-
-The next physical phase requires explicit Stage 1 approval of this candidate plus
-actual model, operator-confirmed port/baud and site conditions. The exact first
-interactions are passive `connect()` and one `read("?SV")`, with writes disabled;
-capture raw framing/version and compare the front panel. Then follow TEST-010A..C
-in [HARDWARE_VALIDATION.md](../HARDWARE_VALIDATION.md), independently establish the
-`?F` clear reply, and return raw responses with units and PASS/FAIL/INCONCLUSIVE
-comparisons. Separately approve any TEST-010D..H writes, limits and abort conditions.
-There are no pending device operations or required human actions for this cleanup.
+Future hardware work requires explicit Stage 1 approval of this candidate plus the
+actual model, operator-confirmed port/baud and site conditions. First passively
+connect with writes disabled, then issue one read("?SV"). Capture raw framing/version
+and compare the front panel. Follow TEST-010A..C in
+[HARDWARE_VALIDATION.md](../HARDWARE_VALIDATION.md); independently establish ?F clear
+semantics and return raw responses, units and PASS/FAIL/INCONCLUSIVE comparisons.
+Any TEST-010D..H writes require separate approval, limits and abort conditions.
 
 Disconnect is not laser shutdown. Normal authorized shutdown explicitly closes
-the shutter and enters standby with readbacks; full heater/cooling shutdown follows
-the manual. On uncertain I/O, cease commands and use the physical abort procedure.
-For software rollback, reinstall a reviewed previous checkout while disconnected;
-do not infer or replay laser state. Any new physical integration still requires
-candidate review and the documented clean-session procedure.
+the shutter and enters standby with readbacks; complete heater/cooling shutdown
+follows the manual. On uncertain I/O, cease commands and use the physical abort
+procedure. Software rollback means reinstalling a reviewed checkout while
+disconnected; never infer or replay laser state. No human action is needed for
+the requested software cleanup and authorized Git publication.

@@ -2,45 +2,43 @@
 
 import io
 import json
-from dataclasses import replace
-from datetime import timedelta
+import subprocess
+import sys
+from datetime import datetime, timedelta
 from threading import Event, Thread
+from threading import enumerate as threads
 
 import pytest
 
-from coherent_verdi import (
-    Model,
-    SimulatedTransport,
-    VerdiController,
-)
+from coherent_verdi import SimulatedVerdi, VerdiController
 from coherent_verdi.__main__ import main
-from coherent_verdi.gui import create_app, dashboard_data
-from coherent_verdi.monitor import Monitor
+from coherent_verdi.gui import Monitor, create_app, dashboard_data
 
 
 def test_bounded_history_failure_visibility_and_recovery():
-    sim = SimulatedTransport()
-    controller = VerdiController(sim, model=Model.V5)
+    sim = SimulatedVerdi(model="V5")
+    controller = sim
     controller.connect()
     service = Monitor(controller, history_size=2)
     first = service.poll_once()
-    assert first.status is not None and first.error is None
+    assert first["status"] is not None and first["error"] is None
     sim.inject_timeout()
     failed = service.poll_once()
-    assert failed.status is None
-    assert failed.error.startswith("TransportError:")
+    assert failed["status"] is None
+    assert failed["error"].startswith("VerdiError:")
     assert dashboard_data(service)["health"] == "ERROR"
     assert dashboard_data(service)["power_w"] == [0.0, None]
     service.poll_once()
-    assert [s.sequence for s in service.snapshot()["history"]] == [2, 3]
+    assert len(service.snapshot()["history"]) == 2
+    assert all(s["status"] is None for s in service.snapshot()["history"])
     assert dashboard_data(service)["health"] == "ERROR"
     assert len(sim.requests) == 15  # No extra I/O after failure.
 
 
 def test_staleness_and_empty_history():
     now = [0.0]
-    sim = SimulatedTransport()
-    controller = VerdiController(sim, model=Model.V5)
+    sim = SimulatedVerdi(model="V5")
+    controller = sim
     controller.connect()
     service = Monitor(controller, clock=lambda: now[0])
     assert dashboard_data(service)["health"] == "NO DATA"
@@ -55,11 +53,14 @@ def test_staleness_and_empty_history():
 @pytest.mark.parametrize("wall_clock_offset_s", [-3600, 3600])
 def test_freshness_ignores_wall_clock_steps(monkeypatch, wall_clock_offset_s):
     now = [0.0]
-    with VerdiController(SimulatedTransport(), model=Model.V5) as controller:
+    with SimulatedVerdi(model="V5") as controller:
         status = controller.status()
-        shifted = replace(
-            status, sampled_at=status.sampled_at + timedelta(seconds=wall_clock_offset_s)
-        )
+        shifted = status | {
+            "sampled_at": (
+                datetime.fromisoformat(status["sampled_at"])
+                + timedelta(seconds=wall_clock_offset_s)
+            ).isoformat()
+        }
         monkeypatch.setattr(controller, "status", lambda: shifted)
         service = Monitor(controller, clock=lambda: now[0])
         service.poll_once()
@@ -71,7 +72,7 @@ def test_freshness_ignores_wall_clock_steps(monkeypatch, wall_clock_offset_s):
 
 def test_freshness_includes_slow_sampling(monkeypatch):
     now = [0.0]
-    with VerdiController(SimulatedTransport(), model=Model.V5) as controller:
+    with SimulatedVerdi(model="V5") as controller:
         original = controller.status
 
         def delayed():
@@ -86,8 +87,8 @@ def test_freshness_includes_slow_sampling(monkeypatch):
 
 
 def test_dash_routes_callbacks_assets_and_no_independent_polling(callback_payload):
-    sim = SimulatedTransport()
-    controller = VerdiController(sim, model=Model.V5)
+    sim = SimulatedVerdi(model="V5")
+    controller = sim
     controller.connect()
     service = Monitor(controller)
     service.poll_once()
@@ -119,7 +120,7 @@ def test_dash_routes_callbacks_assets_and_no_independent_polling(callback_payloa
 
 
 def test_blank_exception_is_error_with_unavailable_current_values(monkeypatch, callback_payload):
-    with VerdiController(SimulatedTransport(), model=Model.V5) as controller:
+    with SimulatedVerdi(model="V5") as controller:
         service = Monitor(controller)
         service.poll_once()
 
@@ -145,19 +146,19 @@ def test_blank_exception_is_error_with_unavailable_current_values(monkeypatch, c
 
 
 def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch, callback_payload):
-    sim = SimulatedTransport()
-    with VerdiController(sim, model=Model.V5) as controller:
+    sim = SimulatedVerdi(model="V5")
+    with sim as controller:
         service = Monitor(controller)
         service.poll_once()
         entered, release, rendered = Event(), Event(), Event()
-        original = sim.exchange
+        original = sim._exchange
 
         def blocking(request):
             entered.set()
             assert release.wait(5)
             return original(request)
 
-        monkeypatch.setattr(sim, "exchange", blocking)
+        monkeypatch.setattr(sim, "_exchange", blocking)
         responses = []
 
         def render():
@@ -186,34 +187,17 @@ def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch, callback_
             assert not poller.is_alive()
 
 
-@pytest.mark.parametrize(
-    "args", [["status"], ["--model", "V2", "diagnostics"], ["query", "?SV"], ["--demo", "status"]]
-)
+@pytest.mark.parametrize("args", [["status"], ["--model", "V2", "diagnostics"], ["query", "?SV"]])
 def test_cli_read_paths(args, capsys):
     assert main(args) == 0
     data = json.loads(capsys.readouterr().out)
-    assert data["simulated"] is True
-
-
-def test_cli_explicit_writes_and_errors(capsys):
-    assert main(["enable"]) == 2
-    assert json.loads(capsys.readouterr().err)["type"] == "PermissionError"
-    assert main(["--allow-writes", "set-power", "nan"]) == 2
-    assert "finite" in capsys.readouterr().err
-    assert main(["--allow-writes", "--sim-key-on", "enable"]) == 0
-    assert json.loads(capsys.readouterr().out)["result"]["laser_state"] == 1
-    assert main(["--demo", "shutter", "closed"]) == 0
-    assert json.loads(capsys.readouterr().out)["result"]["shutter_open"] is False
-    assert main(["--allow-writes", "set-power", "0.25"]) == 0
-    assert json.loads(capsys.readouterr().out)["result"]["set_power_w"] == 0.25
-    assert main(["--demo", "standby"]) == 0
-    assert json.loads(capsys.readouterr().out)["result"]["laser_state"] == 0
+    assert data == "SIMULATOR-0.1" if args[0] == "query" else isinstance(data, dict)
 
 
 def test_cli_watch_jsonlines_and_invalid_interval(capsys):
     assert main(["watch", "--count", "2", "--interval", "0.001"]) == 0
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert [row["sample"]["sequence"] for row in rows] == [1, 2]
+    assert len(rows) == 2 and all(row["status"]["simulated"] for row in rows)
     assert main(["watch", "--interval", "nan"]) == 2
     assert capsys.readouterr().err
 
@@ -230,7 +214,7 @@ def test_cli_watch_flushes_each_record_before_waiting(monkeypatch):
 
     def after_first_record(interval):
         assert output.flushes == 1
-        assert json.loads(output.getvalue())["sample"]["sequence"] == 1
+        assert json.loads(output.getvalue())["status"]["simulated"] is True
 
     monkeypatch.setattr("coherent_verdi.__main__.sleep", after_first_record)
     assert main(["watch", "--count", "2"]) == 0
@@ -243,7 +227,7 @@ def test_cli_watch_returns_failure_when_any_sample_failed(monkeypatch, capsys):
 
     monkeypatch.setattr(VerdiController, "status", fail)
     assert main(["watch", "--count", "1"]) == 2
-    sample = json.loads(capsys.readouterr().out)["sample"]
+    sample = json.loads(capsys.readouterr().out)
     assert sample["status"] is None and sample["error"] == "RuntimeError:"
 
 
@@ -275,3 +259,54 @@ def test_gui_launcher_drains_acquisition_before_disconnect(monkeypatch):
     monkeypatch.setattr(VerdiController, "disconnect", disconnect)
     monkeypatch.setattr("coherent_verdi.gui.create_app", lambda monitor: App())
     assert main(["gui"]) == 130
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"interval_s": 0},
+        {"interval_s": float("nan")},
+        {"history_size": 0},
+        {"history_size": True},
+    ],
+)
+def test_invalid_monitor_settings(options):
+    with pytest.raises(ValueError):
+        Monitor(SimulatedVerdi(), **options)
+
+
+def test_sampling_is_explicit_bounded_and_does_not_own_the_connection():
+    before = threads()
+    sim = SimulatedVerdi()
+    laser = sim
+    monitor = Monitor(laser, history_size=17)
+    assert not sim.requests and monitor.snapshot()["history"] == []
+    laser.connect()
+    for _ in range(1000):
+        assert monitor.poll_once()["error"] is None
+    samples = monitor.snapshot()["history"]
+    assert len(samples) == 17
+    samples[-1]["status"]["faults"].append(999)
+    assert monitor.snapshot()["history"][-1]["status"]["faults"] == []
+    assert len(sim.requests) == 4096
+    assert threads() == before
+    record = json.loads(json.dumps(samples[-1]))
+    assert record["status"]["power_w"] == 0
+    assert record["status"]["sampled_at"].endswith("+00:00")
+    laser.disconnect()
+    failure = monitor.poll_once()
+    assert failure["status"] is None and "VerdiError" in failure["error"]
+
+
+def test_core_import_does_not_load_optional_clients_or_start_threads():
+    code = """
+import sys, threading
+before = threading.enumerate()
+from coherent_verdi import VerdiController, SimulatedVerdi
+with SimulatedVerdi() as laser:
+    assert laser.read('?P') == 0
+assert threading.enumerate() == before
+for name in ('serial', 'dash', 'plotly', 'coherent_verdi.gui'):
+    assert name not in sys.modules, name
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=15)
