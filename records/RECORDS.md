@@ -1196,3 +1196,17 @@ This publication checkpoint changes only STATE.md, outputs/REPORT.md and this
 record outside the source fingerprint. E041's software/package evidence remains
 applicable; built archives contain the reviewed pre-publication checkpoint.
 No physical device operation occurred or remains pending.
+
+## E043
+
+Date: 2026-09-14. The user replied "push" directly to the request identifying all
+four local main commits and github.com/cct1123/coherent-verdi-control, branch main.
+Automatic approval review accepted the authorized `git push origin main`; it
+completed successfully, advancing main from cfb3f4a to c5da4d5. A subsequent
+`git ls-remote origin refs/heads/main` returned
+`c5da4d5ca8f59f0f0a79544a8efd087038bf5eed`, matching local HEAD. The working tree
+was clean. E042's publication blocker is resolved.
+
+This follow-up changes only publication status in STATE.md, outputs/REPORT.md
+and this evidence record. Runtime, tests, package sources and E041's validation
+are unchanged. Hardware approval remains outstanding; no device was accessed.

@@ -53,15 +53,12 @@ Reproduce: install `.[dev,serial,gui]`, run `python scripts/validate.py`.
 
 ## Human action required / next action
 
-Software cleanup is committed in 99072c6. Publication is **BLOCKED** by automatic
-approval review ([E042](records/RECORDS.md#e042)); it requires a user message naming
-both destination and payload despite the renewed generic push request.
-
-Approve publishing all local main commits since origin/main, including the reviewed
-0.3.0 implementation and its evidence/checkpoint records, to
-`github.com/cct1123/coherent-verdi-control`, branch `main`. This sends those repository
-contents to that remote. No push executed. After explicit approval, push normally
-and verify remote equality and a clean tree. No publication process is pending.
+Software cleanup is committed in 99072c6 and published with its checkpoint records
+through c5da4d5 to `github.com/cct1123/coherent-verdi-control`, branch `main`.
+The user's direct reply to the destination-specific publication request authorized
+the push; remote equality was verified ([E043](records/RECORDS.md#e043)). The prior
+publication blocker is resolved. No further human action is needed for the software
+cleanup. This documentation-only checkpoint records the successful publication.
 
 Future integration requires explicit Stage 1 read-only candidate approval under
 [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md), with actual model, operator-confirmed

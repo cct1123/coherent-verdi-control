@@ -89,6 +89,7 @@ the shutter and enters standby with readbacks; complete heater/cooling shutdown
 follows the manual. On uncertain I/O, cease commands and use the physical abort
 procedure. Software rollback means reinstalling a reviewed checkout while
 disconnected; never infer or replay laser state. No human action is needed for
-the requested software cleanup. The implementation is committed in 99072c6;
-Git publication is blocked by automatic approval review pending a user message
-explicitly authorizing the destination and committed contents. See STATE.md.
+the requested software cleanup. The implementation is committed in 99072c6 and
+published with its checkpoint records through c5da4d5 to the repository's GitHub
+main branch. Remote equality was verified; the prior publication blocker is
+resolved. See [E043](../records/RECORDS.md#e043) and STATE.md.
