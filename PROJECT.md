@@ -118,3 +118,15 @@ Make the README welcoming and practical for a first-time human user. Illustrate
 the optional GUI with a screenshot and use a block diagram where it clarifies
 integration. Keep instructions consistent with the current public API and show
 the simplest simulator workflow; no hardware interaction is authorized.
+
+Follow-up, 2026-09-15: review the repository and rewrite README as a simple,
+visual first-time lab guide: purpose, implementation/validation status, shortest
+copy-paste Quick Start, simulator/demo, one basic usage example, real-hardware
+setup, key safety/limitations and short troubleshooting. Put developer/architecture
+details near the bottom. Verify commands, interfaces, supported models, limits
+and validation claims against the repository; do not invent missing information.
+
+Further direction, 2026-09-15: focus the guide more on real-hardware use. Lead
+with serial installation, connection configuration, identification, read/control
+workflows and a real-controller Python example; retain simulation as an optional
+practice/preview workflow. This is documentation work, not hardware authorization.

@@ -1257,3 +1257,154 @@ the candidate fingerprint still exactly matches E044. `git diff --check` passes.
 Publish the seven reviewed documentation/image/package-manifest files to the
 established github.com/cct1123/coherent-verdi-control main branch without force.
 This authorization does not include physical hardware access.
+
+## E045
+
+Date: 2026-09-15. REQ-018 / TEST-018: first-time-user README rewrite based on
+29bb216. Reviewed PROJECT/STATE, packaging, controller, simulator, CLI, GUI,
+tutorial runner/notebooks' documented interface, tests, API/protocol/simulator
+references, hardware procedure and E041/E044 evidence. The guide now follows
+purpose/status -> install -> simulator/dashboard -> Python example -> approved
+hardware setup -> safety/troubleshooting. Developer details remain at the bottom.
+All CLI invocations are explicitly identified as separate simulator sessions.
+Hardware defaults, model ceilings, fault-clear uncertainty, review stages and
+disconnect/standby behavior are stated within their demonstrated scope.
+
+Validation:
+
+- Created `tmp/readme-user-env` with `.venv/Scripts/python.exe -m venv`, activated
+  it in PowerShell, and ran `python -m pip install -e .`: PASS, version 0.3.0.
+  The first sandboxed attempt failed because ensurepip could not access its
+  temporary wheel directory. Creation and install passed with normal local
+  permissions and TEMP/TMP inside the workspace; no README workaround is needed.
+- Fresh core environment: `python -m coherent_verdi status` matches every field
+  in the README's partial JSON. Executed the exact Python fence with physical
+  `VerdiController._open` prohibited: 0.000 W, 148.00 degrees C, empty faults.
+  All four terminal tutorial entry points and the default ran successfully;
+  set-power restored zero, controlled-session reported 0.250 W then closed/
+  standby, and fault handling stopped after the one uncertain write. No serial
+  or Dash import occurred. Output: `records/readme-review-20260915.log` (regenerable).
+- `.venv/Scripts/python.exe -m pytest tests/test_clients.py tests/test_tutorials.py
+  -k 'not self_contained_notebooks_execute' -q -p no:cacheprovider`: **89 PASS,
+  8 deselected**, 8.33 s. Includes GUI routes/callbacks/shutdown and simulator-backed
+  operator configuration, first-query, cancellation and error behavior. The eight
+  notebook executions were deliberately not rerun; E041 remains their evidence.
+- Checked all **21 local links/anchors**, including the Quick Start navigation.
+  Inspected the existing GUI screenshot and matched its SHA-256 to E044. Runtime
+  and GUI asset hashes still match E041. No new browser capture was necessary.
+- Reviewed optional install extras, command syntax, constructor parameters,
+  model/baud/power limits and operator-template options against source. JupyterLab
+  `--version` returns 4.6.3 in the existing environment. Optional extras/full
+  validator commands retain E041 and existing installation evidence; no new
+  full-suite claim is made. The macOS/Linux shell block was reviewed, not executed
+  on this Windows host. Clone destination matches the configured Git remote;
+  no redundant clone or remote write was performed.
+- `git diff --check`: PASS. No runtime, test, example, image or dependency change.
+  No port discovery, connection or physical device operation occurred. No process
+  remains pending; no new commit/push was performed for this README request.
+
+Current source fingerprint:
+`17d1a1cc87f2669df29fc07fd6be7a01706de709e3ac83b51f38b4e0225f6557`.
+README SHA-256:
+`331b5f896c8078d5953a4e33c7473bf0174de229bfed0f16810c7edebebe4cfc`.
+Screenshot SHA-256 remains
+`866bac21435cf88804402348035cb53580fa9bbf7da7d86e8f2bee9d89d19564`.
+Compared with E041's manifest, only README, PROJECT, MANIFEST and the screenshot
+differ; every runtime/test/example file is unchanged. STATE/report/records are
+outside that fingerprint. The earlier full-suite manifest was not overwritten;
+the fresh editable install is not a new distribution-build validation. Hardware
+integration remains AWAITING_HUMAN_REVIEW, physical behavior/calibration UNTESTED.
+
+## E046
+
+Date: 2026-09-15. REQ-018 / TEST-018. User direction: "more focus on using with
+real hardware." README now leads with serial installation, selected model/port/
+baud, candidate review, identification, status/fault reads, approved setpoint and
+controlled sessions, notebook hardware configuration and a VerdiController Python
+example. Reusable PowerShell argument arrays avoid repeating the physical settings.
+Simulator exercises and the existing screenshot are optional material near the
+bottom. Real setpoints remaining stored, failed-session behavior, shutdown limits
+and the absence of a hardware GUI CLI option are explicit. No hardware authority
+is inferred from this documentation request.
+
+Verification on Windows / Python 3.12.14:
+
+- In the existing temporary core test environment, activated PowerShell and ran
+  `python -m pip install -e ".[serial]"`: PASS, package 0.3.0 and pySerial 3.5.
+  Normal local permissions were used for pip's workspace temporary directories,
+  as established by E045. The simulator status install check still passes.
+- Extracted the README's five operator command templates and their setting
+  definitions. Replaced placeholders with explicitly synthetic test values and
+  executed the PowerShell syntax with `python` intercepted to capture arguments.
+  All five expansions match the operator runner's interface, including quoted
+  multiword fault-clear text and numeric target/ceiling options.
+- Executed the captured arguments through the actual tutorial parser/runner with
+  VerdiController open/exchange/close replaced by a SimulatedVerdi peer. Physical
+  serial opening/discovery functions were prohibited. Identification sent exactly
+  one `?SV`; all sessions started with `?SV` and disconnected. Read-status/faults
+  made no writes; set-power sent only `P=0.2500`; controlled-session sent exactly
+  `P=0.2500`, `L=1`, `S=1`, `S=0`, `L=0`. All checks PASS. These are fake exchanges,
+  even though the hardware-path runner labels its configured interface HARDWARE.
+- Executed the exact new Python fence after substituting only configuration
+  placeholders, with the same fake I/O. Exactly `?SV`, `?P`, `?LBOT`, `?L`, no
+  writes, and connection released: PASS. README supplies no invented hardware
+  output values. Captured test fixture values are not physical recommendations.
+- All **21 local links/anchors** and `git diff --check` pass. Existing runtime,
+  tests, examples and GUI screenshot remain unchanged. E045's targeted tests and
+  E041's full software suite retain their scope; no repeated full-suite/notebook
+  execution was needed for this documentation change. macOS/Linux shell commands
+  remain source-reviewed rather than executed on this Windows host.
+
+Regenerable output: `records/readme-hardware-20260915.log`; the one-off verification
+script and intercepted PowerShell argument capture live under ignored `tmp/`.
+No physical port was discovered or opened; no process or device operation remains
+pending. Current source fingerprint:
+`6368149987d8ae66362eb9dcdf4ead8328b5aaa42d39f24f7c4522667531ddfc`.
+README SHA-256:
+`13fc71649bb20eced11c53b256b503291fa10db170ba27ddc583e96c862107c3`.
+Only README/PROJECT/MANIFEST/screenshot differ from E041 inside its fingerprint;
+STATE/report/records are outside it. Physical validation remains UNTESTED and
+hardware integration AWAITING_HUMAN_REVIEW. This follow-up is not committed/pushed.
+
+## E047
+
+Date: 2026-09-15. REQ-018 / TEST-018 final review for the user's "review fix issues
+commit push" request. Scope is the five changed documentation files: README.md,
+PROJECT.md, STATE.md, outputs/REPORT.md and this record. The configured destination
+is github.com/cct1123/coherent-verdi-control, origin/main. Refetched origin with
+normal Git permissions; HEAD and origin/main are both 29bb216, with no divergence.
+This authorizes documentation publication, not hardware integration.
+
+Review corrections: explicitly retain the same PowerShell terminal for connection
+argument variables; document the 1 s default transaction deadline and its runner/
+Python configuration names, distinguishing it from verified firmware timing.
+Removed an editorial word from the screenshot caption. The remaining operational
+instructions match the source and hardware procedure; no runtime change was needed.
+
+Reran the README verification from E046 on the final text: all five PowerShell
+operator templates and the Python example pass with fake exchanges and physical
+serial opening/discovery prohibited. The Python example sends four reads, no
+writes. All 21 local links/anchors, simulator install-check fields and
+`git diff --check` pass. E045's 89 tests and E041's full-suite results continue to
+cover unchanged runtime/tests/examples; no new full-suite result is claimed.
+
+Built with `.venv/Scripts/python.exe -m build --no-isolation --outdir
+tmp/hardware-readme-release`: wheel and source archive PASS. Archive inspection
+verifies the final README and screenshot, wheel UTF-8 README metadata and exact
+source bytes for all five runtime modules. Initial sandbox archive reads were
+denied; normal local reads succeeded. The inspection initially compared metadata
+with the email parser's default ASCII interpretation; explicit UTF-8 payload
+decoding corrected the checker, with no package/source change. Regenerable results
+are in `records/readme-package-review.log`. This build checks README packaging;
+embedded checkpoint records precede this publication record.
+
+Source archive SHA-256:
+`0fa3a4e71523f3df6419359649b880cfdf207a705ef2a5002422a7b29f9882ad`.
+Wheel SHA-256:
+`3aad91f5df0aade598497fd1258cea42d9bb9318017b48a272606560373ac1d2`.
+Final source fingerprint:
+`cbd7ecca8ec7b2d349efa9111d6769a7add2ea2e2954baa41d8280d6db76ae12`.
+README SHA-256:
+`7a69d5f1b0e7b46436c50078b219ad819ee5b7d98a1807753404c0f634cf09af`.
+Hardware remains UNTESTED/AWAITING_HUMAN_REVIEW. No hardware or test process is
+pending. Commit/push and remote equality verification are next.

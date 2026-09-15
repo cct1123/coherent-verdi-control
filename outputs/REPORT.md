@@ -2,17 +2,26 @@
 
 The aggressive simplification is software-complete and hardware-ready for review.
 **Physical behavior, wiring, timing and calibration remain UNTESTED.** No physical
-ports were opened or discovered. The README update based on b4bc562 has source
-SHA-256 `4a67cd283aea6d506e040c6ff5249d04c35f85da829ad38a3fa3f7c2bb04d3fd`.
+ports were opened or discovered. The README rewrite based on 29bb216 has source
+SHA-256 `cbd7ecca8ec7b2d349efa9111d6769a7add2ea2e2954baa41d8280d6db76ae12`.
 E041's implementation fingerprint remains
 `56bbd1fce0bfa82fd92e747684961a913c9264d10a7b965de96f5aa5bbffe5c4`;
 runtime, tests and examples are unchanged.
 
-[E044](../records/RECORDS.md#e044) covers the new-user README: step-by-step setup,
-two executed simulator examples, a current GUI screenshot, a dashboard guide and
-a small integration diagram. All 24 local links/anchors pass; a source-package
-build includes the README and screenshot. The full software suite was not rerun
-for this documentation-only update; its earlier results below retain their scope.
+[E046](../records/RECORDS.md#e046) covers the user's hardware-focus follow-up:
+serial installation, physical-link settings, identification, status/fault reads,
+approved control sessions and a real-controller Python example now lead the guide.
+Simulation and the existing screenshot are optional practice/preview material.
+The serial install, five PowerShell command templates and Python example with
+fake exchanges, and 21 local links/anchors passed. E045 retains the fresh core
+install and 89 targeted test results; the screenshot retains E044's browser
+evidence. No runtime changes, new full-suite run or physical validation are claimed.
+
+[E047](../records/RECORDS.md#e047) records final review: clarified terminal-local
+PowerShell settings and the configurable 1 s transaction deadline. Final examples,
+links, source archive and wheel README metadata passed their checks. All five
+wheel runtime modules match the unchanged source. The user requested commit/push
+of these reviewed documentation changes; publication is the remaining action.
 
 ## Result
 

@@ -6,13 +6,20 @@
 holistic review and final validation are complete. No hardware access is authorized;
 physical behavior and calibration remain UNTESTED. No device operation is pending.
 
-Version 0.3.0; README update based on b4bc562; current source SHA-256
-`4a67cd283aea6d506e040c6ff5249d04c35f85da829ad38a3fa3f7c2bb04d3fd`.
+Version 0.3.0; hardware-focused README rewrite based on 29bb216; current source SHA-256
+`cbd7ecca8ec7b2d349efa9111d6769a7add2ea2e2954baa41d8280d6db76ae12`.
 E041's validated implementation fingerprint is
 `56bbd1fce0bfa82fd92e747684961a913c9264d10a7b965de96f5aa5bbffe5c4`.
-Only README, PROJECT, the new screenshot and its source-package inclusion changed
-within the fingerprint; runtime, tests and examples match E041 byte-for-byte.
-[E044](records/RECORDS.md#e044) verifies the new-user instructions, screenshot and archive.
+Relative to E041, only README, PROJECT, the screenshot and its source-package
+inclusion differ within the fingerprint; runtime, tests and examples match
+E041 byte-for-byte. This follow-up changes documentation only.
+[E047](records/RECORDS.md#e047) records final review, setup clarifications, repeated
+README example/link checks and wheel/source-archive inspection. E046 verifies
+the serial install, five hardware command
+templates and the real-controller Python example with fake exchanges, plus 21
+links/anchors. E045 retains the core install and 89 targeted test evidence. E044
+supplies the unchanged screenshot's browser evidence; its source-archive check
+applies to the earlier README.
 Five package modules (three substantive), 1057 Python lines, five classes, four
 root exports, two exceptions and zero required runtime dependencies. Controller
 contains serial/protocol handling; SimulatedVerdi exposes the same API. Results
@@ -53,22 +60,21 @@ Current evidence is E041 and D012, including review methods TEST-001/008/015/017
 | REQ-015 / earlier simplification | Direct implementation/features/separation | TEST-015 source/API review and regression | PASS |
 | REQ-016 / manual-verification request | Implemented protocol grounded in manual | TEST-016 42 queries/six commands/error/fault vectors | PASS |
 | REQ-017 / current compact-driver request | Fewer modules, code/types and small reusable API | TEST-017 metrics/import/lifecycle/package review | PASS |
-| REQ-018 / PROJECT new-user README | Clear setup, working examples, current GUI screenshot and integration diagram | TEST-018 snippets/output, links, browser inspection and source archive; E044 | PASS |
+| REQ-018 / PROJECT new-user README and follow-ups | Hardware-first visual guide: serial setup, reads/controls, Python, safety, troubleshooting and optional simulation | TEST-018 final review, examples/links/build E047; serial install E046; screenshot E044 | PASS |
 
 Reproduce: install `.[dev,serial,gui]`, run `python scripts/validate.py`.
 [Manifest](records/validation.json) captures environment, source/build hashes and commands.
 
 ## Human action required / next action
 
-Software cleanup is committed in 99072c6 and published with its checkpoint records
-through c5da4d5 to `github.com/cct1123/coherent-verdi-control`, branch `main`.
-The user's direct reply to the destination-specific publication request authorized
-the push; remote equality was verified ([E043](records/RECORDS.md#e043)). The prior
-publication blocker is resolved. No further human action is needed for the software
-cleanup. The subsequent new-user README update is complete and its GUI preview
-has been stopped. The user's follow-up "commit push" authorizes publishing the
-reviewed README, screenshot and supporting records to the same origin/main.
-The candidate fingerprint still matches E044; no further software changes are needed.
+The requested hardware-focused README review and fixes are complete. The user's
+"review fix issues commit push" authorizes committing and publishing the five
+reviewed documentation files to the configured origin/main at
+`github.com/cct1123/coherent-verdi-control`. Origin was refreshed and matches
+29bb216 without divergence. Next: commit, push without force, verify remote
+equality and record publication. No further approval is needed for these changes.
+No preview server, hardware operation or test process is pending. E041's full-suite
+manifest is preserved; no new full-suite or physical validation is claimed.
 
 Future integration requires explicit Stage 1 read-only candidate approval under
 [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md), with actual model, operator-confirmed
