@@ -1430,3 +1430,20 @@ push without force and confirm remote equality and a clean tree. The reviewed
 source fingerprint and validation evidence from E047 remain unchanged; this
 checkpoint edits only STATE/report/records outside that fingerprint. Physical
 hardware access remains unauthorized and UNTESTED.
+
+## E049
+
+Date: 2026-09-15. The user replied "yes to main" directly to the request to
+publish 822f5cf and 07ce6e5 to github.com/cct1123/coherent-verdi-control, main.
+Refetched origin: two local commits ahead, no divergence, working tree clean.
+Automatic approval review accepted the destination-authorized `git push origin
+main`; it succeeded, advancing remote main from 29bb216 to 07ce6e5. A subsequent
+read-only `git ls-remote origin refs/heads/main` returned
+`07ce6e59da7bf1eb145516253b6e7093f92768b2`, matching local HEAD. The working tree
+was clean. E048's publication blocker is resolved.
+
+This follow-up updates only STATE.md, outputs/REPORT.md and this record to reflect
+successful publication. README, runtime, tests, examples and the reviewed source
+fingerprint remain unchanged; E047's evidence retains its scope. No hardware
+operation occurred, and future physical integration still requires candidate
+approval. No further human action is needed for the README task.

@@ -67,18 +67,13 @@ Reproduce: install `.[dev,serial,gui]`, run `python scripts/validate.py`.
 
 ## Human action required / next action
 
-The README review/fixes are complete and committed locally in **822f5cf**.
-Publication is **BLOCKED by automatic approval review**: `git push origin main`
-was rejected before execution because the reviewer requires destination-specific
-authorization in trusted user content for exporting repository data. No alternate
-push or workaround was attempted. The source fingerprint is unchanged.
-
-Human action required: explicitly approve publishing all local main commits since
-origin/main (822f5cf plus this publication checkpoint) to
-**github.com/cct1123/coherent-verdi-control, branch main**. Return that approval
-or a corrected destination. Then refresh origin, push without force and verify
-remote equality and a clean tree. Review/tests/local commit are complete; only
-the denied publication action remains. See [E048](records/RECORDS.md#e048).
+The README review/fixes in **822f5cf** and checkpoint **07ce6e5** are published to
+**github.com/cct1123/coherent-verdi-control, branch main**. The user replied
+"yes to main" to the destination-specific request; the authorized push succeeded.
+Remote equality with 07ce6e5 and a clean working tree were verified before this
+status update. [E049](records/RECORDS.md#e049) resolves E048's publication blocker.
+No further human action is needed for the README review or publication. This
+follow-up records that result; the reviewed source fingerprint is unchanged.
 No preview server, hardware operation or test process is pending. E041's full-suite
 manifest is preserved; no new full-suite or physical validation is claimed.
 
