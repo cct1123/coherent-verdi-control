@@ -20,8 +20,11 @@ evidence. No runtime changes, new full-suite run or physical validation are clai
 [E047](../records/RECORDS.md#e047) records final review: clarified terminal-local
 PowerShell settings and the configurable 1 s transaction deadline. Final examples,
 links, source archive and wheel README metadata passed their checks. All five
-wheel runtime modules match the unchanged source. The user requested commit/push
-of these reviewed documentation changes; publication is the remaining action.
+wheel runtime modules match the unchanged source. The changes are committed
+locally in **822f5cf**. Automatic approval review rejected the push before execution
+because it requires destination-specific authorization for publication to
+github.com/cct1123/coherent-verdi-control, main. Publishing that commit and the
+checkpoint awaits explicit approval; see [E048](../records/RECORDS.md#e048).
 
 ## Result
 

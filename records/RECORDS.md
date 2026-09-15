@@ -1408,3 +1408,25 @@ README SHA-256:
 `7a69d5f1b0e7b46436c50078b219ad819ee5b7d98a1807753404c0f634cf09af`.
 Hardware remains UNTESTED/AWAITING_HUMAN_REVIEW. No hardware or test process is
 pending. Commit/push and remote equality verification are next.
+
+## E048
+
+Date: 2026-09-15. Final staged-diff check passed. Local commit
+`822f5cf0fdf3bf1f423082dac9ff26069142efb2` contains the reviewed hardware-first
+README and its four supporting documentation files. The working tree was clean
+after that commit. The attempted `git push origin main` was rejected before
+execution by automatic approval review. Reason: publishing exports repository
+contents to the configured GitHub destination, whose ownership/trust and
+destination-specific authorization were not established in trusted user content.
+The review requires explicit destination approval despite the generic push request.
+A read-only `git ls-remote origin refs/heads/main` confirmed the remote remains
+`29bb2165528b17e9d759cb4855c14a0a8949b042`; the denied push did not publish the commit.
+
+No alternate push or indirect export was attempted. Required user response:
+approve publishing all local main commits since origin/main, including 822f5cf
+and this blocked-publication checkpoint, to
+`github.com/cct1123/coherent-verdi-control`, branch `main`. Then refresh origin,
+push without force and confirm remote equality and a clean tree. The reviewed
+source fingerprint and validation evidence from E047 remain unchanged; this
+checkpoint edits only STATE/report/records outside that fingerprint. Physical
+hardware access remains unauthorized and UNTESTED.

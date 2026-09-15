@@ -67,12 +67,18 @@ Reproduce: install `.[dev,serial,gui]`, run `python scripts/validate.py`.
 
 ## Human action required / next action
 
-The requested hardware-focused README review and fixes are complete. The user's
-"review fix issues commit push" authorizes committing and publishing the five
-reviewed documentation files to the configured origin/main at
-`github.com/cct1123/coherent-verdi-control`. Origin was refreshed and matches
-29bb216 without divergence. Next: commit, push without force, verify remote
-equality and record publication. No further approval is needed for these changes.
+The README review/fixes are complete and committed locally in **822f5cf**.
+Publication is **BLOCKED by automatic approval review**: `git push origin main`
+was rejected before execution because the reviewer requires destination-specific
+authorization in trusted user content for exporting repository data. No alternate
+push or workaround was attempted. The source fingerprint is unchanged.
+
+Human action required: explicitly approve publishing all local main commits since
+origin/main (822f5cf plus this publication checkpoint) to
+**github.com/cct1123/coherent-verdi-control, branch main**. Return that approval
+or a corrected destination. Then refresh origin, push without force and verify
+remote equality and a clean tree. Review/tests/local commit are complete; only
+the denied publication action remains. See [E048](records/RECORDS.md#e048).
 No preview server, hardware operation or test process is pending. E041's full-suite
 manifest is preserved; no new full-suite or physical validation is claimed.
 
