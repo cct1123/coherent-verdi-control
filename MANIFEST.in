@@ -3,7 +3,7 @@ recursive-include examples *.py
 recursive-include examples/tutorials *.ipynb *.md
 prune examples/tutorials/.ipynb_checkpoints
 recursive-include tests *.py
-recursive-include docs *.md *.png
+recursive-include docs *.md *.png *.jpg
 recursive-include records *.md *.txt
 recursive-include outputs *.md
 recursive-include .github *.yml

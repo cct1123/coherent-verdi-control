@@ -1210,3 +1210,50 @@ was clean. E042's publication blocker is resolved.
 This follow-up changes only publication status in STATE.md, outputs/REPORT.md
 and this evidence record. Runtime, tests, package sources and E041's validation
 are unchanged. Hardware approval remains outstanding; no device was accessed.
+
+## E044
+
+Date: 2026-09-15. REQ-018 / TEST-018: new-user README update based on b4bc562.
+README now leads with the user workflow, environment setup, simulator output,
+GUI launch/stop instructions and a guide to the displayed fields. Two independent
+Python examples demonstrate reads and a setpoint change while remaining in
+simulated standby. A Mermaid block diagram shows scripts and optional monitoring
+using the same public API. Detailed migration/implementation material is linked.
+
+Ran `.venv/Scripts/python.exe -m coherent_verdi status`: expected V5 simulated
+standby, closed shutter, zero power and no faults. Executed both README Python
+fences with physical `_open` prohibited; stdout matched the documented values.
+Checked all 24 local links and heading anchors: PASS. Launched
+`.venv/Scripts/python.exe -m coherent_verdi gui`, inspected the rendered browser
+view and captured docs/images/gui-simulator-quickstart.jpg (74775 bytes). It shows
+LIVE/SIMULATOR, 0 W, STANDBY/CLOSED, thermal and instrument fields, matching the
+default workflow. The screenshot is unaltered; the browser returned JPEG bytes.
+Preserved older screenshots because historical evidence references them.
+
+Added JPEG inclusion to MANIFEST.in. Built with
+`.venv/Scripts/python.exe -m build --sdist --no-isolation --outdir tmp/readme-dist`;
+archive README (normalized line endings), screenshot and manifest match source.
+Windows sandbox temporary-file/archive ACLs blocked the initial checks; the
+build and archive read passed with normal local permissions. No dependency or
+runtime change was needed. `git diff --check` passed. Closed the preview tab and
+stopped its CLI session with Ctrl+C; a loopback socket check confirms port 8050
+is no longer served by that preview. No hardware was discovered or accessed.
+
+Current source fingerprint:
+`4a67cd283aea6d506e040c6ff5249d04c35f85da829ad38a3fa3f7c2bb04d3fd`.
+Compared with records/validation.json, only README.md, PROJECT.md, MANIFEST.in
+and the new screenshot differ. Every runtime/test/example source matches E041;
+the full suite was not rerun and its existing manifest was not overwritten.
+The new source archive is a documentation packaging check, not a new physical
+or full-suite validation. STATE/report/evidence changes remain outside the source
+fingerprint. No publication was requested for this follow-up.
+
+README SHA-256: `397fc7462f9e75d9ebc0823b7b7afe2723c6ca8227dccf317b00c1eb99c070dc`.
+Screenshot SHA-256: `866bac21435cf88804402348035cb53580fa9bbf7da7d86e8f2bee9d89d19564`.
+
+Publication follow-up: the user requested "commit push" for this reviewed README
+update and screenshot. Refetched origin and confirmed main has no divergence;
+the candidate fingerprint still exactly matches E044. `git diff --check` passes.
+Publish the seven reviewed documentation/image/package-manifest files to the
+established github.com/cct1123/coherent-verdi-control main branch without force.
+This authorization does not include physical hardware access.

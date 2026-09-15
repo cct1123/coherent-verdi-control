@@ -111,3 +111,10 @@ API migration and update all documentation, examples and README. Perform another
 holistic review, fix findings, prune obsolete code/tests and commit/push the result.
 The renewed push request follows the explicit destination question for
 github.com/cct1123/coherent-verdi-control, main. Hardware-free limits still apply.
+
+## New-user README (user request, 2026-09-15)
+
+Make the README welcoming and practical for a first-time human user. Illustrate
+the optional GUI with a screenshot and use a block diagram where it clarifies
+integration. Keep instructions consistent with the current public API and show
+the simplest simulator workflow; no hardware interaction is authorized.

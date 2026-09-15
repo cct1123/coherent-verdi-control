@@ -6,7 +6,13 @@
 holistic review and final validation are complete. No hardware access is authorized;
 physical behavior and calibration remain UNTESTED. No device operation is pending.
 
-Version 0.3.0; base 7878823; source SHA-256 `56bbd1fce0bfa82fd92e747684961a913c9264d10a7b965de96f5aa5bbffe5c4`.
+Version 0.3.0; README update based on b4bc562; current source SHA-256
+`4a67cd283aea6d506e040c6ff5249d04c35f85da829ad38a3fa3f7c2bb04d3fd`.
+E041's validated implementation fingerprint is
+`56bbd1fce0bfa82fd92e747684961a913c9264d10a7b965de96f5aa5bbffe5c4`.
+Only README, PROJECT, the new screenshot and its source-package inclusion changed
+within the fingerprint; runtime, tests and examples match E041 byte-for-byte.
+[E044](records/RECORDS.md#e044) verifies the new-user instructions, screenshot and archive.
 Five package modules (three substantive), 1057 Python lines, five classes, four
 root exports, two exceptions and zero required runtime dependencies. Controller
 contains serial/protocol handling; SimulatedVerdi exposes the same API. Results
@@ -47,6 +53,7 @@ Current evidence is E041 and D012, including review methods TEST-001/008/015/017
 | REQ-015 / earlier simplification | Direct implementation/features/separation | TEST-015 source/API review and regression | PASS |
 | REQ-016 / manual-verification request | Implemented protocol grounded in manual | TEST-016 42 queries/six commands/error/fault vectors | PASS |
 | REQ-017 / current compact-driver request | Fewer modules, code/types and small reusable API | TEST-017 metrics/import/lifecycle/package review | PASS |
+| REQ-018 / PROJECT new-user README | Clear setup, working examples, current GUI screenshot and integration diagram | TEST-018 snippets/output, links, browser inspection and source archive; E044 | PASS |
 
 Reproduce: install `.[dev,serial,gui]`, run `python scripts/validate.py`.
 [Manifest](records/validation.json) captures environment, source/build hashes and commands.
@@ -58,7 +65,10 @@ through c5da4d5 to `github.com/cct1123/coherent-verdi-control`, branch `main`.
 The user's direct reply to the destination-specific publication request authorized
 the push; remote equality was verified ([E043](records/RECORDS.md#e043)). The prior
 publication blocker is resolved. No further human action is needed for the software
-cleanup. This documentation-only checkpoint records the successful publication.
+cleanup. The subsequent new-user README update is complete and its GUI preview
+has been stopped. The user's follow-up "commit push" authorizes publishing the
+reviewed README, screenshot and supporting records to the same origin/main.
+The candidate fingerprint still matches E044; no further software changes are needed.
 
 Future integration requires explicit Stage 1 read-only candidate approval under
 [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md), with actual model, operator-confirmed

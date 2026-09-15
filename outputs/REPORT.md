@@ -2,7 +2,17 @@
 
 The aggressive simplification is software-complete and hardware-ready for review.
 **Physical behavior, wiring, timing and calibration remain UNTESTED.** No physical
-ports were opened or discovered. Source SHA-256: `56bbd1fce0bfa82fd92e747684961a913c9264d10a7b965de96f5aa5bbffe5c4`; base 7878823.
+ports were opened or discovered. The README update based on b4bc562 has source
+SHA-256 `4a67cd283aea6d506e040c6ff5249d04c35f85da829ad38a3fa3f7c2bb04d3fd`.
+E041's implementation fingerprint remains
+`56bbd1fce0bfa82fd92e747684961a913c9264d10a7b965de96f5aa5bbffe5c4`;
+runtime, tests and examples are unchanged.
+
+[E044](../records/RECORDS.md#e044) covers the new-user README: step-by-step setup,
+two executed simulator examples, a current GUI screenshot, a dashboard guide and
+a small integration diagram. All 24 local links/anchors pass; a source-package
+build includes the README and screenshot. The full software suite was not rerun
+for this documentation-only update; its earlier results below retain their scope.
 
 ## Result
 
