@@ -51,9 +51,7 @@ def main() -> None:
     required.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md"))
     if missing := required - members:
         raise RuntimeError(f"source distribution lacks supporting files: {sorted(missing)}")
-    scratch = ROOT / "tmp"
-    scratch.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="install-smoke-", dir=scratch) as directory:
+    with tempfile.TemporaryDirectory(prefix="verdi-install-smoke-") as directory:
         env_path = Path(directory) / "env"
         venv.EnvBuilder(with_pip=True).create(env_path)
         executable = env_path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -63,8 +61,7 @@ def main() -> None:
                 "-m",
                 "pip",
                 "install",
-                "--cache-dir",
-                str(scratch / "pip-cache"),
+                "--no-cache-dir",
                 str(wheel),
             ]
         )
@@ -166,8 +163,7 @@ assert requests[0] == b'?SV\r\n'
                 "-m",
                 "pip",
                 "install",
-                "--cache-dir",
-                str(scratch / "pip-cache"),
+                "--no-cache-dir",
                 f"{wheel}[gui]",
             ]
         )

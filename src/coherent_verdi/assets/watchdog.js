@@ -17,7 +17,7 @@
         }
         const stale = now - receivedAt > 10000;
         warning.textContent = stale
-            ? "SERVER UPDATE LOST — all displayed values are stale. Check the monitoring service."
+            ? "SERVER UPDATE LOST — all displayed values are stale. Check the dashboard server."
             : heartbeat === "" ? "Waiting for the monitoring server…" : "";
         root.classList.toggle("connection-lost", stale);
     }, 1000);

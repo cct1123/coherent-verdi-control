@@ -181,4 +181,4 @@ The serial adapter's port-less construction, explicit open, read/write timeouts
 and disabled flow control follow the [pySerial API](https://pyserial.readthedocs.io/en/latest/pyserial_api.html).
 The optional client uses Dash callbacks and `dcc.Interval` as described by
 [Dash live updates](https://dash.plotly.com/live-updates). Browser refreshes read
-cached service data, rather than creating device polling workers.
+cached monitor data; they do not create device polling workers.
