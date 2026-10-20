@@ -4,8 +4,10 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from fakes import FaultyVerdi
+from fakes import RecordingVerdi as SimulatedVerdi
 
-from coherent_verdi import DeviceError, SimulatedVerdi, VerdiController, VerdiError
+from coherent_verdi import DeviceError, VerdiController, VerdiError
 from coherent_verdi.controller import QUERIES
 
 
@@ -82,7 +84,7 @@ def test_fault_selector_rejects_nonboolean_before_querying(history):
 @pytest.mark.parametrize("query", ["?D1SS", "?LBOSS"])
 @pytest.mark.parametrize("model,invalid", [("V2", 6), ("V6", 5)])
 def test_model_specific_servo_codes_reject_invalid_firmware_data(query, model, invalid):
-    sim = SimulatedVerdi(model)
+    sim = FaultyVerdi(model)
     sim.inject(f"{invalid}\r\n".encode())
     with sim as c:
         with pytest.raises(VerdiError, match="not documented"):
@@ -97,7 +99,7 @@ def test_model_specific_servo_codes_reject_invalid_firmware_data(query, model, i
 def test_model_specific_servo_codes_preserve_supported_and_unresolved_v5_variant(
     query, model, valid
 ):
-    sim = SimulatedVerdi(model)
+    sim = FaultyVerdi(model)
     sim.inject(f"{valid}\r\n".encode())
     with sim as c:
         assert c.read(query) == valid
@@ -219,82 +221,23 @@ def test_fault_history_enable_and_key_semantics():
     assert c.read_laser_state() == 0
 
 
-def test_virtual_warmup_without_sleep():
-    clock = [100.0]
-    c = SimulatedVerdi(clock=lambda: clock[0], warmup_s=10, allow_writes=True)
-    c.connect()
-    c.set_power_w(0.5)
-    s = c.status()
-    assert s["lbo_servo"] == 2
-    assert s["laser_state"] == 0
-    assert s["power_w"] == 0
-    assert s["lbo_temp_c"] == 25
-    clock[0] += 10
-    c.set_key(True)
-    c.start()
-    c.set_shutter(open=True)
-    s = c.status()
-    assert s["lbo_servo"] == 1
-    assert s["power_w"] == 0.5
-    assert s["lbo_temp_c"] == 148
-
-
-@pytest.mark.parametrize("model", ["V2", "V5", "V6"])
-def test_cold_key_on_reports_lbo_fault_and_needs_explicit_enable_after_warmup(model):
-    clock = [0.0]
-    sim = SimulatedVerdi(model, clock=lambda: clock[0], warmup_s=10, allow_writes=True)
-    with sim as laser:
-        sim.set_key(True)
-        assert laser.read_laser_state() == 2
-        assert laser.read_faults() == [5]
+def test_warm_fixture_requires_explicit_key_enable_and_shutter():
+    with SimulatedVerdi(allow_writes=True) as laser:
+        initial = laser.status()
+        assert initial["lbo_servo"] == 1
+        assert initial["lbo_temp_c"] == 148
         laser.set_power_w(0.5)
         laser.start()
-        laser.set_shutter(open=True)
-        cold = laser.status()
-        assert cold["laser_state"] == 2
-        assert not cold["shutter_open"]
-        assert cold["power_w"] == 0
-
-        clock[0] = 10
-        warm = laser.status()
-        assert warm["faults"] == []
-        assert warm["laser_state"] == 2
-        assert not warm["shutter_open"]
-        assert warm["power_w"] == 0
-        assert laser.read_faults(history=True) == [5]
-
-        # This conservative simulator latch is not a prediction of firmware
-        # auto-resumption. Explicit enable and shutter operations are required.
+        assert laser.read_laser_state() == 0  # Key is still OFF.
+        laser.set_key(True)
+        assert laser.read_laser_state() == 0
         laser.start()
-        assert laser.read_faults(history=True) == []
-        assert laser.read_laser_state() == 1
-        assert laser.read_power_w() == 0
+        assert laser.read_power_w() == 0  # Shutter is still closed.
         laser.set_shutter(open=True)
         assert laser.read_power_w() == 0.5
-
-
-def test_standby_overrides_cold_key_without_retriggering_warmup_fault():
-    sim = SimulatedVerdi(clock=lambda: 0.0, warmup_s=10, model="V5", allow_writes=True)
-    with sim as laser:
-        sim.set_key(True)
-        assert laser.read_laser_state() == 2
-        laser.stop()
+        laser.set_key(False)
         assert laser.read_laser_state() == 0
-        assert laser.read_faults() == []
-        assert laser.read_faults(history=True) == [5]
-
-
-def test_finishing_warmup_does_not_remove_an_injected_lbo_fault():
-    clock = [0.0]
-    sim = SimulatedVerdi(clock=lambda: clock[0], warmup_s=10, model="V5", allow_writes=True)
-    with sim as laser:
-        sim.set_key(True)
-        sim.set_faults(5, 999)
-        assert laser.read_faults() == [5, 999]
-        clock[0] = 10
-        laser.start()
-        assert laser.read_laser_state() == 2
-        assert laser.read_faults() == [5, 999]
+        assert laser.read("?S") == 0
 
 
 def test_explicit_echo_and_reversed_prompt_setting():
@@ -320,7 +263,7 @@ def test_every_query_through_simulated_protocol(model):
 
 
 def test_applied_command_with_lost_acknowledgment_is_not_replayed():
-    c = SimulatedVerdi(allow_writes=True)
+    c = FaultyVerdi(allow_writes=True)
     c.connect()
     c.set_key(True)
     c.inject_timeout(after_apply=True)
@@ -334,7 +277,7 @@ def test_applied_command_with_lost_acknowledgment_is_not_replayed():
 
 
 def test_device_rejection_leaves_complete_session_usable():
-    sim = SimulatedVerdi(model="V5", allow_writes=True)
+    sim = FaultyVerdi(model="V5", allow_writes=True)
     with sim as c:
         sim.inject(b"RANGE ERROR: P=1.0000\r\n")
         with pytest.raises(DeviceError):
@@ -343,7 +286,7 @@ def test_device_rejection_leaves_complete_session_usable():
 
 
 def test_malformed_reply_requires_retiring_the_session():
-    c = SimulatedVerdi(allow_writes=True)
+    c = FaultyVerdi(allow_writes=True)
     c.connect()
     c.inject(b"nan\r\n")
     with pytest.raises(VerdiError):
@@ -361,7 +304,7 @@ def test_malformed_reply_requires_retiring_the_session():
 @pytest.mark.parametrize("query", ["?L", "?B", "?F", "?FH"])
 def test_integer_conversion_limit_invalidates_session(query):
     original_limit = sys.get_int_max_str_digits()
-    sim = SimulatedVerdi(model="V5")
+    sim = FaultyVerdi(model="V5")
     with sim as controller:
         try:
             # Exercise the interpreter guard deterministically, even when the

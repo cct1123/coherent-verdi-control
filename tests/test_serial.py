@@ -221,24 +221,6 @@ def test_commission_records_failure_and_stops_remaining_queries(peer, capsys, re
     assert peer.writes == [b"?SV\r\n"] and peer.closes == 1
 
 
-def test_trace_preserves_normal_stdout_and_uses_stderr(peer, capsys):
-    peer.responses.append(b"1.234\r\n")
-    assert main(["--port", "FAKE-ONLY", "--model", "V5", "--trace", "query", "?P"]) == 0
-    output = capsys.readouterr()
-    assert json.loads(output.out) == 1.234
-    record = json.loads(output.err)
-    assert record["outcome"] == "ok" and record["instruction"] == "?P"
-    assert bytes.fromhex(record["response_hex"]) == b"1.234\r\n"
-
-
-def test_trace_on_simulator_never_opens_serial(peer, capsys):
-    assert main(["--trace", "query", "?P"]) == 0
-    output = capsys.readouterr()
-    assert json.loads(output.out) == 0.0
-    assert json.loads(output.err)["simulated"] is True
-    assert peer.opens == 0
-
-
 @pytest.mark.parametrize(
     "options",
     [

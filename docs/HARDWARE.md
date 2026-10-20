@@ -99,9 +99,9 @@ outside the controller's public operational API.
 Choose polling cadence and transaction timeout from observed latency. `status()`
 is 14 sequential queries, not simultaneous acquisition. Record sample duration,
 failed samples, drift and dashboard staleness over the required run duration.
-Global CLI `--trace` writes transaction JSONL to stderr, separately from normal
-command output. Python applications can pass `trace=callback` to record the same
-raw evidence; see [API.md](API.md#commissioning-and-tracing).
+Python applications can record `last_transaction` after each operation and
+`VerdiError.transaction` on exchange failure. Commissioning emits the same wire
+evidence as JSONL; see [API.md](API.md#transaction-evidence-and-errors).
 
 Test communication loss only after the operator establishes a safe condition.
 Verify error visibility and absence of retries, replay or auto-enable. A lost

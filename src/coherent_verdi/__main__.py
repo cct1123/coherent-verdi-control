@@ -3,8 +3,7 @@
 import argparse
 import json
 import sys
-from collections.abc import Callable, Sequence
-from functools import partial
+from collections.abc import Sequence
 from time import sleep
 from typing import Any
 
@@ -12,14 +11,12 @@ from .controller import QUERIES, VerdiController, VerdiError
 from .simulator import SimulatedVerdi
 
 
-def _print_transaction(record: dict[str, Any], *, stderr: bool = False) -> None:
-    """JSONL keeps exact wire bytes as hex; ordinary CLI results remain unchanged."""
+def _print_transaction(record: dict[str, Any]) -> None:
+    """JSONL preserves exact wire bytes as hex."""
     encoded = dict(record)
     encoded["request_hex"] = encoded.pop("request").hex()
     encoded["response_hex"] = encoded.pop("response").hex()
-    print(
-        json.dumps(encoded, allow_nan=False), file=sys.stderr if stderr else sys.stdout, flush=True
-    )
+    print(json.dumps(encoded, allow_nan=False), flush=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -31,7 +28,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--baudrate", type=int, default=19200, help="Match the front-panel baud")
     parser.add_argument("--timeout-s", type=float, default=1.0)
     parser.add_argument("--active-fault-clear-reply", help="Independently verified ?F clear text")
-    parser.add_argument("--trace", action="store_true", help="Transaction JSONL to stderr")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "diagnostics"):
         commands.add_parser(name)
@@ -61,11 +57,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     ):
         parser.error("serial connection settings require --port")
     try:
-        trace: Callable[[dict[str, Any]], None] | None = None
-        if args.command == "commission":
-            trace = _print_transaction
-        elif args.trace:
-            trace = partial(_print_transaction, stderr=True)
         laser = (
             VerdiController(
                 args.serial_port,
@@ -73,10 +64,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 baudrate=args.baudrate,
                 timeout_s=args.timeout_s,
                 active_fault_clear_reply=args.active_fault_clear_reply,
-                trace=trace,
             )
             if args.serial_port is not None
-            else SimulatedVerdi(args.model or "V5", trace=trace)
+            else SimulatedVerdi(args.model or "V5")
         )
         # Validate client settings and dependencies before opening a physical port.
         if args.command in ("watch", "gui"):
@@ -92,7 +82,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         with laser:
             if args.command == "commission":
                 for query in args.query or ["?SV"]:
-                    laser.capture(query)  # Its trace records both successful and failed exchanges.
+                    try:
+                        laser.capture(query)
+                    finally:
+                        if record := laser.last_transaction:
+                            _print_transaction(record)
                 return 0
             if args.command in ("status", "diagnostics", "query"):
                 result = (

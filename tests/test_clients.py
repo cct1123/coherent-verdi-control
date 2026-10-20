@@ -9,14 +9,34 @@ from threading import Event, Thread
 from threading import enumerate as threads
 
 import pytest
+from fakes import FaultyVerdi
+from fakes import RecordingVerdi as SimulatedVerdi
 
-from coherent_verdi import SimulatedVerdi, VerdiController
+from coherent_verdi import VerdiController
 from coherent_verdi.__main__ import main
-from coherent_verdi.gui import Monitor, create_app, dashboard_data
+from coherent_verdi.gui import Monitor, create_app
+
+
+def rendered_components(response):
+    """Index the components returned by the single dashboard-body callback."""
+    values = response.json["response"]
+
+    def collect(node):
+        if isinstance(node, list):
+            for child in node:
+                collect(child)
+        elif isinstance(node, dict):
+            props = node.get("props", {})
+            if "id" in props:
+                values[props["id"]] = props
+            collect(props.get("children"))
+
+    collect(values["sample"]["children"])
+    return values
 
 
 def test_bounded_history_failure_visibility_and_recovery():
-    sim = SimulatedVerdi(model="V5")
+    sim = FaultyVerdi(model="V5")
     controller = sim
     controller.connect()
     service = Monitor(controller, history_size=2)
@@ -26,12 +46,14 @@ def test_bounded_history_failure_visibility_and_recovery():
     failed = service.poll_once()
     assert failed["status"] is None
     assert failed["error"].startswith("VerdiError:")
-    assert dashboard_data(service)["health"] == "ERROR"
-    assert dashboard_data(service)["power_w"] == [0.0, None]
+    assert service.snapshot()["health"] == "ERROR"
+    assert [
+        s["status"]["power_w"] if s["status"] else None for s in service.snapshot()["history"]
+    ] == [0.0, None]
     service.poll_once()
     assert len(service.snapshot()["history"]) == 2
     assert all(s["status"] is None for s in service.snapshot()["history"])
-    assert dashboard_data(service)["health"] == "ERROR"
+    assert service.snapshot()["health"] == "ERROR"
     assert len(sim.requests) == 15  # No extra I/O after failure.
 
 
@@ -41,12 +63,12 @@ def test_staleness_and_empty_history():
     controller = sim
     controller.connect()
     service = Monitor(controller, clock=lambda: now[0])
-    assert dashboard_data(service)["health"] == "NO DATA"
+    assert service.snapshot()["health"] == "NO DATA"
     service.poll_once()
     now[0] = 60.0
     requests = sim.requests
-    assert dashboard_data(service)["health"] == "STALE"
-    assert dashboard_data(service)["age_s"] >= 60
+    assert service.snapshot()["health"] == "STALE"
+    assert service.snapshot()["age_s"] >= 60
     assert sim.requests == requests
 
 
@@ -64,9 +86,9 @@ def test_freshness_ignores_wall_clock_steps(monkeypatch, wall_clock_offset_s):
         monkeypatch.setattr(controller, "status", lambda: shifted)
         service = Monitor(controller, clock=lambda: now[0])
         service.poll_once()
-        assert dashboard_data(service)["health"] == "LIVE"
+        assert service.snapshot()["health"] == "LIVE"
         now[0] = 60
-        assert dashboard_data(service)["health"] == "STALE"
+        assert service.snapshot()["health"] == "STALE"
         assert service.snapshot()["age_s"] == 60
 
 
@@ -83,11 +105,11 @@ def test_freshness_includes_slow_sampling(monkeypatch):
         service = Monitor(controller, clock=lambda: now[0])
         service.poll_once()
         assert service.snapshot()["age_s"] == 60
-        assert dashboard_data(service)["health"] == "STALE"
+        assert service.snapshot()["health"] == "STALE"
 
 
 def test_dash_routes_callbacks_assets_and_no_independent_polling(callback_payload):
-    sim = SimulatedVerdi(model="V5")
+    sim = FaultyVerdi(model="V5")
     controller = sim
     controller.connect()
     service = Monitor(controller)
@@ -104,7 +126,7 @@ def test_dash_routes_callbacks_assets_and_no_independent_polling(callback_payloa
     for _ in range(3):  # independent browser clients all consume the same cache
         response = client.post("/_dash-update-component", json=payload)
         assert response.status_code == 200
-        data = response.json["response"]
+        data = rendered_components(response)
         assert data["health"]["children"] == "LIVE"
         assert data["power"]["children"] == "0.000"
         assert data["server-heartbeat"]["children"] == 1
@@ -112,7 +134,7 @@ def test_dash_routes_callbacks_assets_and_no_independent_polling(callback_payloa
     sim.inject_timeout()
     service.poll_once()
     response = client.post("/_dash-update-component", json=payload)
-    data = response.json["response"]
+    data = rendered_components(response)
     assert data["health"]["children"] == "ERROR"
     assert data["laser"]["children"] == "UNKNOWN"
     assert data["error"]["children"]
@@ -129,19 +151,22 @@ def test_blank_exception_is_error_with_unavailable_current_values(monkeypatch, c
 
         monkeypatch.setattr(controller, "status", fail)
         service.poll_once()
-        data = dashboard_data(service)
+        data = service.snapshot()
         assert data["health"] == "ERROR"
         assert data["error"] == "RuntimeError:"
         assert data["status"] is None and data["simulated"] is True
-        assert data["power_w"] == [0.0, None]
+        assert [s["status"]["power_w"] if s["status"] else None for s in data["history"]] == [
+            0.0,
+            None,
+        ]
         app = create_app(service)
         response = app.server.test_client().post(
             "/_dash-update-component", json=callback_payload(app)
         )
         assert response.status_code == 200
-        values = response.json["response"]
+        values = rendered_components(response)
         assert values["health"]["children"] == "ERROR"
-        assert values["source"]["children"] == "SIMULATOR"
+        assert b"SIMULATOR" in app.server.test_client().get("/_dash-layout").data
         assert values["power"]["children"] == "—"
 
 
@@ -152,8 +177,10 @@ def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch, callback_
         service.poll_once()
         entered, release, rendered = Event(), Event(), Event()
         original = sim._exchange
+        attempted = []
 
         def blocking(request):
+            attempted.append(request)
             entered.set()
             assert release.wait(5)
             return original(request)
@@ -173,12 +200,12 @@ def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch, callback_
         worker = Thread(target=render)
         try:
             assert entered.wait(2)
-            count = len(sim.requests)
+            count = len(attempted)
             worker.start()
             assert rendered.wait(2), "cached GUI waited for the controller transaction"
-            assert len(sim.requests) == count
+            assert len(attempted) == count
             assert responses[0].status_code == 200
-            assert responses[0].json["response"]["source"]["children"] == "SIMULATOR"
+            assert rendered_components(responses[0])["health"]["children"] == "LIVE"
         finally:
             release.set()
             if worker.ident is not None:
@@ -191,7 +218,7 @@ def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch, callback_
 def test_cli_read_paths(args, capsys):
     assert main(args) == 0
     data = json.loads(capsys.readouterr().out)
-    assert data == "SIMULATOR-0.1" if args[0] == "query" else isinstance(data, dict)
+    assert data == "SIMULATOR" if args[0] == "query" else isinstance(data, dict)
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""Optional caller-scheduled monitoring and Dash client; no implicit worker."""
+"""Caller-scheduled status cache and optional read-only Dash view."""
 
 from collections import deque
 from collections.abc import Callable
@@ -13,7 +13,7 @@ from .controller import VerdiController, finite_range
 
 
 class Monitor:
-    """One caller polls; GUI clients read copied snapshots without waiting for I/O."""
+    """One caller polls the controller; browser callbacks only read the cache."""
 
     def __init__(
         self,
@@ -45,218 +45,138 @@ class Monitor:
             return deepcopy(sample)
 
     def snapshot(self) -> dict[str, Any]:
+        """Copy current readings and history without waiting for controller I/O."""
         with self._lock:
-            return {
-                "model": self._controller.model,
-                "simulated": self._controller.is_simulated,
-                "history": deepcopy(list(self._history)),
-                "age_s": max(0.0, self._clock() - self._started)
-                if self._started is not None and self._history[-1]["status"]
-                else None,
-                "interval_s": self.interval_s,
-            }
+            history = deepcopy(list(self._history))
+            started = self._started
+        last = history[-1] if history else None
+        status = last["status"] if last else None
+        age = max(0.0, self._clock() - started) if started is not None and status else None
+        stale = (
+            age is not None
+            and status is not None
+            and age > max(5.0, 3 * self.interval_s + 2 * status["duration_s"])
+        )
+        return {
+            "model": self._controller.model,
+            "simulated": self._controller.is_simulated,
+            "health": "NO DATA"
+            if not last
+            else "ERROR"
+            if not status
+            else "STALE"
+            if stale
+            else "LIVE",
+            "error": last["error"] if last else None,
+            "status": status,
+            "age_s": age,
+            "history": history,
+        }
 
 
-def _source_label(simulated: bool) -> str:
-    return "SIMULATOR" if simulated else "PHYSICAL / UNVALIDATED"
-
-
-def dashboard_data(service: Monitor) -> dict[str, Any]:
-    """Read cached values only; rendering or opening a second tab never polls hardware."""
-    snapshot = service.snapshot()
-    samples = snapshot["history"]
-    last = samples[-1] if samples else None
-    status = last["status"] if last else None
-    age = snapshot["age_s"]
-    failed = last is not None and (last["status"] is None)
-    stale = (
-        status is not None
-        and age is not None
-        and age > max(5.0, 3 * snapshot["interval_s"] + 2 * status["duration_s"])
-    )
-    return {
-        "simulated": snapshot["simulated"],
-        "model": snapshot["model"],
-        "health": "NO DATA"
-        if last is None
-        else ("ERROR" if failed else "STALE" if stale else "LIVE"),
-        "error": (last["error"] or "Sample unavailable") if failed and last else None,
-        "age_s": age,
-        "status": status,
-        "timestamps": [s["attempted_at"] for s in samples],
-        "power_w": [s["status"]["power_w"] if s["status"] else None for s in samples],
-        "set_power_w": [s["status"]["set_power_w"] if s["status"] else None for s in samples],
-        "count": len(samples),
-    }
-
-
-def create_app(service: Monitor) -> Any:
-    """Caller owns service lifecycle. Does not connect, start threads or send commands.
-
-    Monitoring-only by design. Use the API for authorized operations. Serve on
-    loopback or behind your lab's authenticated proxy; do not use debug/reloader.
-    """
+def create_app(monitor: Monitor) -> Any:
+    """Build the view. The caller owns polling, connection lifetime and the server."""
     from dash import Dash, Input, Output, dcc, html
 
     app = Dash(__name__, assets_folder=str(Path(__file__).with_name("assets")))
-    app.title = "Verdi | Telemetry"
-
-    def tile(title: str, identifier: str, subtitle: str) -> Any:
-        return html.Div(
-            [
-                html.Label(title),
-                html.Div("—", id=identifier, className="metric"),
-                html.Small(subtitle),
-            ],
-            className="tile",
-        )
-
+    app.title = "Verdi monitor"
+    source = "SIMULATOR" if monitor.snapshot()["simulated"] else "PHYSICAL / UNVALIDATED"
     app.layout = html.Main(
         [
-            html.Header(
-                [
-                    html.H1("Verdi / Telemetry"),
-                    html.Div(
-                        _source_label(service.snapshot()["simulated"]),
-                        id="source",
-                        className="badge",
-                    ),
-                ]
-            ),
-            html.Div(
-                [
-                    html.Span("NO DATA", id="health", className="health"),
-                    html.Span("Waiting for a sample", id="sample-age"),
-                ],
-                className="statusbar",
-            ),
-            html.Div(id="error", role="alert"),
+            html.H1("Verdi monitor"),
+            html.P(source, id="source"),
             html.Div(id="connection-warning", role="alert"),
-            html.Section(
-                [
-                    tile("MEASURED POWER", "power", "W · reported by controller"),
-                    tile("POWER SETPOINT", "setpoint", "W · light regulation"),
-                    tile("LASER STATE", "laser", "Reported state is not a safety guarantee"),
-                    tile("SAFETY SHUTTER", "shutter", "Not an experimental modulator"),
-                ],
-                className="tiles",
-            ),
-            html.Section(
-                [
-                    html.H2("Power history"),
-                    dcc.Graph(id="power-graph", config={"displayModeBar": False}),
-                ],
-                className="panel",
-            ),
-            html.Section(
-                [
-                    html.Div(
-                        [html.H2("Thermal diagnostics"), html.Div(id="temperatures")],
-                        className="panel",
-                    ),
-                    html.Div(
-                        [html.H2("Instrument status"), html.Div(id="instrument")], className="panel"
-                    ),
-                ],
-                className="lower",
-            ),
-            html.Footer("Monitoring only · physical behavior untested"),
-            dcc.Interval(id="refresh", interval=1000, n_intervals=0),
+            html.Section(id="sample"),
+            html.Footer("Monitoring only · reported state is not a safety guarantee"),
+            dcc.Interval(id="refresh", interval=1000),
             html.Span(id="server-heartbeat", hidden=True),
         ],
         id="dashboard",
     )
 
     @app.callback(
-        Output("health", "children"),
-        Output("sample-age", "children"),
-        Output("error", "children"),
-        Output("power", "children"),
-        Output("setpoint", "children"),
-        Output("laser", "children"),
-        Output("shutter", "children"),
-        Output("power-graph", "figure"),
-        Output("temperatures", "children"),
-        Output("instrument", "children"),
+        Output("sample", "children"),
         Output("server-heartbeat", "children"),
-        Output("source", "children"),
         Input("refresh", "n_intervals"),
     )
-    def refresh(_tick: int) -> tuple[Any, ...]:
-        data = dashboard_data(service)
-        s = data["status"]
-        figure = {
-            "data": [
-                {
-                    "type": "scatter",
-                    "x": data["timestamps"],
-                    "y": data[field],
-                    "name": name,
-                    "mode": "lines",
-                    "line": line,
-                    "connectgaps": False,
-                }
-                for field, name, line in (
-                    ("power_w", "Measured power", {"color": "#65e3cc", "width": 2.5}),
-                    ("set_power_w", "Setpoint", {"color": "#8999b1", "dash": "dot"}),
-                )
-            ],
-            "layout": {
-                "paper_bgcolor": "#151c28",
-                "plot_bgcolor": "#151c28",
-                "margin": {"l": 52, "r": 24, "t": 12, "b": 38},
-                "height": 290,
-                "font": {"family": "Segoe UI, sans-serif", "color": "#acb9ce"},
-                "xaxis": {"title": {"text": "Time (UTC)"}, "gridcolor": "#283442"},
-                "yaxis": {"title": {"text": "Power / W"}, "gridcolor": "#283442"},
-                "legend": {"orientation": "h", "y": 1.14},
-                "uirevision": "verdi-power",
-            },
-        }
-
-        def row(label: str, value: str) -> Any:
-            return html.Div([html.Span(label), html.Strong(value)], className="data-row")
-
-        thermal = [
-            row(label, f"{s[field]:.2f} °C" if s else "—")
-            for label, field in [
+    def refresh(tick: int) -> tuple[Any, int]:
+        data = monitor.snapshot()
+        status = data["status"]
+        age = (
+            f"Sample age {data['age_s']:.1f} s"
+            if data["age_s"] is not None
+            else "No current sample"
+        )
+        readings = [
+            ("Measured power / W", "power", f"{status['power_w']:.3f}" if status else "—"),
+            ("Setpoint / W", "setpoint", f"{status['set_power_w']:.4f}" if status else "—"),
+            (
+                "Laser",
+                "laser",
+                ("STANDBY", "ON", "FAULT")[status["laser_state"]] if status else "UNKNOWN",
+            ),
+            (
+                "Safety shutter",
+                "shutter",
+                ("OPEN" if status["shutter_open"] else "CLOSED") if status else "UNKNOWN",
+            ),
+            ("Configured model", "model", data["model"]),
+            (
+                "Keyswitch",
+                "keyswitch",
+                ("ON" if status["keyswitch_on"] else "OFF") if status else "UNKNOWN",
+            ),
+            ("Diode current / A", "current", f"{status['diode_current_a']:.1f}" if status else "—"),
+            ("LBO servo", "servo", str(status["lbo_servo"]) if status else "—"),
+            (
+                "Reported faults",
+                "faults",
+                (", ".join(map(str, status["faults"])) or "None reported") if status else "Unknown",
+            ),
+        ]
+        readings += [
+            (f"{label} / °C", field, f"{status[field]:.2f}" if status else "—")
+            for label, field in (
                 ("Diode 1", "diode_temp_c"),
                 ("Heatsink", "heatsink_temp_c"),
                 ("Baseplate", "baseplate_temp_c"),
                 ("LBO", "lbo_temp_c"),
                 ("Etalon", "etalon_temp_c"),
                 ("Vanadate", "vanadate_temp_c"),
-            ]
+            )
         ]
-        instrument = [
-            row("Configured model", data["model"]),
-            row("Keyswitch", ("ON" if s["keyswitch_on"] else "OFF") if s else "—"),
-            row("Diode current", f"{s['diode_current_a']:.1f} A" if s else "—"),
-            row("LBO servo", str(s["lbo_servo"]) if s else "—"),
-            row(
-                "Reported faults",
-                ", ".join(map(str, s["faults"])) or "None reported" if s else "Unknown",
+        figure = {
+            "data": [
+                {
+                    "x": [sample["attempted_at"] for sample in data["history"]],
+                    "y": [
+                        sample["status"][field] if sample["status"] else None
+                        for sample in data["history"]
+                    ],
+                    "name": name,
+                    "mode": "lines",
+                    "connectgaps": False,
+                }
+                for field, name in (("power_w", "Measured power"), ("set_power_w", "Setpoint"))
+            ],
+            "layout": {
+                "xaxis": {"title": "Time (UTC)"},
+                "yaxis": {"title": "Power / W"},
+                "uirevision": "power",
+            },
+        }
+        return [
+            html.P([html.Strong(data["health"], id="health"), " · ", age]),
+            html.Div(data["error"] or "", id="error", role="alert"),
+            html.Table(
+                html.Tbody(
+                    [
+                        html.Tr([html.Th(label), html.Td(value, id=identifier)])
+                        for label, identifier, value in readings
+                    ]
+                )
             ),
-            row("History samples", str(data["count"])),
-        ]
-        age = (
-            f"Sample age {data['age_s']:.1f} s"
-            if data["age_s"] is not None
-            else "No current sample"
-        )
-        return (
-            data["health"],
-            age,
-            data["error"] or "",
-            f"{s['power_w']:.3f}" if s else "—",
-            f"{s['set_power_w']:.4f}" if s else "—",
-            ("STANDBY", "ON", "FAULT")[s["laser_state"]] if s else "UNKNOWN",
-            ("OPEN" if s["shutter_open"] else "CLOSED") if s else "UNKNOWN",
-            figure,
-            thermal,
-            instrument,
-            _tick,
-            _source_label(data["simulated"]),
-        )
+            dcc.Graph(id="power-graph", figure=figure, config={"displayModeBar": False}),
+        ], tick
 
     return app

@@ -1,7 +1,6 @@
 """Synchronous Verdi driver: explicit serial lifecycle, manual protocol, plain results."""
 
 import re
-from collections.abc import Callable
 from datetime import UTC, datetime
 from math import isfinite
 from threading import RLock
@@ -15,11 +14,7 @@ class VerdiError(Exception):
 
     def __init__(self, message: str = "") -> None:
         super().__init__(message)
-        self.instruction: str | None = None
-        self.request = b""
-        self.raw_response = b""
-        self.duration_s: float | None = None
-        self.write_outcome: str | None = None
+        self.transaction: dict[str, Any] | None = None
 
 
 class DeviceError(VerdiError):
@@ -200,7 +195,6 @@ class VerdiController:
         allow_writes: bool = False,
         power_limit_w: float | None = None,
         active_fault_clear_reply: str | None = None,
-        trace: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         if model not in ("V2", "V5", "V6"):
             raise ValueError("model must be V2, V5 or V6")
@@ -225,10 +219,6 @@ class VerdiController:
                 "active_fault_clear_reply must be verified ASCII text or 0, not a fault code"
             )
         self._active_fault_clear_reply = reply
-        if trace is not None and not callable(trace):
-            raise ValueError("trace must be a callable or None")
-        self._trace = trace
-        self._tracing = False
         if not isinstance(port, str) or not port.strip() or "://" in port:
             raise ValueError("an explicit native port name is required; no discovery or URLs")
         if type(baudrate) is not int or baudrate not in BAUDRATES:
@@ -240,12 +230,19 @@ class VerdiController:
         self._connected = False
         self._failed = False
         self._lock = RLock()
+        self._last_transaction: dict[str, Any] | None = None
 
     @property
     def model(self) -> str:
         return self._model
 
     is_simulated = False
+
+    @property
+    def last_transaction(self) -> dict[str, Any] | None:
+        """Copy of the latest attempted exchange, including failed/partial replies."""
+        with self._lock:
+            return dict(self._last_transaction) if self._last_transaction is not None else None
 
     def connect(self) -> None:
         """Open without discovery, queries, flushing or configuration commands.
@@ -254,8 +251,6 @@ class VerdiController:
         session before constructing another; reopening alone cannot prove that.
         """
         with self._lock:
-            if self._tracing:
-                raise RuntimeError("trace callbacks cannot open or close the connection")
             if self._failed:
                 raise VerdiError(
                     "failed session; establish a clean connection and use a new controller"
@@ -274,8 +269,6 @@ class VerdiController:
         Failed cleanup can be retried. A failed session never becomes reusable.
         """
         with self._lock:
-            if self._tracing:
-                raise RuntimeError("trace callbacks cannot open or close the connection")
             self._connected = False
             try:
                 self._close()
@@ -284,17 +277,13 @@ class VerdiController:
                 raise
 
     def _request(
-        self, instruction: str, *, query: bool = False, capture: bool = False
+        self, instruction: str, *, capture: bool = False
     ) -> float | int | str | list[int] | dict[str, Any]:
-        if self._tracing:
-            raise RuntimeError("trace callbacks cannot issue device instructions")
         if not self._connected or self._failed:
-            error = VerdiError(
+            raise VerdiError(
                 "controller is disconnected or failed; after a failure use a new session"
             )
-            error.instruction = instruction
-            error.write_outcome = None if query else "not_sent"
-            raise error
+        query = instruction.startswith("?")
         request = encode_instruction(instruction)
         started = monotonic()
         record: dict[str, Any] = {
@@ -314,6 +303,7 @@ class VerdiController:
             "outcome": "failed" if query else "unknown",
             "error": None,
         }
+        self._last_transaction = record
         failure: BaseException | None = None
         try:
             record["response"] = self._exchange(request)
@@ -342,12 +332,8 @@ class VerdiController:
             record["outcome"] = "ok"
             return value
         except BaseException as exc:
-            failure = exc
-            if not record["response"]:
-                record["response"] = getattr(exc, "raw_response", b"")
-            record["write_attempted"] = getattr(exc, "write_attempted", True)
-            record["pending_bytes"] = getattr(exc, "pending_bytes", 0)
-            record["error"] = f"{type(exc).__name__}: {exc}"
+            failure = VerdiError(f"serial I/O failed: {exc}") if isinstance(exc, OSError) else exc
+            record["error"] = f"{type(failure).__name__}: {failure}"
             if isinstance(exc, DeviceError):
                 record["outcome"] = "rejected"
             else:
@@ -355,42 +341,20 @@ class VerdiController:
                 record["outcome"] = "failed"
                 if not query:
                     record["outcome"] = "unknown" if record["write_attempted"] else "not_sent"
-            raise
+            if failure is exc:
+                raise
+            raise failure from exc
         finally:
             record["duration_s"] = monotonic() - started
             if isinstance(failure, VerdiError):
-                self._error_context(failure, record)
-            if self._trace is not None:
-                self._tracing = True
-                try:
-                    self._trace(dict(record))
-                except BaseException as trace_error:
-                    self._failed = True
-                    if failure is not None:
-                        failure.add_note(f"transaction trace failed: {trace_error}")
-                    elif isinstance(trace_error, Exception):
-                        error = VerdiError(f"transaction trace failed: {trace_error}")
-                        self._error_context(error, record)
-                        raise error from trace_error
-                    else:
-                        raise
-                finally:
-                    self._tracing = False
-
-    @staticmethod
-    def _error_context(error: VerdiError, record: dict[str, Any]) -> None:
-        error.instruction = record["instruction"]
-        error.request = record["request"]
-        error.raw_response = record["response"]
-        error.duration_s = record["duration_s"]
-        error.write_outcome = None if record["instruction"].startswith("?") else record["outcome"]
+                failure.transaction = dict(record)
 
     def read(self, query: str) -> float | int | str | list[int]:
         """Read one documented short query; unknown strings never reach the wire."""
         if not isinstance(query, str) or query not in QUERIES:
             raise ValueError(f"unknown query: {query!r}")
         with self._lock:
-            return cast(float | int | str | list[int], self._request(query, query=True))
+            return cast(float | int | str | list[int], self._request(query))
 
     def capture(self, query: str) -> dict[str, Any]:
         """Capture a documented query without interpreting its value; read-only sessions only.
@@ -403,7 +367,7 @@ class VerdiController:
         with self._lock:
             if self._allow_writes:
                 raise PermissionError("capture requires a read-only controller")
-            return cast(dict[str, Any], self._request(query, query=True, capture=True))
+            return dict(cast(dict[str, Any], self._request(query, capture=True)))
 
     def read_faults(self, *, history: bool = False) -> list[int]:
         if type(history) is not bool:
@@ -549,16 +513,19 @@ class VerdiController:
     def _exchange(self, request: bytes) -> bytes:
         if self._stream is None:
             raise VerdiError("serial connection is not open")
+        record = self._last_transaction
+        assert record is not None  # _request owns the record and transaction lock.
         response = bytearray()
-        write_attempted = False
-        pending_bytes = 0
+        record["write_attempted"] = False
         try:
-            pending_bytes = self._stream.in_waiting
-            if pending_bytes:
-                raise VerdiError(f"unexpected buffered input before request: {pending_bytes} bytes")
+            record["pending_bytes"] = self._stream.in_waiting
+            if record["pending_bytes"]:
+                raise VerdiError(
+                    f"unexpected buffered input before request: {record['pending_bytes']} bytes"
+                )
             deadline = monotonic() + self._timeout_s
             self._stream.write_timeout = self._timeout_s
-            write_attempted = True
+            record["write_attempted"] = True
             if self._stream.write(request) != len(request):
                 raise VerdiError("partial write; command outcome is unknown")
             while len(response) < 4096:
@@ -571,27 +538,16 @@ class VerdiController:
                 if not chunk or monotonic() > deadline:
                     raise VerdiError(f"reply timed out after {len(response)} bytes")
                 if response.endswith(b"\r\n"):
-                    pending_bytes = self._stream.in_waiting
-                    if pending_bytes:
+                    record["pending_bytes"] = self._stream.in_waiting
+                    if record["pending_bytes"]:
                         raise VerdiError(
-                            f"unexpected trailing input after reply: {pending_bytes} bytes"
+                            "unexpected trailing input after reply: "
+                            f"{record['pending_bytes']} bytes"
                         )
                     return bytes(response)
             raise VerdiError("reply exceeds 4096 byte limit")
-        except BaseException as exc:
-            failure = (
-                VerdiError(f"serial I/O failed: {exc}; outcome may be unknown")
-                if isinstance(exc, OSError)
-                else exc
-            )
-            failure.__dict__.update(
-                raw_response=bytes(response),
-                write_attempted=write_attempted,
-                pending_bytes=pending_bytes,
-            )
-            if failure is exc:
-                raise
-            raise failure from exc
+        finally:
+            record["response"] = bytes(response)
 
     def _close(self) -> None:
         if self._stream is not None:

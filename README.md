@@ -154,9 +154,9 @@ verdi status
 verdi watch --count 10 --interval 1
 ```
 
-`python -m coherent_verdi` is equivalent to `verdi`.
-Add global `--trace` to send transaction JSON lines to stderr while preserving
-the normal result on stdout, for example `verdi --trace query ?P` for simulation.
+`python -m coherent_verdi` is equivalent to `verdi`. Python applications can
+inspect `last_transaction` after a call or `VerdiError.transaction` after an
+exchange failure; commissioning writes those records as JSONL.
 
 ## Simulator and optional dashboard
 
@@ -186,8 +186,6 @@ For example, a hardware dashboard on HTTP port 8051 uses:
 ```sh
 verdi --port COM3 --model V5 --baudrate 19200 --active-fault-clear-reply "<VERIFIED_TEXT>" gui --port 8051
 ```
-
-![Simulator dashboard with synthetic readings](docs/images/gui-simulator-quickstart.jpg)
 
 ## Reference and development
 

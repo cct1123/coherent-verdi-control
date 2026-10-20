@@ -1,16 +1,42 @@
-"""Deterministic fake protocol peer. Numeric values/dynamics are test fixtures.
-
-The manual defines messages and state meanings, not a numerical laser plant.
-See docs/SIMULATOR.md for every deliberate simplification and uncertain reply.
-"""
+"""Deterministic, warm protocol fixture; no physical timing or laser dynamics."""
 
 import re
-from collections import deque
-from collections.abc import Callable
-from time import monotonic
-from typing import Any
 
-from .controller import VerdiController, VerdiError, finite_range
+from .controller import VerdiController, finite_range
+
+_REPLIES = {
+    "?BT": "30.00",
+    "?B": "19200",
+    "?D1HST": "28.00",
+    "?D1H": "42.0",
+    "?D1PC": "0.0",
+    "?D1RCF": "1.0",
+    "?D1RCM": "30.0",
+    "?D1SS": "1",
+    "?D1ST": "25.00",
+    "?D1TD": "0.0",
+    "?D1T": "25.00",
+    "?D15V": "5.0",
+    "?DIOS": "1",
+    "?ED": "0.0",
+    "?ESS": "1",
+    "?EST": "50.00",
+    "?ET": "50.00",
+    "?HH": "100.0",
+    "?LBOD": "0.0",
+    "?LBOH": "1",
+    "?LBOOS": "1",
+    "?LBOST": "148.00",
+    "?LBOSS": "1",
+    "?LBOT": "148.00",
+    "?M": "1",
+    "?PSH": "120.0",
+    "?SV": "SIMULATOR",
+    "?VST": "30.00",
+    "?VT": "30.00",
+    "?VD": "0.0",
+    "?VSS": "1",
+}
 
 
 class SimulatedVerdi(VerdiController):
@@ -22,11 +48,8 @@ class SimulatedVerdi(VerdiController):
         *,
         allow_writes: bool = False,
         power_limit_w: float | None = None,
-        clock: Callable[[], float] = monotonic,
-        warmup_s: float = 0.0,
         echo: bool = False,
         prompt: bool = False,
-        trace: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         super().__init__(
             "SIMULATOR",
@@ -34,14 +57,9 @@ class SimulatedVerdi(VerdiController):
             allow_writes=allow_writes,
             power_limit_w=power_limit_w,
             active_fault_clear_reply="SYSTEM OK",
-            trace=trace,
         )
-        finite_range(warmup_s, 0, 86400, "warmup_s")
         if type(echo) is not bool or type(prompt) is not bool:
             raise ValueError("echo and prompt must be bools")
-        self._clock = clock
-        self._started = clock()
-        self._warmup_s = warmup_s
         self._echo = echo
         self._prompt = prompt
         self._key = False
@@ -50,14 +68,6 @@ class SimulatedVerdi(VerdiController):
         self._power = 0.0
         self._faults: tuple[int, ...] = ()
         self._history: tuple[int, ...] = ()
-        self._warmup_fault = False
-        self._injections: deque[tuple[bytes | Exception, bool]] = deque()
-        self._requests: deque[bytes] = deque(maxlen=4096)
-
-    @property
-    def requests(self) -> tuple[bytes, ...]:
-        with self._lock:
-            return tuple(self._requests)
 
     def set_key(self, on: bool) -> None:
         """Test fixture operation; there is no remote keyswitch command."""
@@ -68,9 +78,6 @@ class SimulatedVerdi(VerdiController):
             if not on:
                 self._laser = 0
                 self._shutter = False
-                self._warmup_fault = False
-            elif not self._ready():
-                self._latch_warmup_fault()
 
     def set_faults(self, *codes: int) -> None:
         """Test fixture operation; never synthesizes interlock bypass commands."""
@@ -83,85 +90,26 @@ class SimulatedVerdi(VerdiController):
                 self._laser = 2
                 self._shutter = False
 
-    def inject(self, response: bytes | Exception, *, after_apply: bool = False) -> None:
-        """Override next reply, optionally after applying its request to fake state."""
-        with self._lock:
-            self._injections.append((response, after_apply))
-
-    def inject_timeout(self, *, after_apply: bool = False) -> None:
-        """Model a lost request or an applied command whose acknowledgment is lost."""
-        self.inject(VerdiError("simulated response timeout"), after_apply=after_apply)
-
-    def _ready(self) -> bool:
-        return self._clock() - self._started >= self._warmup_s
-
-    def _latch_warmup_fault(self) -> None:
-        # Manual p.4-2: key ON before LBO operating temperature reports fault 5.
-        self._warmup_fault = True
-        self._history = tuple(dict.fromkeys((*self._history, 5)))
-        self._laser = 2
-        self._shutter = False
-
-    def _active_faults(self) -> tuple[int, ...]:
-        if self._warmup_fault and not self._ready() and 5 not in self._faults:
-            return (*self._faults, 5)
-        return self._faults
-
     def _query(self, instruction: str) -> str:
-        elapsed = max(0.0, self._clock() - self._started)
-        ready = self._ready()
-        faults = self._active_faults()
-        diode_on = self._laser == 1 and ready and not faults
+        diode_on = self._laser == 1 and not self._faults
         emitting = diode_on and self._shutter
         # Closed-shutter idle is not diode-off (Tables 4-1/4-3). Values are fixtures.
         current = ("12.0" if self._shutter else "1.0") if diode_on else "0.0"
-        fraction = 1.0 if not self._warmup_s else min(1.0, elapsed / self._warmup_s)
         # Independent short-form replies for the controller; values are fixtures.
         values: dict[str, str] = {
             "?ACAD": f"{current}&0.0",
-            "?BT": "30.00",
-            "?B": "19200",
             "?C": current,
             "?D1C": current,
-            "?D1HST": "28.00",
-            "?D1H": "42.0",
-            "?D1PC": "0.0",
-            "?D1RCF": "1.0",
-            "?D1RCM": "30.0",
-            "?D1SS": "1" if ready else "2",
-            "?D1ST": "25.00",
-            "?D1TD": "0.0",
-            "?D1T": "25.00",
-            "?D15V": "5.0",
-            "?DIOS": "1" if ready else "0",
-            "?ED": "0.0",
-            "?ESS": "1" if ready else "2",
-            "?EST": "50.00",
-            "?ET": "50.00",
-            "?F": "&".join(map(str, faults)) or "SYSTEM OK",
+            "?F": "&".join(map(str, self._faults)) or "SYSTEM OK",
             "?FH": "&".join(map(str, self._history)) or "SYSTEM OK",
-            "?HH": "100.0",
             "?K": str(int(self._key)),
             "?L": str(int(self._laser)),
-            "?LBOD": "0.0",
-            "?LBOH": "1",
-            "?LBOOS": "1" if ready else "0",
-            "?LBOST": "148.00",
-            "?LBOSS": "1" if ready else "2",
-            "?LBOT": f"{25 + 123 * fraction:.2f}",
             "?P": f"{self._power if emitting else 0:.3f}",
             "?LRS": "1" if emitting else "0",
-            "?M": "1",
-            "?PSH": "120.0",
             "?SP": f"{self._power:.4f}",
             "?S": str(int(self._shutter)),
-            "?SV": "SIMULATOR-0.1",
-            "?VST": "30.00",
-            "?VT": "30.00",
-            "?VD": "0.0",
-            "?VSS": "1",
         }
-        return values.get(instruction, f"Query Error: {instruction}")
+        return values.get(instruction, _REPLIES.get(instruction, f"Query Error: {instruction}"))
 
     def _apply(self, instruction: str) -> str:
         name, sep, operand = instruction.partition("=")
@@ -182,17 +130,13 @@ class SimulatedVerdi(VerdiController):
             if name == "L":
                 if value:
                     self._history = ()
-                    if self._key and not self._ready():
-                        self._latch_warmup_fault()
-                    elif self._active_faults():
+                    if self._faults:
                         self._laser = 2
                     elif self._key:
                         self._laser = 1
-                        self._warmup_fault = False
                 else:
                     self._laser = 0
                     self._shutter = False
-                    self._warmup_fault = False
             elif name == "S":
                 # Conservative simulation policy; not a claim about rejected hardware writes.
                 self._shutter = value and self._laser == 1 and self._key
@@ -206,7 +150,6 @@ class SimulatedVerdi(VerdiController):
 
     def _exchange(self, request: bytes) -> bytes:
         with self._lock:
-            self._requests.append(request)
             if request.endswith(b"\r\n"):
                 body = request[:-2]
             else:
@@ -215,13 +158,6 @@ class SimulatedVerdi(VerdiController):
                 raise ValueError("simulator accepts one printable ASCII instruction at a time")
             instruction = body.decode("ascii")
             query = instruction.startswith("?")
-            if self._injections:
-                result, after_apply = self._injections.popleft()
-                if after_apply and not query:
-                    self._apply(instruction)
-                if isinstance(result, Exception):
-                    raise result
-                return result
             parts = ["Verdi>"] if self._prompt else []
             if self._echo:
                 parts.append(instruction)

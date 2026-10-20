@@ -40,11 +40,11 @@ from becoming the next query's reply. It cannot identify arbitrarily delayed,
 untagged replies or eliminate OS/adapter buffering races. The checks establish no
 quiet-time guarantee, and reopening does not establish resynchronization.
 
-Optional transaction tracing records exact request/response bytes, UTC start,
-duration, connection settings, queued-byte count and outcome. Command failures
-distinguish `not_sent` from `unknown`; successful acknowledgment and documented
-rejection remain explicit outcomes. A trace callback failure latches the session
-without replay and preserves any established command outcome.
+Each attempted transaction records consumed bytes, UTC start, duration, settings,
+queued-byte count and outcome in `last_transaction`. Exchange errors carry an
+independent record in `VerdiError.transaction`. Command failures distinguish
+`not_sent` from `unknown`; acknowledgment and documented rejection are explicit
+outcomes. There is no automatic retry or replay.
 
 ## Exposed operational commands
 
@@ -161,9 +161,8 @@ code 47 is listed in Table 5-4 but omitted from Table 6-1.
 5. **Timing and faults:** no plant model, firmware latency bound, physical fault
    response timing, interlock integrity or safety certification follows from tests.
    Manual p. 4-2 specifies the LBO-not-locked fault for key ON during cold-start
-   warmup. The simulator represents this fault, but retaining a fault latch until
-   a fresh explicit enable after warmup is a conservative fixture policy. Real
-   recovery/latching and any automatic resumption require physical observation.
+   warmup. The simulator has no warmup model; actual recovery/latching and any
+   automatic resumption require physical observation.
 6. **Fault-code conflict:** Table 5-4 calls code 1 a laser head interlock fault;
    Table 6-1 and Chart 5 call it an emission lamp fault (pp. 6-2, 6-12). The fault-code
    reference above preserves both labels; verify against device firmware/Coherent support.

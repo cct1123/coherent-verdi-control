@@ -6,8 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 import serial
+from fakes import FaultyVerdi
 
-from coherent_verdi import DeviceError, SimulatedVerdi, VerdiError
+from coherent_verdi import DeviceError, VerdiError
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 SCRIPTS = tuple(path.name for path in sorted(EXAMPLES.glob("0*.py")))
@@ -39,7 +40,7 @@ def writes(hardware):
 @pytest.fixture
 def hardware(monkeypatch):
     fixture = SimpleNamespace(
-        sim=SimulatedVerdi("V5"),
+        sim=FaultyVerdi("V5"),
         ports=[],
         overrides={},
         fail_on=None,
@@ -110,7 +111,7 @@ def test_examples_import_and_disabled_defaults_never_open(hardware, name, capsys
 @pytest.mark.parametrize("model", ["V2", "V5", "V6"])
 @pytest.mark.parametrize("name", SCRIPTS)
 def test_hardware_lessons_all_models_and_exact_write_scope(hardware, name, model, capsys):
-    hardware.sim = SimulatedVerdi(model)
+    hardware.sim = FaultyVerdi(model)
     hardware.sim.set_key(True)
     prepare(name, MODEL=model)()
     output = capsys.readouterr().out

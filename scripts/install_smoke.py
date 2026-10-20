@@ -127,23 +127,29 @@ from unittest.mock import patch
 from coherent_verdi import SimulatedVerdi, VerdiController
 sim = SimulatedVerdi('V5')
 sim.set_key(True)
+requests = []
 main = runpy.run_path(sys.argv[1])['main']
 main.__globals__.update(PORT='FAKE-ONLY', MODEL='V5', BAUDRATE=19200,
     ACTIVE_FAULT_CLEAR_REPLY='SYSTEM OK', TARGET_W=0.25, POWER_LIMIT_W=0.5)
 def confirm(prompt):
     return 'CONNECT' if 'CONNECT' in prompt else 'SET' if 'SET' in prompt else 'RUN'
+
+def exchange(controller, request):
+    requests.append(request)
+    return sim._exchange(request)
+
 with patch.object(VerdiController, '_open', lambda c: sim.connect()), \
      patch.object(VerdiController, '_close', lambda c: sim.disconnect()), \
-     patch.object(VerdiController, '_exchange', lambda c, wire: sim._exchange(wire)), \
+     patch.object(VerdiController, '_exchange', exchange), \
      patch.object(builtins, 'input', confirm):
     main()
-assert sim.requests[0] == b'?SV\r\n'
+assert requests[0] == b'?SV\r\n'
 """
         for example in sorted((ROOT / "examples").glob("0*.py")):
             run([str(executable), "-I", "-c", example_check, str(example)], cwd=directory)
         entrypoint = env_path / ("Scripts/verdi.exe" if os.name == "nt" else "bin/verdi")
         result = json.loads(run([str(entrypoint), "query", "?SV"], cwd=directory).stdout)
-        assert result == "SIMULATOR-0.1"
+        assert result == "SIMULATOR"
         missing_gui = subprocess.run(
             [str(executable), "-I", "-m", "coherent_verdi", "gui"],
             cwd=directory,
@@ -178,9 +184,7 @@ def gui_smoke() -> None:
     import serial
     import serial.tools.list_ports
 
-    from coherent_verdi import (
-        SimulatedVerdi,
-    )
+    from coherent_verdi import SimulatedVerdi
     from coherent_verdi.gui import Monitor, create_app
 
     def prohibited(*args: object, **kwargs: object) -> None:
@@ -192,6 +196,14 @@ def gui_smoke() -> None:
     serial.tools.list_ports.comports = prohibited
     serial.tools.list_ports.grep = prohibited
     sim = SimulatedVerdi("V5")
+    requests = []
+    original_exchange = sim._exchange
+
+    def exchange(request: bytes) -> bytes:
+        requests.append(request)
+        return original_exchange(request)
+
+    sim._exchange = exchange
     with sim as controller:
         telemetry = Monitor(controller, history_size=2)
         app = create_app(telemetry)
@@ -211,23 +223,36 @@ def gui_smoke() -> None:
         }
 
         def refresh(expected: str) -> dict:
-            before = sim.requests
+            before = len(requests)
             response = client.post("/_dash-update-component", json=payload)
             assert response.status_code == 200, response.data
             data = response.get_json()["response"]
+
+            def collect(node: object) -> None:
+                if isinstance(node, list):
+                    for child in node:
+                        collect(child)
+                elif isinstance(node, dict):
+                    props = node.get("props", {})
+                    if "id" in props:
+                        data[props["id"]] = props
+                    collect(props.get("children"))
+
+            collect(data["sample"]["children"])
             assert data["health"]["children"] == expected, data
-            assert sim.requests == before, "GUI callback must read only the cache"
+            assert len(requests) == before, "GUI callback must read only the cache"
             return data
 
         refresh("NO DATA")
         telemetry.poll_once()
-        assert refresh("LIVE")["source"]["children"] == "SIMULATOR"
+        refresh("LIVE")
+        assert b"SIMULATOR" in client.get("/_dash-layout").data
         sim.set_faults(5, 999)
         telemetry.poll_once()
         fault_view = refresh("LIVE")
         assert fault_view["laser"]["children"] == "FAULT"
-        assert "999" in str(fault_view["instrument"])
-        sim.inject_timeout()
+        assert "999" in fault_view["faults"]["children"]
+        sim._exchange = lambda request: b""  # Test-only malformed reply; never real hardware.
         telemetry.poll_once()
         error_view = refresh("ERROR")
         assert error_view["laser"]["children"] == "UNKNOWN"
