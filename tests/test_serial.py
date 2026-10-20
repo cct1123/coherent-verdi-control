@@ -12,7 +12,7 @@ from coherent_verdi.__main__ import main
 
 
 class FakeSerial:
-    """A byte-oriented peer: it rejects overlapping transactions."""
+    """A byte-oriented peer that can retain unsolicited or duplicate replies."""
 
     def __init__(self, **settings):
         self.settings = settings
@@ -21,7 +21,14 @@ class FakeSerial:
         self.writes = []
         self.opens = self.closes = 0
         self.write_failure = self.read_failure = self.open_failure = self.close_failure = None
+        self.in_waiting_failure = None
         self.partial = False
+
+    @property
+    def in_waiting(self):
+        if self.in_waiting_failure:
+            raise self.in_waiting_failure
+        return len(self.pending)
 
     def open(self):
         self.opens += 1
@@ -31,7 +38,6 @@ class FakeSerial:
     def write(self, data):
         if self.write_failure:
             raise self.write_failure
-        assert not self.pending, "overlapping requests"
         self.writes.append(data)
         self.pending.extend(self.responses.popleft() if self.responses else b"")
         return len(data) - int(self.partial)
@@ -128,6 +134,111 @@ def test_cli_hardware_timeout_never_retries(peer, capsys):
     assert peer.writes == [b"?SV\r\n"]
 
 
+def test_commission_defaults_to_one_raw_version_query(peer, capsys):
+    peer.responses.append(b"Version-TEST\r\n")
+    assert main(["--port", "FAKE-ONLY", "--model", "V5", "commission"]) == 0
+    output = capsys.readouterr()
+    record = json.loads(output.out)
+    assert record["instruction"] == "?SV" and record["payload"] == "Version-TEST"
+    assert bytes.fromhex(record["request_hex"]) == b"?SV\r\n"
+    assert bytes.fromhex(record["response_hex"]) == b"Version-TEST\r\n"
+    assert record["outcome"] == "captured" and record["simulated"] is False
+    assert output.err == ""
+    assert peer.writes == [b"?SV\r\n"] and peer.opens == peer.closes == 1
+
+
+@pytest.mark.parametrize("reply", [b"UNVERIFIED CLEAR\r\n", b"\r\n", b"0\r\n"])
+def test_commission_captures_fault_reply_without_assuming_clear(peer, capsys, reply):
+    peer.responses.extend([b"Version-TEST\r\n", reply])
+    assert (
+        main(
+            [
+                "--port",
+                "FAKE-ONLY",
+                "--model",
+                "V5",
+                "commission",
+                "--query",
+                "?SV",
+                "--query",
+                "?F",
+            ]
+        )
+        == 0
+    )
+    rows = [json.loads(row) for row in capsys.readouterr().out.splitlines()]
+    assert [row["instruction"] for row in rows] == ["?SV", "?F"]
+    assert bytes.fromhex(rows[1]["response_hex"]) == reply
+    assert rows[1]["outcome"] == "captured" and "faults" not in rows[1]
+    assert peer.writes == [b"?SV\r\n", b"?F\r\n"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["commission"],
+        ["--port", "FAKE-ONLY", "--model", "V5", "commission", "--query", "L=1"],
+    ],
+)
+def test_commission_requires_explicit_connection_and_whitelisted_queries(peer, args):
+    with pytest.raises(SystemExit) as caught:
+        main(args)
+    assert caught.value.code == 2
+    assert peer.opens == 0 and peer.writes == []
+
+
+@pytest.mark.parametrize(
+    ("reply", "outcome"),
+    [
+        (b"Query Error: ?SV\r\n", "rejected"),
+        (b"Version-TEST\r\n0\r\n", "failed"),
+        (b"partial", "failed"),
+        (b"\xff\r\n", "failed"),
+    ],
+)
+def test_commission_records_failure_and_stops_remaining_queries(peer, capsys, reply, outcome):
+    peer.responses.extend([reply, b"0\r\n"])
+    assert (
+        main(
+            [
+                "--port",
+                "FAKE-ONLY",
+                "--model",
+                "V5",
+                "commission",
+                "--query",
+                "?SV",
+                "--query",
+                "?F",
+            ]
+        )
+        == 2
+    )
+    output = capsys.readouterr()
+    record = json.loads(output.out)
+    assert record["outcome"] == outcome and record["error"]
+    assert json.loads(output.err)["type"] in ("DeviceError", "VerdiError")
+    assert peer.writes == [b"?SV\r\n"] and peer.closes == 1
+
+
+def test_trace_preserves_normal_stdout_and_uses_stderr(peer, capsys):
+    peer.responses.append(b"1.234\r\n")
+    assert main(["--port", "FAKE-ONLY", "--model", "V5", "--trace", "query", "?P"]) == 0
+    output = capsys.readouterr()
+    assert json.loads(output.out) == 1.234
+    record = json.loads(output.err)
+    assert record["outcome"] == "ok" and record["instruction"] == "?P"
+    assert bytes.fromhex(record["response_hex"]) == b"1.234\r\n"
+
+
+def test_trace_on_simulator_never_opens_serial(peer, capsys):
+    assert main(["--trace", "query", "?P"]) == 0
+    output = capsys.readouterr()
+    assert json.loads(output.out) == 0.0
+    assert json.loads(output.err)["simulated"] is True
+    assert peer.opens == 0
+
+
 @pytest.mark.parametrize(
     "options",
     [
@@ -204,6 +315,81 @@ def test_failed_read_blocks_late_replies_and_reconnect(peer, reply, error):
         with pytest.raises(VerdiError, match="failed"):
             laser.connect()
     assert peer.writes == [b"?P\r\n"]
+
+
+@pytest.mark.parametrize("queued", [b"0", b"0\r\n", b"\r\n"])
+def test_preexisting_input_blocks_transmission_and_latches_failure(peer, queued):
+    peer.pending.extend(queued)
+    peer.responses.append(b"1.234\r\n")
+    with VerdiController("FAKE-ONLY", allow_writes=True) as laser:
+        with pytest.raises(VerdiError):
+            laser.read_power_w()
+        for action in (laser.read_power_w, laser.start, laser.connect):
+            with pytest.raises(VerdiError, match="failed"):
+                action()
+    assert peer.writes == []
+
+
+@pytest.mark.parametrize("trailing", [b"0\r\n", b"0", b"\r\n", b"unsolicited\r\n"])
+def test_trailing_reply_bytes_cannot_shift_the_next_read(peer, trailing):
+    peer.responses.extend([b"1.000\r\n" + trailing, b"1\r\n"])
+    with VerdiController("FAKE-ONLY", allow_writes=True) as laser:
+        with pytest.raises(VerdiError):
+            laser.read_power_w()
+        for action in (laser.read_laser_state, laser.start, laser.connect):
+            with pytest.raises(VerdiError, match="failed"):
+                action()
+    # In particular, the queued 0 must never be returned as the next ?L value.
+    assert peer.writes == [b"?P\r\n"]
+
+
+def test_bytes_arriving_between_requests_block_the_next_transmission(peer):
+    peer.responses.extend([b"1.000\r\n", b"1\r\n"])
+    with VerdiController("FAKE-ONLY", allow_writes=True) as laser:
+        assert laser.read_power_w() == 1.0
+        peer.pending.extend(b"0\r\n")
+        with pytest.raises(VerdiError):
+            laser.read_laser_state()
+        with pytest.raises(VerdiError, match="failed"):
+            laser.start()
+    assert peer.writes == [b"?P\r\n"]
+
+
+@pytest.mark.parametrize("reply", [b"\r\n", b"Command Error: unsupported\r\n"])
+def test_trailing_command_reply_bytes_invalidate_even_complete_rejections(peer, reply):
+    peer.responses.extend([reply + b"0\r\n", b"\r\n"])
+    with VerdiController("FAKE-ONLY", allow_writes=True) as laser:
+        with pytest.raises(VerdiError):
+            laser.start()
+        for action in (laser.start, laser.stop, laser.read_power_w, laser.connect):
+            with pytest.raises(VerdiError, match="failed"):
+                action()
+    assert peer.writes == [b"L=1\r\n"]
+
+
+@pytest.mark.parametrize("when", ["before_write", "after_reply"])
+def test_pending_count_failure_latches_without_replaying(peer, monkeypatch, when):
+    peer.responses.append(b"1.000\r\n")
+    if when == "before_write":
+        peer.in_waiting_failure = OSError("adapter input-count failure")
+    else:
+        read = peer.read
+
+        def fail_after_terminator(size):
+            result = read(size)
+            if result == b"\n":
+                peer.in_waiting_failure = OSError("adapter input-count failure")
+            return result
+
+        monkeypatch.setattr(peer, "read", fail_after_terminator)
+    with VerdiController("FAKE-ONLY", allow_writes=True) as laser:
+        with pytest.raises(VerdiError, match="input-count failure"):
+            laser.read_power_w()
+        peer.in_waiting_failure = None
+        for action in (laser.read_power_w, laser.start, laser.connect):
+            with pytest.raises(VerdiError, match="failed"):
+                action()
+    assert peer.writes == ([] if when == "before_write" else [b"?P\r\n"])
 
 
 @pytest.mark.parametrize("failure", ["partial", "write", "interrupt", "unexpected"])

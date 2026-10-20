@@ -21,9 +21,16 @@ the site's laser procedure for setup, emission and shutdown.
 ## First read
 
 1. Use the default `allow_writes=False`. Connection sends no Verdi instructions.
-2. Send one `read("?SV")`; compare version and framing with the actual instrument
-   and manual section 5. Capture raw bytes and timestamps when commissioning.
-   The CLI prints the parsed reply, not a raw-byte trace.
+2. Capture one `?SV` exchange; compare version and framing with the actual
+   instrument and manual section 5. Specify the actual model and port:
+
+   ```powershell
+   verdi --port COM3 --model V5 --baudrate 19200 commission > identify.jsonl
+   ```
+
+   This sends only `?SV` and records raw request/reply bytes as hexadecimal,
+   payload, UTC timestamp, duration and configuration. Substitute the baud shown
+   on the instrument. No mode-setting commands are sent.
 3. Stop on timeout or unexpected framing. Do not recover by probing ports,
    changing echo/prompt modes or repeatedly reconnecting.
 4. Read `?L`, `?K`, `?S`, then `?P`, `?SP` and temperatures/readiness individually.
@@ -38,11 +45,22 @@ and independently confirm its meaning from instrument state and firmware
 documentation. Do not clear faults during this capture. If a query is found to
 have side effects on the actual firmware, revise the procedure before issuing it.
 
+```powershell
+verdi --port COM3 --model V5 --baudrate 19200 commission --query ?F > active-fault.jsonl
+```
+
+`commission` uses the read-only `capture()` API. It validates ASCII and single-line
+framing, but leaves values and faults uninterpreted. Empty and unknown payloads
+are evidence to inspect; a captured exchange does not establish a healthy laser.
+Documented device-error replies are recorded as rejected. It stops on the first
+device rejection, framing or communication failure. Use repeated
+`--query` options only for the specific sequence you intend to inspect.
+
 Set `active_fault_clear_reply` to the exact verified text in the controller
 constructor before using `read_faults()` or `status()`. The default deliberately
-rejects unverified clear-looking replies. Empty clear replies require a parser
-change; positive fault codes cannot be configured as clear. The simulator's
-`SYSTEM OK` convention does not establish physical compatibility.
+rejects unverified clear-looking replies. Empty replies remain unsupported by
+normal fault parsing; positive fault codes cannot be configured as clear. The
+simulator's `SYSTEM OK` convention does not establish physical compatibility.
 
 After individual reads pass, check complete status and diagnostics. Preserve
 unknown fault codes. Record raw/parsed values, units, front-panel observations,
@@ -81,12 +99,19 @@ outside the controller's public operational API.
 Choose polling cadence and transaction timeout from observed latency. `status()`
 is 14 sequential queries, not simultaneous acquisition. Record sample duration,
 failed samples, drift and dashboard staleness over the required run duration.
+Global CLI `--trace` writes transaction JSONL to stderr, separately from normal
+command output. Python applications can pass `trace=callback` to record the same
+raw evidence; see [API.md](API.md#commissioning-and-tracing).
 
 Test communication loss only after the operator establishes a safe condition.
 Verify error visibility and absence of retries, replay or auto-enable. A lost
 acknowledgment means a write's outcome is unknown. A failed controller cannot be
 reused. Closing/reopening alone does not prove delayed untagged replies have
 cleared: establish a firmware-appropriate resynchronization procedure first.
+The driver rejects bytes already queued before transmission or after a complete
+reply and latches the session without purging. This detects available extra data;
+it cannot guarantee alignment against arbitrarily delayed replies or bytes still
+buffered by the OS/adapter. No quiet-time guarantee is implied.
 Do not deliberately create interlock or other hazardous faults for software tests.
 
 ## Abort and shutdown

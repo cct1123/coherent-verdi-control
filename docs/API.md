@@ -8,9 +8,11 @@ VerdiController(
     port,  # Explicit native port string; no backend/factory argument
     *, model="V5", baudrate=19200, timeout_s=1.0,
     allow_writes=False, power_limit_w=None, active_fault_clear_reply=None,
+    trace=None,
 )
 SimulatedVerdi(model="V5", *, allow_writes=False, power_limit_w=None,
-               clock=time.monotonic, warmup_s=0, echo=False, prompt=False)
+               clock=time.monotonic, warmup_s=0, echo=False, prompt=False,
+               trace=None)
 ```
 
 Model is `"V2"`, `"V5"` or `"V6"`. The conservative default ceiling is 2/5/6 W;
@@ -27,6 +29,7 @@ Physical clear-fault text must be independently verified before configuring
 | --- | --- |
 | `connect()` / `disconnect()` | Passive open / resource release; neither sends instructions |
 | `read("?P")` | One of 42 short queries; float, integer, string or list of fault codes |
+| `capture("?F")` | Read-only commissioning exchange; transaction record without interpreting the value or faults |
 | `read_power_w()` | Measured-power report in W |
 | `read_laser_state()` | Integer: 0 standby, 1 on, 2 fault |
 | `read_faults(history=False)` | Fresh `list[int]`; unknown positive codes preserved; boolean selector |
@@ -53,12 +56,69 @@ one port. Disconnect is not laser shutdown. An acknowledged healthy session can
 explicitly reopen; a failed session cannot.
 
 `ValueError` and `PermissionError` reject local inputs/disabled writes before I/O.
-`DeviceError` retains `instruction` and `response` for a complete documented
-rejection; the session remains usable. Other `VerdiError` failures mean disconnected,
+`VerdiError` exposes `instruction`, `request` (bytes), `raw_response` (bytes),
+`duration_s` and `write_outcome`. The outcome is None for queries; for commands it
+is `acknowledged`, `rejected`, `unknown` or `not_sent`. An unknown outcome means
+the command may have executed; do not automatically replay it. `DeviceError` also
+retains `response`, the existing reply text, for a complete documented rejection;
+the session remains usable unless its trace callback also fails. Other `VerdiError`
+failures mean disconnected,
 uncertain or malformed communication. Retire an uncertain session; no method clears
 its failure latch. Interrupted/unexpected I/O errors propagate and also latch failure.
 Disconnect remains available; failed cleanup is retryable and adds a note to an
 already-active exception. Catch `DeviceError` before `VerdiError` to distinguish them.
+
+## Commissioning and tracing
+
+`capture(query)` is available only when `allow_writes=False` and accepts the same
+42 catalogued queries as `read()`. It requires ASCII and one complete CR/LF frame,
+removes documented echo/prompt decoration, and allows an empty payload. It bypasses
+value, state and fault interpretation; documented device-error replies still raise
+`DeviceError` and produce a `rejected` trace record.
+An empty or clear-looking `?F` capture therefore does not establish an absence of
+faults and does not configure `active_fault_clear_reply`. Normal `read()` and
+`status()` retain their existing parsing requirements.
+
+The returned record is a flat dictionary. Passing `trace=callback` delivers the
+same record synchronously for each attempted transaction, including failures:
+
+| Field | Meaning |
+| --- | --- |
+| `instruction`, `request`, `response` | Instruction text, encoded request bytes and received bytes |
+| `payload` | Undecorated text when available, otherwise None |
+| `timestamp_utc`, `duration_s` | ISO 8601 UTC start and elapsed seconds |
+| `port`, `model`, `baudrate`, `timeout_s`, `simulated` | Connection configuration and source |
+| `write_attempted`, `pending_bytes` | Whether transmission was attempted; unexpected queued-byte count |
+| `outcome`, `error` | Result and diagnostic text, or None for no error |
+
+`outcome` is `ok` for a parsed query, `captured` for a commissioning capture,
+`acknowledged` for a successful command, `rejected` for a device rejection,
+`failed` for a query failure, and `not_sent` or `unknown` for a failed command.
+Do not infer physical execution from `write_attempted` alone.
+
+The callback runs under the transaction lock; keep it short. It cannot issue
+device instructions or open/close the connection: these attempts raise
+`RuntimeError`. An uncaught callback failure latches the session. Ordinary callback
+exceptions annotate a primary transaction error, or raise `VerdiError` while
+retaining an already established command outcome. Callback interrupts propagate
+when there is no primary transaction error; otherwise that error is preserved
+with a note. No transaction is retried. Store the bytes directly or encode them explicitly when
+writing JSON.
+
+For CLI commissioning, specify the actual port and model:
+
+```powershell
+verdi --port COM3 --model V5 commission
+verdi --port COM3 --model V5 commission --query ?SV --query ?F
+```
+
+The default is one `?SV` exchange. Repeated `--query` options select the exact
+ordered queries. Each attempt emits one JSONL record to stdout, with
+`request_hex`/`response_hex` replacing the byte fields. Commissioning stops on the
+first device rejection, framing or communication error with exit code 2. It does
+not need `--active-fault-clear-reply`; interpreting and verifying the reply remains
+the operator's responsibility. Global `--trace` emits the same JSONL format to
+stderr for other CLI commands, leaving their usual stdout unchanged.
 
 ## Optional monitoring
 

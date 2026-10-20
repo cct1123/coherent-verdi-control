@@ -1,6 +1,7 @@
 """Synchronous Verdi driver: explicit serial lifecycle, manual protocol, plain results."""
 
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 from math import isfinite
 from threading import RLock
@@ -12,14 +13,22 @@ from typing import Any, Self, cast
 class VerdiError(Exception):
     """Communication or reply failure. Retire the session; never replay a command."""
 
+    def __init__(self, message: str = "") -> None:
+        super().__init__(message)
+        self.instruction: str | None = None
+        self.request = b""
+        self.raw_response = b""
+        self.duration_s: float | None = None
+        self.write_outcome: str | None = None
+
 
 class DeviceError(VerdiError):
     """Complete documented device rejection; the connection remains usable."""
 
     def __init__(self, instruction: str, response: str) -> None:
+        super().__init__(f"{instruction}: {response}")
         self.instruction = instruction
         self.response = response
-        super().__init__(f"{instruction}: {response}")
 
 
 BAUDRATES = (1200, 2400, 4800, 9600, 19200, 38400, 57600)
@@ -101,7 +110,9 @@ def encode_instruction(instruction: str) -> bytes:
     return instruction.encode("ascii") + b"\r\n"
 
 
-def decode_response(instruction: str, wire: bytes, *, query: bool) -> str:
+def decode_response(
+    instruction: str, wire: bytes, *, query: bool, allow_empty: bool = False
+) -> str:
     """Accept the four single-line echo/prompt layouts in Table 5-1.
 
     Extra lines are errors, not discarded data; this prevents silent reply mixing.
@@ -122,7 +133,7 @@ def decode_response(instruction: str, wire: bytes, *, query: bool) -> str:
         payload = payload[len(instruction) :].lstrip()
     if payload.startswith(("RANGE ERROR:", "Command Error:", "Query Error:")):
         raise DeviceError(instruction, payload)
-    if query and not payload:
+    if query and not payload and not allow_empty:
         raise VerdiError(f"{instruction}: empty query response")
     if not query and payload:
         raise VerdiError(f"{instruction}: unexpected command acknowledgment {payload!r}")
@@ -189,6 +200,7 @@ class VerdiController:
         allow_writes: bool = False,
         power_limit_w: float | None = None,
         active_fault_clear_reply: str | None = None,
+        trace: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         if model not in ("V2", "V5", "V6"):
             raise ValueError("model must be V2, V5 or V6")
@@ -213,6 +225,10 @@ class VerdiController:
                 "active_fault_clear_reply must be verified ASCII text or 0, not a fault code"
             )
         self._active_fault_clear_reply = reply
+        if trace is not None and not callable(trace):
+            raise ValueError("trace must be a callable or None")
+        self._trace = trace
+        self._tracing = False
         if not isinstance(port, str) or not port.strip() or "://" in port:
             raise ValueError("an explicit native port name is required; no discovery or URLs")
         if type(baudrate) is not int or baudrate not in BAUDRATES:
@@ -238,6 +254,8 @@ class VerdiController:
         session before constructing another; reopening alone cannot prove that.
         """
         with self._lock:
+            if self._tracing:
+                raise RuntimeError("trace callbacks cannot open or close the connection")
             if self._failed:
                 raise VerdiError(
                     "failed session; establish a clean connection and use a new controller"
@@ -256,6 +274,8 @@ class VerdiController:
         Failed cleanup can be retried. A failed session never becomes reusable.
         """
         with self._lock:
+            if self._tracing:
+                raise RuntimeError("trace callbacks cannot open or close the connection")
             self._connected = False
             try:
                 self._close()
@@ -263,18 +283,52 @@ class VerdiController:
                 self._failed = True
                 raise
 
-    def _request(self, instruction: str, *, query: bool = False) -> float | int | str | list[int]:
+    def _request(
+        self, instruction: str, *, query: bool = False, capture: bool = False
+    ) -> float | int | str | list[int] | dict[str, Any]:
+        if self._tracing:
+            raise RuntimeError("trace callbacks cannot issue device instructions")
         if not self._connected or self._failed:
-            raise VerdiError(
+            error = VerdiError(
                 "controller is disconnected or failed; after a failure use a new session"
             )
+            error.instruction = instruction
+            error.write_outcome = None if query else "not_sent"
+            raise error
+        request = encode_instruction(instruction)
+        started = monotonic()
+        record: dict[str, Any] = {
+            "instruction": instruction,
+            "request": request,
+            "response": b"",
+            "payload": None,
+            "timestamp_utc": datetime.now(UTC).isoformat(),
+            "duration_s": 0.0,
+            "port": self._port,
+            "model": self.model,
+            "baudrate": self._baudrate,
+            "timeout_s": self._timeout_s,
+            "simulated": self.is_simulated,
+            "write_attempted": True,
+            "pending_bytes": 0,
+            "outcome": "failed" if query else "unknown",
+            "error": None,
+        }
+        failure: BaseException | None = None
         try:
+            record["response"] = self._exchange(request)
             payload = decode_response(
                 instruction,
-                self._exchange(encode_instruction(instruction)),
+                record["response"],
                 query=query,
+                allow_empty=capture,
             )
+            record["payload"] = payload
+            if capture:
+                record["outcome"] = "captured"
+                return record
             if not query:
+                record["outcome"] = "acknowledged"
                 return payload
             value = parse_value(
                 instruction, payload, active_fault_clear_reply=self._active_fault_clear_reply
@@ -285,19 +339,71 @@ class VerdiController:
                 raise VerdiError(
                     f"{instruction}: servo code {value} is not documented for {self.model}"
                 )
+            record["outcome"] = "ok"
             return value
-        except DeviceError:
-            raise  # Complete documented rejection: the reply has been consumed.
-        except BaseException:
-            self._failed = True
+        except BaseException as exc:
+            failure = exc
+            if not record["response"]:
+                record["response"] = getattr(exc, "raw_response", b"")
+            record["write_attempted"] = getattr(exc, "write_attempted", True)
+            record["pending_bytes"] = getattr(exc, "pending_bytes", 0)
+            record["error"] = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, DeviceError):
+                record["outcome"] = "rejected"
+            else:
+                self._failed = True
+                record["outcome"] = "failed"
+                if not query:
+                    record["outcome"] = "unknown" if record["write_attempted"] else "not_sent"
             raise
+        finally:
+            record["duration_s"] = monotonic() - started
+            if isinstance(failure, VerdiError):
+                self._error_context(failure, record)
+            if self._trace is not None:
+                self._tracing = True
+                try:
+                    self._trace(dict(record))
+                except BaseException as trace_error:
+                    self._failed = True
+                    if failure is not None:
+                        failure.add_note(f"transaction trace failed: {trace_error}")
+                    elif isinstance(trace_error, Exception):
+                        error = VerdiError(f"transaction trace failed: {trace_error}")
+                        self._error_context(error, record)
+                        raise error from trace_error
+                    else:
+                        raise
+                finally:
+                    self._tracing = False
+
+    @staticmethod
+    def _error_context(error: VerdiError, record: dict[str, Any]) -> None:
+        error.instruction = record["instruction"]
+        error.request = record["request"]
+        error.raw_response = record["response"]
+        error.duration_s = record["duration_s"]
+        error.write_outcome = None if record["instruction"].startswith("?") else record["outcome"]
 
     def read(self, query: str) -> float | int | str | list[int]:
         """Read one documented short query; unknown strings never reach the wire."""
         if not isinstance(query, str) or query not in QUERIES:
             raise ValueError(f"unknown query: {query!r}")
         with self._lock:
-            return self._request(query, query=True)
+            return cast(float | int | str | list[int], self._request(query, query=True))
+
+    def capture(self, query: str) -> dict[str, Any]:
+        """Capture a documented query without interpreting its value; read-only sessions only.
+
+        Framing and device errors are still enforced. Empty payloads are evidence,
+        never an assertion that the instrument is clear or ready.
+        """
+        if not isinstance(query, str) or query not in QUERIES:
+            raise ValueError(f"unknown query: {query!r}")
+        with self._lock:
+            if self._allow_writes:
+                raise PermissionError("capture requires a read-only controller")
+            return cast(dict[str, Any], self._request(query, query=True, capture=True))
 
     def read_faults(self, *, history: bool = False) -> list[int]:
         if type(history) is not bool:
@@ -443,26 +549,49 @@ class VerdiController:
     def _exchange(self, request: bytes) -> bytes:
         if self._stream is None:
             raise VerdiError("serial connection is not open")
+        response = bytearray()
+        write_attempted = False
+        pending_bytes = 0
         try:
+            pending_bytes = self._stream.in_waiting
+            if pending_bytes:
+                raise VerdiError(f"unexpected buffered input before request: {pending_bytes} bytes")
             deadline = monotonic() + self._timeout_s
             self._stream.write_timeout = self._timeout_s
+            write_attempted = True
             if self._stream.write(request) != len(request):
                 raise VerdiError("partial write; command outcome is unknown")
-            response = bytearray()
             while len(response) < 4096:
                 remaining = deadline - monotonic()
                 if remaining <= 0:
                     raise VerdiError(f"reply timed out after {len(response)} bytes")
                 self._stream.timeout = remaining
                 chunk = self._stream.read(1)
+                response.extend(chunk)
                 if not chunk or monotonic() > deadline:
                     raise VerdiError(f"reply timed out after {len(response)} bytes")
-                response.extend(chunk)
                 if response.endswith(b"\r\n"):
+                    pending_bytes = self._stream.in_waiting
+                    if pending_bytes:
+                        raise VerdiError(
+                            f"unexpected trailing input after reply: {pending_bytes} bytes"
+                        )
                     return bytes(response)
             raise VerdiError("reply exceeds 4096 byte limit")
-        except OSError as exc:
-            raise VerdiError(f"serial I/O failed: {exc}; outcome may be unknown") from exc
+        except BaseException as exc:
+            failure = (
+                VerdiError(f"serial I/O failed: {exc}; outcome may be unknown")
+                if isinstance(exc, OSError)
+                else exc
+            )
+            failure.__dict__.update(
+                raw_response=bytes(response),
+                write_attempted=write_attempted,
+                pending_bytes=pending_bytes,
+            )
+            if failure is exc:
+                raise
+            raise failure from exc
 
     def _close(self) -> None:
         if self._stream is not None:

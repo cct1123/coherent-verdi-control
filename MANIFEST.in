@@ -1,7 +1,5 @@
 recursive-include scripts *.py *.cjs
-recursive-include examples *.py
-recursive-include examples/tutorials *.ipynb *.md
-prune examples/tutorials/.ipynb_checkpoints
+recursive-include examples *.py *.md
 recursive-include tests *.py
 recursive-include docs *.md *.jpg
 recursive-include .github *.yml

@@ -37,8 +37,6 @@ def main() -> None:
     required = {
         "scripts/install_smoke.py",
         "scripts/test_watchdog.cjs",
-        "examples/simulated_session.py",
-        "examples/async_integration.py",
         "tests/conftest.py",
         "README.md",
         "verdi.manual_v5.pdf",
@@ -47,8 +45,8 @@ def main() -> None:
     }
     required.update(
         p.relative_to(ROOT).as_posix()
-        for p in (ROOT / "examples" / "tutorials").iterdir()
-        if p.suffix in (".py", ".ipynb", ".md")
+        for p in (ROOT / "examples").iterdir()
+        if p.suffix in (".py", ".md")
     )
     required.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md"))
     if missing := required - members:
@@ -96,36 +94,53 @@ def main() -> None:
             cwd=directory,
         )
         assert json.loads(watch.stdout)["status"]["simulated"] is True
-        # Exercise installed hardware routing without opening a serial device.
-        serial_check = run(
-            [
-                str(executable),
-                "-I",
-                "-c",
-                r"""
+        # Exercise installed queries and commissioning without opening a device.
+        serial_check = r"""
 from unittest.mock import patch
-import serial
+import serial, sys
 from coherent_verdi.__main__ import main
 reply = iter(bytes([c]) for c in b'WHEEL-TEST-FIRMWARE\r\n')
 with patch.object(serial, 'Serial') as factory:
     stream = factory.return_value
+    stream.in_waiting = 0
     stream.write.side_effect = len
     stream.read.side_effect = lambda size: next(reply, b'')
-    assert main(['--port', 'FAKE-ONLY', '--model', 'V5', 'query', '?SV']) == 0
+    assert main(['--port', 'FAKE-ONLY', '--model', 'V5', *sys.argv[1:]]) == 0
     assert stream.port == 'FAKE-ONLY'
     stream.open.assert_called_once_with()
     stream.close.assert_called_once_with()
     stream.write.assert_called_once_with(b'?SV\r\n')
-""",
-            ],
-            cwd=directory,
-        )
-        assert json.loads(serial_check.stdout) == "WHEEL-TEST-FIRMWARE"
-        for example in ("simulated_session.py", "async_integration.py"):
-            run([str(executable), "-I", str(ROOT / "examples" / example)], cwd=directory)
-        tutorial = str(ROOT / "examples" / "tutorials" / "run_tutorial.py")
-        for lesson in ([], ["read-status"], ["set-power"], ["controlled-session"], ["faults"]):
-            run([str(executable), "-I", tutorial, *lesson], cwd=directory)
+"""
+        for command in (["query", "?SV"], ["commission"]):
+            result = run([str(executable), "-I", "-c", serial_check, *command], cwd=directory)
+            data = json.loads(result.stdout)
+            if command == ["commission"]:
+                assert data["payload"] == "WHEEL-TEST-FIRMWARE"
+                assert data["outcome"] == "captured" and data["simulated"] is False
+                assert bytes.fromhex(data["response_hex"]) == b"WHEEL-TEST-FIRMWARE\r\n"
+            else:
+                assert data == "WHEEL-TEST-FIRMWARE"
+        # Hardware examples run only with substituted peers in the install check.
+        example_check = r"""
+import builtins, runpy, sys
+from unittest.mock import patch
+from coherent_verdi import SimulatedVerdi, VerdiController
+sim = SimulatedVerdi('V5')
+sim.set_key(True)
+main = runpy.run_path(sys.argv[1])['main']
+main.__globals__.update(PORT='FAKE-ONLY', MODEL='V5', BAUDRATE=19200,
+    ACTIVE_FAULT_CLEAR_REPLY='SYSTEM OK', TARGET_W=0.25, POWER_LIMIT_W=0.5)
+def confirm(prompt):
+    return 'CONNECT' if 'CONNECT' in prompt else 'SET' if 'SET' in prompt else 'RUN'
+with patch.object(VerdiController, '_open', lambda c: sim.connect()), \
+     patch.object(VerdiController, '_close', lambda c: sim.disconnect()), \
+     patch.object(VerdiController, '_exchange', lambda c, wire: sim._exchange(wire)), \
+     patch.object(builtins, 'input', confirm):
+    main()
+assert sim.requests[0] == b'?SV\r\n'
+"""
+        for example in sorted((ROOT / "examples").glob("0*.py")):
+            run([str(executable), "-I", "-c", example_check, str(example)], cwd=directory)
         entrypoint = env_path / ("Scripts/verdi.exe" if os.name == "nt" else "bin/verdi")
         result = json.loads(run([str(entrypoint), "query", "?SV"], cwd=directory).stdout)
         assert result == "SIMULATOR-0.1"

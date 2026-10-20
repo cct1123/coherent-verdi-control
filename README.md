@@ -21,7 +21,7 @@ Or install directly from the repository (requires Git):
 python -m pip install "git+https://github.com/cct1123/coherent-verdi-control.git"
 ```
 
-pySerial is installed automatically. Dash and Jupyter are optional. No background
+pySerial is installed automatically. Dash is optional. No background
 service or project configuration files are needed to use the package.
 
 ## Connect and read
@@ -61,6 +61,20 @@ the firmware's exact no-active-fault `?F` reply. Configure that verified text as
 `active_fault_clear_reply` in the constructor. The manual specifies `SYSTEM OK`
 for **history**, `?FH`; do not assume it is also the active-fault reply.
 Unverified clear-looking replies fail explicitly. See [commissioning](docs/HARDWARE.md).
+
+Use the read-only commissioning command to capture the actual wire evidence.
+Start with one version query; after checking that exchange, select the fault query:
+
+```sh
+verdi --port COM3 --model V5 --baudrate 19200 commission
+verdi --port COM3 --model V5 --baudrate 19200 commission --query ?F
+```
+
+Each attempt produces a JSON line with timestamps, connection settings, payload,
+encoded request and received response bytes as hex, and any error. `captured` means evidence was
+collected; it does not interpret the reply or establish no faults. No fault-clear
+setting is required for capture. Stop on a failed exchange; no recovery or replay
+is attempted. Details and buffer-check limits are in the hardware guide.
 
 ```python
 from coherent_verdi import VerdiController
@@ -111,7 +125,7 @@ with VerdiController(
 The setpoint remains stored. The API also provides `start()`, `stop()` and
 `set_shutter(open=True/False)`. Laser enable and shutter opening require the
 operator's beam, cooling, interlock and readiness checks. `start()` clears faults
-and fault history; capture them first. The [controlled-session tutorial](examples/tutorials/README.md)
+and fault history; capture them first. The [controlled-session tutorial](examples/README.md#lesson-5-emission-requires-an-operator-ready-system)
 shows readiness checks and verified normal completion.
 
 On timeout or malformed communication, a command may already have executed.
@@ -141,6 +155,8 @@ verdi watch --count 10 --interval 1
 ```
 
 `python -m coherent_verdi` is equivalent to `verdi`.
+Add global `--trace` to send transaction JSON lines to stderr while preserving
+the normal result on stdout, for example `verdi --trace query ?P` for simulation.
 
 ## Simulator and optional dashboard
 
@@ -178,7 +194,7 @@ verdi --port COM3 --model V5 --baudrate 19200 --active-fault-clear-reply "<VERIF
 - [API](docs/API.md): methods, data, errors and monitoring integration.
 - [Hardware setup and commissioning](docs/HARDWARE.md): first connection, checks and recovery.
 - [Protocol](docs/PROTOCOL.md): manual mappings and firmware uncertainties.
-- [Simulator](docs/SIMULATOR.md) and [tutorials](examples/tutorials/README.md).
+- [Five hardware tutorials](examples/README.md) and [simulator reference](docs/SIMULATOR.md).
 
 From a checkout, run the software-only checks:
 
@@ -193,6 +209,6 @@ python -m build
 python scripts/install_smoke.py
 ```
 
-Tests replace physical serial access with fakes, including notebook kernels.
+Tests replace physical serial access with fakes, including the hardware examples.
 Node.js is needed only for the dashboard watchdog test. Source distributions
 include the manual, examples and tests; wheels contain the controller package.

@@ -8,6 +8,7 @@ import re
 from collections import deque
 from collections.abc import Callable
 from time import monotonic
+from typing import Any
 
 from .controller import VerdiController, VerdiError, finite_range
 
@@ -25,6 +26,7 @@ class SimulatedVerdi(VerdiController):
         warmup_s: float = 0.0,
         echo: bool = False,
         prompt: bool = False,
+        trace: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         super().__init__(
             "SIMULATOR",
@@ -32,6 +34,7 @@ class SimulatedVerdi(VerdiController):
             allow_writes=allow_writes,
             power_limit_w=power_limit_w,
             active_fault_clear_reply="SYSTEM OK",
+            trace=trace,
         )
         finite_range(warmup_s, 0, 86400, "warmup_s")
         if type(echo) is not bool or type(prompt) is not bool:

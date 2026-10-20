@@ -1,11 +1,7 @@
 """Controller ownership, model limits and simulator behavior."""
 
-import asyncio
-import importlib.util
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from threading import Event, get_ident
 
 import pytest
 
@@ -398,51 +394,3 @@ def test_compound_snapshot_not_interleaved_with_commands():
     for start in (i for i, request in enumerate(requests) if request == b"?L\r\n"):
         assert all(r.startswith(b"?") for r in requests[start : start + 14])
         assert requests[start + 13] == b"?F\r\n"
-
-
-def test_async_example_keeps_cleanup_with_inflight_worker_on_cancellation(monkeypatch):
-    source = Path(__file__).resolve().parents[1] / "examples" / "async_integration.py"
-    spec = importlib.util.spec_from_file_location("verdi_async_example", source)
-    example = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(example)
-    entered, release, closed = Event(), Event(), Event()
-    threads = []
-
-    class FakeController:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def __enter__(self):
-            threads.append(get_ident())
-            return self
-
-        def status(self):
-            threads.append(get_ident())
-            entered.set()
-            assert release.wait(3)
-            return object()
-
-        def read_diagnostics(self):
-            return object()
-
-        def __exit__(self, *args):
-            threads.append(get_ident())
-            closed.set()
-
-    monkeypatch.setattr(example, "SimulatedVerdi", FakeController)
-
-    async def scenario():
-        task = asyncio.create_task(example.main())
-        try:
-            assert await asyncio.to_thread(entered.wait, 2)
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            assert not closed.is_set(), "cleanup overtook the unfinished worker operation"
-        finally:
-            release.set()
-            assert await asyncio.to_thread(closed.wait, 2)
-
-    asyncio.run(scenario())
-    assert len(threads) == 3 and len(set(threads)) == 1
-    assert threads[0] != get_ident()

@@ -33,6 +33,19 @@ response-time or firmware guarantees. A partial response, I/O error or lost
 acknowledgment makes the serial session unusable. The command may have executed.
 There is no automatic retry, input-buffer purge, mode normalization or state replay.
 
+Before transmitting and after reading a complete frame, the serial adapter checks
+`in_waiting`. Unexpected queued bytes reject the transaction and latch failure;
+they are never silently discarded. This prevents an already-buffered extra line
+from becoming the next query's reply. It cannot identify arbitrarily delayed,
+untagged replies or eliminate OS/adapter buffering races. The checks establish no
+quiet-time guarantee, and reopening does not establish resynchronization.
+
+Optional transaction tracing records exact request/response bytes, UTC start,
+duration, connection settings, queued-byte count and outcome. Command failures
+distinguish `not_sent` from `unknown`; successful acknowledgment and documented
+rejection remain explicit outcomes. A trace callback failure latches the session
+without replay and preserves any established command outcome.
+
 ## Exposed operational commands
 
 | API | Wire form | Source / meaning |
@@ -62,6 +75,14 @@ All **42** short-form queries from Table 5-4 are accepted by `read()` as short s
 Direct parsing groups in [controller.py](../src/coherent_verdi/controller.py) distinguish
 raw text, documented integer codes and decimal numbers. Source pages are below;
 independent test vectors retain units and long names as manual reference data.
+
+For commissioning, `capture()` accepts the same query catalogue only on a
+read-only controller. It enforces ASCII and a single CR/LF frame, permits an empty
+payload, and removes documented echo/prompt decoration without interpreting
+values or faults. Documented device errors are still rejected and recorded.
+The returned transaction record is evidence, not a claim about device health.
+CLI `commission` exposes this path as JSONL;
+normal query/status parsing remains unchanged.
 
 | Source | Queries |
 | --- | --- |
@@ -120,7 +141,8 @@ code 47 is listed in Table 5-4 but omitted from Table 6-1.
    replies unless `active_fault_clear_reply` matches the exact
    text independently verified for that firmware. Its default is None;
    malformed/unverified data invalidates the session. Positive fault codes/lists
-   cannot be configured as clear tokens. Empty replies remain unsupported.
+   cannot be configured as clear tokens. Empty replies can be captured for
+   evidence but remain unsupported by normal fault parsing.
    Simulated controllers alone default to the fixture convention `SYSTEM OK`.
    Do not infer physical compatibility from that simulator convention or from ?FH.
 2. **Echo framing:** the implementation follows Table 5-1's one-line layouts.
