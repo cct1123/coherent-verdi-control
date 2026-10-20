@@ -1,4 +1,4 @@
-"""Exercise built distributions in one clean environment, first core then GUI/serial extras."""
+"""Check the controller wheel and optional GUI in a clean environment."""
 
 import argparse
 import json
@@ -35,24 +35,13 @@ def main() -> None:
     with tarfile.open(source) as archive:
         members = {name.partition("/")[2] for name in archive.getnames()}
     required = {
-        "scripts/validate.py",
         "scripts/install_smoke.py",
         "scripts/test_watchdog.cjs",
         "examples/simulated_session.py",
         "examples/async_integration.py",
-        "tests/test_validation_runner.py",
         "tests/conftest.py",
-        "AGENTS.md",
-        "PROJECT.md",
-        "STATE.md",
-        "ARCHITECTURE.md",
-        "HARDWARE_VALIDATION.md",
-        ".gitignore",
-        ".gitattributes",
+        "README.md",
         "verdi.manual_v5.pdf",
-        "records/FRAMEWORK.md",
-        "records/requirements-validated.txt",
-        "outputs/REPORT.md",
         "src/coherent_verdi/py.typed",
         "src/coherent_verdi/assets/watchdog.js",
     }
@@ -70,7 +59,17 @@ def main() -> None:
         env_path = Path(directory) / "env"
         venv.EnvBuilder(with_pip=True).create(env_path)
         executable = env_path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        run([str(executable), "-m", "pip", "install", "--no-deps", "--no-index", str(wheel)])
+        run(
+            [
+                str(executable),
+                "-m",
+                "pip",
+                "install",
+                "--cache-dir",
+                str(scratch / "pip-cache"),
+                str(wheel),
+            ]
+        )
         run([str(executable), "-m", "pip", "check"])
         # CWD outside source and isolated mode prove this imports the installed wheel.
         check = run(
@@ -88,9 +87,40 @@ def main() -> None:
             ],
             cwd=directory,
         )
+        run([str(executable), "-I", "-c", "import serial; assert serial.VERSION"], cwd=directory)
         cli = run([str(executable), "-I", "-m", "coherent_verdi", "status"], cwd=directory)
         data = json.loads(cli.stdout)
         assert data["simulated"] is True and data["power_w"] == 0.0
+        watch = run(
+            [str(executable), "-I", "-m", "coherent_verdi", "watch", "--count", "1"],
+            cwd=directory,
+        )
+        assert json.loads(watch.stdout)["status"]["simulated"] is True
+        # Exercise installed hardware routing without opening a serial device.
+        serial_check = run(
+            [
+                str(executable),
+                "-I",
+                "-c",
+                r"""
+from unittest.mock import patch
+import serial
+from coherent_verdi.__main__ import main
+reply = iter(bytes([c]) for c in b'WHEEL-TEST-FIRMWARE\r\n')
+with patch.object(serial, 'Serial') as factory:
+    stream = factory.return_value
+    stream.write.side_effect = len
+    stream.read.side_effect = lambda size: next(reply, b'')
+    assert main(['--port', 'FAKE-ONLY', '--model', 'V5', 'query', '?SV']) == 0
+    assert stream.port == 'FAKE-ONLY'
+    stream.open.assert_called_once_with()
+    stream.close.assert_called_once_with()
+    stream.write.assert_called_once_with(b'?SV\r\n')
+""",
+            ],
+            cwd=directory,
+        )
+        assert json.loads(serial_check.stdout) == "WHEEL-TEST-FIRMWARE"
         for example in ("simulated_session.py", "async_integration.py"):
             run([str(executable), "-I", str(ROOT / "examples" / example)], cwd=directory)
         tutorial = str(ROOT / "examples" / "tutorials" / "run_tutorial.py")
@@ -108,8 +138,18 @@ def main() -> None:
         )
         assert missing_gui.returncode == 2
         assert json.loads(missing_gui.stderr)["type"] == "ModuleNotFoundError"
-        print(f"PASS: isolated core wheel, assets, CLI, examples; {check.stdout.strip()}")
-        run([str(executable), "-m", "pip", "install", f"{wheel}[serial,gui]"])
+        print(f"PASS: isolated controller wheel, assets, CLI, examples; {check.stdout.strip()}")
+        run(
+            [
+                str(executable),
+                "-m",
+                "pip",
+                "install",
+                "--cache-dir",
+                str(scratch / "pip-cache"),
+                f"{wheel}[gui]",
+            ]
+        )
         run([str(executable), "-m", "pip", "check"])
         smoke = run(
             [str(executable), "-I", str(Path(__file__).resolve()), "--gui-smoke"], cwd=directory

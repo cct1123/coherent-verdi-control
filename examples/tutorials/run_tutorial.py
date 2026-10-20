@@ -247,7 +247,7 @@ def validate_power(
 @contextmanager
 def hardware_connection(laser: VerdiController) -> Iterator[VerdiController | None]:
     """Operator confirmation, passive connect, one ?SV, and deterministic disconnect."""
-    if input("With candidate/connection approval recorded, type CONNECT: ").strip() != "CONNECT":
+    if input("Verify the serial settings and safe setup, then type CONNECT: ").strip() != "CONNECT":
         print("Cancelled before opening the port.")
         yield None
         return
@@ -277,8 +277,8 @@ def run_hardware(
 ) -> bool:
     """Human entry point. False means cancelled; exceptions mean STOP, never retry.
 
-    Complete the project's hardware review procedure before using this function.
-    Prompts confirm an operator's intended actions; they do not supply site approval.
+    Follow the manual and the site's laser procedure before using this function.
+    Prompts confirm an operator's intended connection and commands.
     Configuration is validated before opening. No fallback to simulation is made.
     """
     if lesson not in LESSONS:
@@ -286,7 +286,6 @@ def run_hardware(
     if identify_only and lesson != "read-status":
         raise ValueError("identify_only is available only for read-status")
     writes = lesson in WRITE_LESSONS
-    model = model
     validate_power(model, target_w, power_limit_w, allow_writes=writes)
     controller = VerdiController(
         port,
@@ -318,7 +317,7 @@ def run_hardware(
             print("Confirm the approved beam conditions, limits and physical abort procedure.")
         else:
             print(f"Plan: {lesson} queries with writes disabled. No injected faults or resets.")
-        if input("Verify the device/version and approved scope, then type RUN: ").strip() != "RUN":
+        if input("Verify device/version and planned operation, then type RUN: ").strip() != "RUN":
             print("Cancelled after ?SV; no lesson commands sent.")
             return False
         if writes:
@@ -349,7 +348,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--identify-only", action="store_true", help="read-status: stop after ?SV")
     parser.add_argument(
         "--active-fault-clear-reply",
-        help="Exact ?F clear text verified for this firmware in Stage 1",
+        help="Exact independently verified ?F clear text for this firmware",
     )
     args = parser.parse_args(argv)
     if not args.hardware:

@@ -1,5 +1,6 @@
-"""TEST-002/003/009: real controller API through a fake pySerial handle, never a port."""
+"""Real controller API through a fake pySerial handle, never a port."""
 
+import json
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
@@ -7,6 +8,7 @@ import pytest
 import serial
 
 from coherent_verdi import VerdiController, VerdiError
+from coherent_verdi.__main__ import main
 
 
 class FakeSerial:
@@ -57,6 +59,73 @@ def peer(monkeypatch):
 
     monkeypatch.setattr(serial, "Serial", construct)
     return fake
+
+
+@pytest.mark.parametrize(
+    ("command", "reply", "expected"),
+    [
+        (["query", "?SV"], b"TEST-FIRMWARE\r\n", "TEST-FIRMWARE"),
+        (["query", "?P"], b"0.125\r\n", 0.125),
+    ],
+)
+def test_cli_hardware_reads_explicit_port_without_initialization(
+    peer, capsys, command, reply, expected
+):
+    peer.responses.append(reply)
+    assert main(["--port", "FAKE-ONLY", "--model", "V6", "--baudrate", "9600", *command]) == 0
+    assert json.loads(capsys.readouterr().out) == expected
+    assert peer.port == "FAKE-ONLY"
+    assert peer.settings["baudrate"] == 9600
+    assert peer.writes == [(command[1] + "\r\n").encode()]
+    assert peer.opens == peer.closes == 1
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--port", "FAKE-ONLY", "query", "?SV"],
+        ["--baudrate", "9600", "query", "?SV"],
+    ],
+)
+def test_cli_incomplete_connection_settings_never_open(peer, options):
+    with pytest.raises(SystemExit) as error:
+        main(options)
+    assert error.value.code == 2
+    assert peer.opens == 0
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--baudrate", "12345", "query", "?SV"],
+        ["--timeout-s", "nan", "query", "?SV"],
+        ["watch", "--count", "0"],
+        ["watch", "--interval", "nan"],
+        ["gui", "--port", "0"],
+    ],
+)
+def test_cli_invalid_hardware_configuration_never_open(peer, capsys, options):
+    assert main(["--port", "FAKE-ONLY", "--model", "V5", *options]) == 2
+    assert json.loads(capsys.readouterr().err)["type"] == "ValueError"
+    assert peer.opens == 0
+
+
+def test_cli_hardware_open_failure_does_not_fall_back_to_simulation(peer, capsys):
+    peer.open_failure = OSError("disconnected adapter")
+    assert main(["--port", "FAKE-ONLY", "--model", "V5", "query", "?SV"]) == 2
+    output = capsys.readouterr()
+    assert not output.out
+    assert "disconnected adapter" in json.loads(output.err)["error"]
+    assert peer.opens == 1 and peer.writes == []
+
+
+def test_cli_hardware_timeout_never_retries(peer, capsys):
+    assert (
+        main(["--port", "FAKE-ONLY", "--model", "V5", "--timeout-s", "0.001", "query", "?SV"]) == 2
+    )
+    assert "timed out" in json.loads(capsys.readouterr().err)["error"]
+    assert peer.opens == peer.closes == 1
+    assert peer.writes == [b"?SV\r\n"]
 
 
 @pytest.mark.parametrize(
@@ -126,7 +195,7 @@ def test_passive_explicit_lifecycle_and_framing(peer):
 def test_failed_read_blocks_late_replies_and_reconnect(peer, reply, error):
     peer.responses.extend([reply, b"9.000\r\n"])
     with VerdiController("FAKE-ONLY") as laser:
-        with pytest.raises((VerdiError, VerdiError), match=error):
+        with pytest.raises(VerdiError, match=error):
             laser.read_power_w()
         for action in (laser.read_power_w, laser.connect):
             with pytest.raises(VerdiError, match="failed"):

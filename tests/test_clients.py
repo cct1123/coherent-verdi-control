@@ -1,4 +1,4 @@
-"""TEST-006: cache-only Dash clients and simulator CLI workflows."""
+"""Cache-only Dash clients and read-only CLI workflows with simulated devices."""
 
 import io
 import json
@@ -192,6 +192,83 @@ def test_cli_read_paths(args, capsys):
     assert main(args) == 0
     data = json.loads(capsys.readouterr().out)
     assert data == "SIMULATOR-0.1" if args[0] == "query" else isinstance(data, dict)
+
+
+@pytest.fixture
+def serial_cli(monkeypatch):
+    """Run the real controller with an independent in-memory serial peer."""
+    sim = SimulatedVerdi("V5")
+    opened = []
+
+    def open_serial(controller):
+        opened.append(controller)
+        sim.connect()
+
+    monkeypatch.setattr(VerdiController, "_open", open_serial)
+    monkeypatch.setattr(VerdiController, "_close", lambda controller: sim.disconnect())
+    monkeypatch.setattr(
+        VerdiController, "_exchange", lambda controller, request: sim._exchange(request)
+    )
+    yield sim, opened
+    sim.disconnect()
+
+
+def test_cli_hardware_status_and_watch_use_verified_fault_reply(serial_cli, capsys):
+    sim, opened = serial_cli
+    settings = ["--port", "FAKE-ONLY", "--model", "V5", "--active-fault-clear-reply", "SYSTEM OK"]
+    assert main([*settings, "status"]) == 0
+    assert json.loads(capsys.readouterr().out)["simulated"] is False
+    assert main([*settings, "watch", "--count", "2", "--interval", "0.001"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert len(rows) == 2 and all(row["status"]["faults"] == [] for row in rows)
+    assert all(row["status"]["simulated"] is False for row in rows)
+    assert len(opened) == 2 and all(c._allow_writes is False for c in opened)
+    assert all(request.startswith(b"?") for request in sim.requests)
+
+
+def test_cli_hardware_gui_separates_serial_and_http_ports(serial_cli, monkeypatch):
+    _, opened = serial_cli
+    received_sample = Event()
+    original_poll = Monitor.poll_once
+
+    def poll(monitor):
+        result = original_poll(monitor)
+        received_sample.set()
+        return result
+
+    class App:
+        def run(self, **settings):
+            assert settings["port"] == 8051
+            assert received_sample.wait(3)
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(Monitor, "poll_once", poll)
+    monkeypatch.setattr("coherent_verdi.gui.create_app", lambda monitor: App())
+    assert (
+        main(
+            [
+                "--port",
+                "FAKE-ONLY",
+                "--model",
+                "V5",
+                "--active-fault-clear-reply",
+                "SYSTEM OK",
+                "gui",
+                "--port",
+                "8051",
+            ]
+        )
+        == 130
+    )
+    assert len(opened) == 1 and opened[0]._port == "FAKE-ONLY"
+    assert opened[0]._connected is False
+
+
+def test_cli_hardware_status_rejects_unverified_clear_reply(serial_cli, capsys):
+    sim, _ = serial_cli
+    assert main(["--port", "FAKE-ONLY", "--model", "V5", "status"]) == 2
+    assert "invalid fault list" in json.loads(capsys.readouterr().err)["error"]
+    assert sim.requests[-1] == b"?F\r\n"
 
 
 def test_cli_watch_jsonlines_and_invalid_interval(capsys):

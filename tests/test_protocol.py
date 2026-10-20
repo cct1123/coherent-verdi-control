@@ -1,4 +1,4 @@
-"""TEST-002: independent golden cases transcribed from manual Table 5-1."""
+"""Independent golden cases transcribed from manual Table 5-1."""
 
 import pytest
 
@@ -118,7 +118,7 @@ def test_undocumented_fault_replies_are_not_assumed_clear(payload):
         parse_faults(payload)
 
 
-# TEST-016: independent transcription of all Table 5-4 rows, pp.5-6..5-10.
+# Independent transcription of all Table 5-4 rows, pp.5-6..5-10.
 # Payloads are representative software vectors, not physical measurements.
 MANUAL_QUERIES = [
     ("?ACAD", "AVG CURRENT AND DELTA", "5-6", None, "12&0", "12&0", ()),

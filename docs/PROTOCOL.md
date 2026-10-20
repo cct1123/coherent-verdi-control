@@ -3,9 +3,7 @@
 Authoritative source: [Coherent Verdi V-2/V-5/V-6 Operator's Manual](../verdi.manual_v5.pdf),
 part **0171-750-00, Rev IB**, © 08/2005. The supplied PDF has 130 pages and SHA-256
 `d4a7a8a2a1e0c678bb00a5fd70be6ea1d649be063ab752de485a59daa3103f73`.
-Printed section 5 corresponds to PDF pages 49–58. Table 5-1 and the relevant
-command/fault tables were also rendered and visually inspected, including the
-poorly spaced fault codes 19, 21, 25, 27 and 28. No newer firmware behavior is assumed.
+Printed section 5 corresponds to PDF pages 49–58. No newer firmware behavior is assumed.
 
 ## Wire contract
 
@@ -53,7 +51,7 @@ communication handle and **does not place the laser in STANDBY**.
 
 The manual also documents service/front-panel operations (baud-rate changes,
 chiller, FLASH, LBO heater/optimization, panel lock and menu buttons). They are
-outside the public operational API in 0.3.0. There is no unrestricted raw-write
+outside the public operational API. There is no unrestricted raw-write
 escape hatch. Chiller operand details and service sequencing are insufficiently
 specified for this controller's scope. Extending this subset needs a documented
 use case, source review and software tests.
@@ -120,7 +118,7 @@ code 47 is listed in Table 5-4 but omitted from Table 6-1.
 1. **No active faults:** `SYSTEM OK` is explicit for `?FH`; the clear reply for
    `?F` is not explicit. Physical controllers therefore reject clear-looking
    replies unless `active_fault_clear_reply` matches the exact
-   text independently verified for that firmware in Stage 1. Its default is None;
+   text independently verified for that firmware. Its default is None;
    malformed/unverified data invalidates the session. Positive fault codes/lists
    cannot be configured as clear tokens. Empty replies remain unsupported.
    Simulated controllers alone default to the fixture convention `SYSTEM OK`.
@@ -145,7 +143,8 @@ code 47 is listed in Table 5-4 but omitted from Table 6-1.
    a fresh explicit enable after warmup is a conservative fixture policy. Real
    recovery/latching and any automatic resumption require physical observation.
 6. **Fault-code conflict:** Table 5-4 calls code 1 a laser head interlock fault;
-   Table 6-1 and Chart 5 call it an emission lamp fault (pp. 6-2, 6-12). The reference below preserves both labels; verify against device firmware/Coherent support.
+   Table 6-1 and Chart 5 call it an emission lamp fault (pp. 6-2, 6-12). The fault-code
+   reference above preserves both labels; verify against device firmware/Coherent support.
    Neither label establishes a laser-head cover interlock: p. 6-1 explicitly warns
    that removing the head cover has no protective cover interlock.
 7. **Safety timing and limits:** indicators precede possible emission by approximately

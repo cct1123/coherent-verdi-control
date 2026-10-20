@@ -27,10 +27,6 @@ htmlcov/
 .venv-*/
 pytest-cache-files-*/
 
-# Local bootstrap reference and regenerable validation output.
-prompt log.txt
-records/*.log
-records/junit.xml
-records/validation-initial.json
+# Test output.
+junit.xml
 .ipynb_checkpoints/
-records/tutorial-notebooks/

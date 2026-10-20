@@ -1,4 +1,4 @@
-"""Read-only simulator CLI. Hardware operations belong in explicitly configured scripts."""
+"""Read-only Verdi CLI. Supply --port and --model for hardware; otherwise simulate."""
 
 import argparse
 import json
@@ -6,13 +6,19 @@ import sys
 from collections.abc import Sequence
 from time import sleep
 
-from .controller import QUERIES, VerdiError
+from .controller import QUERIES, VerdiController, VerdiError
 from .simulator import SimulatedVerdi
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", choices=["V2", "V5", "V6"], default="V5")
+    parser.add_argument(
+        "--port", dest="serial_port", help="Serial port before the subcommand, e.g. COM3"
+    )
+    parser.add_argument("--model", choices=["V2", "V5", "V6"], help="Required for hardware")
+    parser.add_argument("--baudrate", type=int, default=19200, help="Match the front-panel baud")
+    parser.add_argument("--timeout-s", type=float, default=1.0)
+    parser.add_argument("--active-fault-clear-reply", help="Independently verified ?F clear text")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "diagnostics"):
         commands.add_parser(name)
@@ -20,10 +26,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     watch = commands.add_parser("watch")
     watch.add_argument("--count", type=int, default=10)
     watch.add_argument("--interval", type=float, default=1.0)
-    commands.add_parser("gui").add_argument("--port", type=int, default=8050)
+    commands.add_parser("gui").add_argument(
+        "--port", dest="http_port", type=int, default=8050, help="HTTP port (default: 8050)"
+    )
     args = parser.parse_args(argv)
+    if args.serial_port is not None and args.model is None:
+        parser.error("--port requires --model V2, V5 or V6; the model is not discovered")
+    if args.serial_port is None and (
+        args.baudrate != 19200 or args.timeout_s != 1.0 or args.active_fault_clear_reply is not None
+    ):
+        parser.error("serial connection settings require --port")
     try:
-        with SimulatedVerdi(args.model) as laser:
+        laser = (
+            VerdiController(
+                args.serial_port,
+                model=args.model,
+                baudrate=args.baudrate,
+                timeout_s=args.timeout_s,
+                active_fault_clear_reply=args.active_fault_clear_reply,
+            )
+            if args.serial_port is not None
+            else SimulatedVerdi(args.model or "V5")
+        )
+        # Validate client settings and dependencies before opening a physical port.
+        if args.command in ("watch", "gui"):
+            from .gui import Monitor, create_app
+
+            if args.command == "watch" and not 1 <= args.count <= 100000:
+                raise ValueError("count must be in [1, 100000]")
+            monitor = Monitor(laser, interval_s=args.interval if args.command == "watch" else 1.0)
+            if args.command == "gui":
+                if not 1 <= args.http_port <= 65535:
+                    raise ValueError("HTTP port must be in [1, 65535]")
+                app = create_app(monitor)
+        with laser:
             if args.command in ("status", "diagnostics", "query"):
                 result = (
                     laser.status()
@@ -35,12 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(json.dumps(result, indent=2, allow_nan=False))
                 return 0
 
-            from .gui import Monitor, create_app
-
             if args.command == "watch":
-                if not 1 <= args.count <= 100000:
-                    raise ValueError("count must be in [1, 100000]")
-                monitor = Monitor(laser, interval_s=args.interval)
                 failed = False
                 for i in range(args.count):
                     sample = monitor.poll_once()
@@ -50,12 +81,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         sleep(monitor.interval_s)
                 return 2 if failed else 0
 
-            if not 1 <= args.port <= 65535:
-                raise ValueError("HTTP port must be in [1, 65535]")
             from threading import Event, Thread
 
-            monitor = Monitor(laser)
-            app = create_app(monitor)
             stop = Event()
 
             def poll() -> None:
@@ -66,7 +93,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             worker = Thread(target=poll, name="verdi-monitor")
             worker.start()
             try:
-                app.run(host="127.0.0.1", port=args.port, debug=False, use_reloader=False)
+                app.run(host="127.0.0.1", port=args.http_port, debug=False, use_reloader=False)
             finally:
                 stop.set()
                 worker.join()  # Drain acquisition before disconnect, including Ctrl+C.

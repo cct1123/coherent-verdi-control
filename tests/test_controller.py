@@ -1,4 +1,4 @@
-"""TEST-003/004: controller ownership, model limits and simulator behavior."""
+"""Controller ownership, model limits and simulator behavior."""
 
 import asyncio
 import importlib.util

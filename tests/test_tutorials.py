@@ -1,4 +1,4 @@
-"""TEST-011/012/013: workflows and operator entry points; all device peers are simulated."""
+"""Workflows and operator entry points; all device peers are simulated."""
 
 import ast
 import runpy
@@ -359,8 +359,8 @@ def test_self_contained_notebooks_execute(name, hardware_path, tmp_path, monkeyp
         assert "Reported software: SIMULATOR-0.1" in output
     else:
         assert "Hardware section skipped" in output
-    destination = ROOT / "records" / "tutorial-notebooks"
-    destination.mkdir(exist_ok=True)
+    destination = tmp_path / "executed-notebooks"
+    destination.mkdir()
     output_name = f"{path.stem}-operator-path.ipynb" if hardware_path else path.name
     nbformat.write(notebook, destination / output_name)
 

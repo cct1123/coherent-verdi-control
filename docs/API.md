@@ -1,8 +1,9 @@
 # Python API
 
-```python
-from coherent_verdi import VerdiController, SimulatedVerdi, VerdiError, DeviceError
+The package exports `VerdiController`, `SimulatedVerdi`, `VerdiError` and `DeviceError`.
+Constructor signatures:
 
+```text
 VerdiController(
     port,  # Explicit native port string; no backend/factory argument
     *, model="V5", baudrate=19200, timeout_s=1.0,
@@ -70,28 +71,14 @@ Rendering does not wait for device I/O. Use a new monitor for each new session.
 `create_app(monitor)` builds the optional Dash view without starting a server/worker.
 The application owns scheduling and must finish acquisition before disconnect.
 
-## Migration to 0.3.0
+## Package layout
 
-Reinstall with `python -m pip install -e .` and update callers together. No aliases,
-deprecated modules or compatibility adapters are retained.
+`controller.py` contains the public hardware API, protocol parsing, serial I/O and
+the two error types. `simulator.py` supplies independent in-memory replies through
+the same API. `gui.py` provides the optional monitoring cache and Dash view.
+`__init__.py` exports the four public types; `__main__.py` implements the read-only CLI.
 
-| Previous API | 0.3.0 |
-| --- | --- |
-| `VerdiController(SimulatedTransport(...), ...)` | `SimulatedVerdi(..., allow_writes=..., power_limit_w=...)` |
-| `Model.V5`, `Query.POWER` | `"V5"`, `"?P"` |
-| `LaserState.ON`, `ServoState.LOCKED` | Integer 1; use documented code meanings |
-| `status.power_w`, `diagnostics.head_hours` | `status["power_w"]`, `diagnostics["head_hours"]` |
-| `Fault.code`, `.description`, `.known` | Integer codes; descriptions are in PROTOCOL.md |
-| `Status`, `Diagnostics`, `Sample`, datetime objects | Plain dictionaries with ISO UTC strings |
-| `TransportError`, `ProtocolError` | `VerdiError`; `DeviceError` remains distinct |
-| `coherent_verdi.monitor.Monitor` | `coherent_verdi.gui.Monitor` |
-| `to_json(value)` | `json.dumps(value, allow_nan=False)` |
-| Sample `.sequence` / CLI result envelope | Removed; CLI prints the result or sample directly |
-| CLI writes, `--demo`, `--sim-key-on` | Use the explicit Python control example/tutorials |
-| `Connection`, `SerialConnection`, backend injection | Removed; controller handles serial directly |
-
-For 0.1 callers: pass former config fields as constructor keywords and use
-`read`, `read_power_w`, `read_faults`, `read_laser_state`, `read_diagnostics`,
-`start`, `stop`, `disconnect` instead of the old query/accessor/enable/standby/close
-names. Explicitly connect or use a context manager. Transport replacement and
-telemetry start/stop/logging callbacks are removed; the host owns orchestration.
+The application owns connection lifetime, polling and logging. One I/O lock
+serializes individual transactions and complete status groups. Importing the
+package starts no threads and opens no ports. pySerial is installed by default
+but imported only on physical connect; Dash loads only when creating the app.

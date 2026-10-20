@@ -3,8 +3,7 @@
 Work through these in order. Each takes a few minutes and defaults to a fresh
 **in-memory Verdi simulator**. Each also has an implemented real-hardware path
 for a human operator, available in its self-contained notebook or the terminal runner.
-Expected outputs below describe synthetic fixtures. Simulator mode needs no serial
-dependency or physical connection; development and testing remain simulator-only.
+Expected outputs below describe synthetic fixtures. Simulator mode needs no physical connection; tests use simulation and fake serial peers.
 
 | Lesson | Notebook | Terminal lesson | What you learn |
 | --- | --- | --- | --- |
@@ -34,7 +33,7 @@ functions directly. Neither mode leaves a connection waiting between cells.
 
 All terminal equivalents live in [run_tutorial.py](run_tutorial.py), with small
 functions for each lesson and no dynamic script loading. They need only the
-dependency-free core (`python -m pip install -e .`) and default to simulation:
+installed controller package (`python -m pip install -e .`) and default to simulation:
 
 ```sh
 python examples/tutorials/run_tutorial.py read-status
@@ -122,15 +121,14 @@ defaults. The 1 s transaction timeout is configurable with `--timeout-s` and
 must be validated for the actual link.
 
 The manual specifies `SYSTEM OK` for fault history (`?FH`) but does not specify
-the no-active-fault `?F` reply. After Stage 1 verifies its exact text and meaning
+the no-active-fault `?F` reply. After independently verifying its exact text and meaning
 for this firmware, supply `ACTIVE_FAULT_CLEAR_REPLY` in the notebook or
 `--active-fault-clear-reply "<VERIFIED_TEXT>"` in the terminal. Default None rejects
 unverified clear-looking responses; do not copy the simulator convention into a
 physical configuration. Identification-only mode needs no clear-reply setting.
 
-First complete the [hardware review procedure](../../HARDWARE_VALIDATION.md).
-These entry points are prepared for an approved human session; their presence
-does not establish physical validation or authorize the agent to operate hardware.
+Follow the [hardware setup guide](../../docs/HARDWARE.md) and your site laser procedure.
+These entry points are for attended human sessions; physical behavior remains unverified.
 The operator needs the manual/site procedure, confirmed connection/model,
 cooling/warmup/interlocks, appropriate beam termination and physical abort plan.
 Keep a single controller owner and stop competing clients before connecting.
@@ -138,12 +136,12 @@ Keep a single controller owner and stop competing clients before connecting.
 Install the serial adapter in the same environment:
 
 ```sh
-python -m pip install -e ".[tutorials,serial]"
+python -m pip install -e ".[tutorials]"
 python examples/tutorials/run_tutorial.py --help
 ```
 
 **In a notebook:** run section 7's definition cells, then fill `HARDWARE_PORT`, `HARDWARE_MODEL` and
-`HARDWARE_BAUDRATE`, plus the Stage 1-verified `ACTIVE_FAULT_CLEAR_REPLY` for full
+`HARDWARE_BAUDRATE`, plus the independently verified `ACTIVE_FAULT_CLEAR_REPLY` for full
 status/fault checks. For write lessons, also fill `TARGET_W` and `POWER_LIMIT_W`.
 Set `RUN_HARDWARE=True` only for an attended, approved session, then run that
 configuration cell followed by its hardware-run cell. Notebook 1 defaults to
@@ -168,9 +166,9 @@ Configuration is validated **before opening**. The runner then asks for `CONNECT
 opens only the specified port, and sends `?SV` first. Identification-only mode
 ends there. Otherwise it displays the reported version and planned actions and
 asks for `RUN` before any lesson queries/writes. Verify the device/version against
-the reviewed configuration; `?SV` does not identify the model. Any other answer
-cancels, and no lesson action is sent. These prompts confirm intent; they do not
-replace recorded candidate/site approval. There is no unattended confirmation flag.
+the actual instrument configuration; `?SV` does not identify the model. Any other answer
+cancels, and no lesson action is sent. These prompts confirm the intended connection and operation;
+the operator remains responsible for site procedures. There is no unattended confirmation flag.
 
 | Lesson | Real-hardware path and normal end state |
 | --- | --- |
@@ -182,7 +180,7 @@ replace recorded candidate/site approval. There is no unattended confirmation fl
 Hardware command sequences use the functions shown in the notebooks; only the
 fixture-specific exercises are omitted. No synthetic keyswitch/readiness changes
 are applied. Exact setpoint-readback comparison must be validated against firmware
-precision in Stage 1/2 before write lessons are used. No port discovery, mode
+precision during commissioning before write lessons are used. No port discovery, mode
 normalization, fallback to simulation or automatic reconnect is performed.
 
 On error/Ctrl+C, the session stops subsequent commands and releases communication.
@@ -195,12 +193,11 @@ the manual. Physical behavior and calibration remain **UNTESTED**.
 ## Maintainer checks
 
 ```sh
-python -m pip install -e ".[dev,serial,gui]"
+python -m pip install -e ".[dev,gui]"
 python -m pytest tests/test_tutorials.py -q
-python scripts/validate.py
 ```
 
-TEST-011/012/013 check all models, command order/readbacks, rejected states/inputs,
+The tutorial tests check all models, command order/readbacks, rejected states/inputs,
 failure stopping, terminal entry points, and notebook execution in fresh kernels.
 Every notebook executes its visible functions through the public controller API.
 Notebook code cells are kept below 30 lines, and each notebook
@@ -209,7 +206,7 @@ Hardware cells are tested with a simulated serial connection and scripted human
 answers; no real port is opened. Tests cover configuration and cancellation before
 open, `?SV` first, no writes without RUN, no fault injection and no reconnect/replay.
 Update both source forms when editing. Executed notebook copies go to
-`records/tutorial-notebooks/`; source notebooks keep outputs clear. Kernel tests
+pytest temporary directories; source notebooks keep outputs clear. Kernel tests
 block real serial opening/discovery before tutorial imports. The clean-install
 check runs all four terminal lessons and the default with only the core wheel installed.
 

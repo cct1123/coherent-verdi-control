@@ -4,14 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coherent-verdi-control"
-version = "0.3.0"
-description = "Manual-grounded Coherent Verdi controller with hardware-free simulation"
+version = "0.3.1"
+description = "Python RS-232 controller for Coherent Verdi V-2, V-5 and V-6 lasers"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["pyserial>=3.5,<4"]
+
+[project.urls]
+Repository = "https://github.com/cct1123/coherent-verdi-control"
 
 [project.optional-dependencies]
-serial = ["pyserial>=3.5,<4"]
 gui = ["dash>=3,<5"]
 tutorials = ["jupyterlab>=4,<5"]
 dev = ["pytest>=8,<10", "pytest-cov>=6,<8", "ruff>=0.11,<1", "mypy>=1.15,<2", "build>=1.2,<2", "types-pyserial>=3.5", "setuptools>=77", "nbclient>=0.10,<1", "ipykernel>=6,<8"]
