@@ -410,6 +410,84 @@ def test_one_deadline_includes_write_and_all_bytes(peer, monkeypatch):
     assert now[0] == 0.012
 
 
+@pytest.mark.parametrize("write_duration", [0.01, 0.02])
+def test_write_exhausting_deadline_never_reads_or_retries(peer, monkeypatch, write_duration):
+    now = [0.0]
+    monkeypatch.setattr("coherent_verdi.controller.monotonic", lambda: now[0])
+    write = peer.write
+
+    def delayed_write(data):
+        result = write(data)
+        now[0] += write_duration
+        return result
+
+    def forbidden_read(size):
+        pytest.fail("the write consumed the transaction deadline")
+
+    monkeypatch.setattr(peer, "write", delayed_write)
+    monkeypatch.setattr(peer, "read", forbidden_read)
+    peer.responses.append(b"1.234\r\n")
+    with VerdiController("FAKE-ONLY", timeout_s=0.01) as laser:
+        with pytest.raises(VerdiError, match="timed out after 0 bytes") as caught:
+            laser.read_power_w()
+        assert caught.value.transaction["write_attempted"] is True
+        assert caught.value.transaction["response"] == b""
+        with pytest.raises(VerdiError, match="failed"):
+            laser.read_power_w()
+    assert peer.writes == [b"?P\r\n"]
+    assert peer.pending == b"1.234\r\n"
+
+
+def test_read_timeout_uses_budget_remaining_after_write(peer, monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("coherent_verdi.controller.monotonic", lambda: now[0])
+    write, read = peer.write, peer.read
+    read_timeouts = []
+
+    def delayed_write(data):
+        result = write(data)
+        now[0] += 0.004
+        return result
+
+    def delayed_read(size):
+        read_timeouts.append(peer.timeout)
+        now[0] += 0.001
+        return read(size)
+
+    monkeypatch.setattr(peer, "write", delayed_write)
+    monkeypatch.setattr(peer, "read", delayed_read)
+    peer.responses.append(b"1\r\n")
+    with VerdiController("FAKE-ONLY", timeout_s=0.01) as laser:
+        assert laser.read_laser_state() == 1
+    assert peer.write_timeout == 0.01
+    assert read_timeouts == pytest.approx([0.006, 0.005, 0.004])
+    assert peer.writes == [b"?L\r\n"]
+
+
+def test_complete_frame_at_byte_limit_is_accepted(peer):
+    payload = b"X" * 4094
+    peer.responses.extend([payload + b"\r\n", b"1\r\n"])
+    with VerdiController("FAKE-ONLY") as laser:
+        assert laser.read("?SV") == payload.decode()
+        assert laser.last_transaction["response"] == payload + b"\r\n"
+        assert laser.read_laser_state() == 1
+    assert peer.writes == [b"?SV\r\n", b"?L\r\n"]
+
+
+def test_frame_over_byte_limit_preserves_partial_evidence_and_retires_session(peer):
+    reply = b"X" * 4095 + b"\r\n"
+    peer.responses.append(reply)
+    with VerdiController("FAKE-ONLY") as laser:
+        with pytest.raises(VerdiError, match="4096 byte limit") as caught:
+            laser.read("?SV")
+        assert caught.value.transaction["response"] == reply[:4096]
+        assert laser.last_transaction == caught.value.transaction
+        assert peer.pending == b"\n"
+        with pytest.raises(VerdiError, match="failed"):
+            laser.read_laser_state()
+    assert peer.writes == [b"?SV\r\n"]
+
+
 def test_complete_reply_after_deadline_rejected(peer, monkeypatch):
     now = [0.0]
     monkeypatch.setattr("coherent_verdi.controller.monotonic", lambda: now[0])

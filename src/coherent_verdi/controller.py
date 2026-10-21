@@ -30,9 +30,12 @@ BAUDRATES = (1200, 2400, 4800, 9600, 19200, 38400, 57600)
 
 
 def finite_range(value: float, low: float, high: float, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{name} must be a finite number in [{low}, {high}]")
-    if not low <= value <= high or not isfinite(value):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not low <= value <= high
+        or not isfinite(value)
+    ):
         raise ValueError(f"{name} must be a finite number in [{low}, {high}]")
     return float(value)
 
@@ -276,9 +279,7 @@ class VerdiController:
                 self._failed = True
                 raise
 
-    def _request(
-        self, instruction: str, *, capture: bool = False
-    ) -> float | int | str | list[int] | dict[str, Any]:
+    def _request(self, instruction: str, *, capture: bool = False) -> float | int | str | list[int]:
         if not self._connected or self._failed:
             raise VerdiError(
                 "controller is disconnected or failed; after a failure use a new session"
@@ -314,11 +315,8 @@ class VerdiController:
                 allow_empty=capture,
             )
             record["payload"] = payload
-            if capture:
-                record["outcome"] = "captured"
-                return record
-            if not query:
-                record["outcome"] = "acknowledged"
+            if capture or not query:
+                record["outcome"] = "captured" if capture else "acknowledged"
                 return payload
             value = parse_value(
                 instruction, payload, active_fault_clear_reply=self._active_fault_clear_reply
@@ -338,9 +336,8 @@ class VerdiController:
                 record["outcome"] = "rejected"
             else:
                 self._failed = True
-                record["outcome"] = "failed"
-                if not query:
-                    record["outcome"] = "unknown" if record["write_attempted"] else "not_sent"
+                if not query and not record["write_attempted"]:
+                    record["outcome"] = "not_sent"
             if failure is exc:
                 raise
             raise failure from exc
@@ -354,7 +351,7 @@ class VerdiController:
         if not isinstance(query, str) or query not in QUERIES:
             raise ValueError(f"unknown query: {query!r}")
         with self._lock:
-            return cast(float | int | str | list[int], self._request(query))
+            return self._request(query)
 
     def capture(self, query: str) -> dict[str, Any]:
         """Capture a documented query without interpreting its value; read-only sessions only.
@@ -367,7 +364,9 @@ class VerdiController:
         with self._lock:
             if self._allow_writes:
                 raise PermissionError("capture requires a read-only controller")
-            return dict(cast(dict[str, Any], self._request(query, capture=True)))
+            self._request(query, capture=True)
+            assert self._last_transaction is not None
+            return dict(self._last_transaction)
 
     def read_faults(self, *, history: bool = False) -> list[int]:
         if type(history) is not bool:
@@ -478,8 +477,6 @@ class VerdiController:
             exc.add_note(f"disconnect also failed: {cleanup_error}")
 
     def _open(self) -> None:
-        if self._stream is not None:
-            return
         import serial
 
         stream = serial.Serial(

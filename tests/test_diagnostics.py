@@ -285,19 +285,34 @@ def test_pretransmit_buffered_input_records_command_as_not_sent(peer):
     assert peer.writes == []
 
 
-def test_capture_and_read_are_serialized_under_concurrent_callers(peer):
-    peer.responses.extend([b"0.125\r\n"] * 40)
+def test_capture_and_read_are_serialized_under_concurrent_callers(peer, monkeypatch):
+    replies = {"?SV": b"TEST\r\n", "?P": b"0.125\r\n", "?L": b"1\r\n"}
+    write = peer.write
+
+    def respond(request):
+        peer.responses.append(replies[request[:-2].decode()])
+        return write(request)
+
+    monkeypatch.setattr(peer, "write", respond)
     with VerdiController("FAKE-ONLY") as laser:
 
         def read_or_capture(index):
-            return laser.capture("?P")["payload"] if index % 2 else laser.read_power_w()
+            query = ("?SV", "?P", "?L")[index % 3]
+            if index % 2:
+                record = laser.capture(query)
+                assert record["instruction"] == query
+                assert record["request"] == (query + "\r\n").encode()
+                assert record["response"] == replies[query]
+                return record["payload"]
+            return laser.read(query)
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             values = list(pool.map(read_or_capture, range(40)))
-    assert values == [0.125 if index % 2 == 0 else "0.125" for index in range(40)]
+    assert values == [
+        ("TEST", "0.125", "1")[index % 3] if index % 2 else ("TEST", 0.125, 1)[index % 3]
+        for index in range(40)
+    ]
     assert len(peer.writes) == 40
-    assert laser.last_transaction["instruction"] == "?P"
-    assert laser.last_transaction["response"] == b"0.125\r\n"
 
 
 def test_acknowledged_command_keeps_its_wire_evidence(peer):
