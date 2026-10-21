@@ -30,7 +30,7 @@ def callback_payload():
             ],
             "inputs": [{"id": "refresh", "property": "n_intervals", "value": 1}],
             "changedPropIds": ["refresh.n_intervals"],
-            "state": [],
+            "state": [{"id": "history-cursor", "property": "data", "value": 0}],
         }
 
     return build

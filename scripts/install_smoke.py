@@ -215,7 +215,7 @@ def gui_smoke() -> None:
             ],
             "inputs": [{"id": "refresh", "property": "n_intervals", "value": 1}],
             "changedPropIds": ["refresh.n_intervals"],
-            "state": [],
+            "state": [{"id": "history-cursor", "property": "data", "value": 0}],
         }
 
         def refresh(expected: str) -> dict:
@@ -252,13 +252,26 @@ def gui_smoke() -> None:
         telemetry.poll_once()
         error_view = refresh("ERROR")
         assert error_view["laser"]["children"] == "UNKNOWN"
-        assert error_view["power-graph"]["figure"]["data"][0]["y"][-1] is None
+        assert error_view["power-graph"]["extendData"][0]["y"][0][-1] is None
         telemetry.poll_once()
         refresh("ERROR")  # Failed sessions never recover implicitly.
         assert len(telemetry.snapshot()["history"]) == 2
+    # The installed GUI queue must reach the installed driver and preserve readback.
+    with SimulatedVerdi("V5", allow_writes=True, power_limit_w=0.5) as writable:
+        controls_monitor = Monitor(writable)
+        controls_app = create_app(controls_monitor)
+        controls_monitor.poll_once()
+        session = controls_monitor.controls
+        token = session.new_client()
+        session.submit(token, "apply-power", 1, "power", 0.25)
+        controls_monitor.poll_once()
+        action = session.snapshot()["actions"][-1]
+        assert action["state"] == "verified" and action["readback"]["actual"] == 0.25
+        assert controls_app.server.test_client().get("/_dash-layout").status_code == 200
+        controls_monitor.close()
     print(
         "PASS: installed GUI assets, NO DATA/LIVE/FAULT/ERROR callbacks, "
-        "bounded cache, no callback acquisition; "
+        "bounded cache, queued power control with readback, no callback acquisition; "
         f"Dash {version('dash')}, Plotly {version('plotly')}, pySerial {version('pyserial')}"
     )
 

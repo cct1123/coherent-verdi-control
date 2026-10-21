@@ -1,8 +1,9 @@
 """Deterministic, warm protocol fixture; no physical timing or laser dynamics."""
 
 import re
+from math import isfinite
 
-from .controller import VerdiController, finite_range
+from .controller import BAUDRATES, VerdiController, finite_range
 
 _REPLIES = {
     "?BT": "30.00",
@@ -68,6 +69,14 @@ class SimulatedVerdi(VerdiController):
         self._power = 0.0
         self._faults: tuple[int, ...] = ()
         self._history: tuple[int, ...] = ()
+        self._device_baudrate = 19200
+        self._lbo_heater = True
+        self._lbo_optimizations = 0
+        self._front_panel_lock = 0
+        self._panel_action: str | None = None
+        self._flash_count = 0
+        self._chiller_on = False
+        self._chiller_temperature_c: float | None = None
 
     def set_key(self, on: bool) -> None:
         """Test fixture operation; there is no remote keyswitch command."""
@@ -97,6 +106,7 @@ class SimulatedVerdi(VerdiController):
         current = ("12.0" if self._shutter else "1.0") if diode_on else "0.0"
         # Independent short-form replies for the controller; values are fixtures.
         values: dict[str, str] = {
+            "?B": str(self._device_baudrate),
             "?ACAD": f"{current}&0.0",
             "?C": current,
             "?D1C": current,
@@ -104,6 +114,7 @@ class SimulatedVerdi(VerdiController):
             "?FH": "&".join(map(str, self._history)) or "SYSTEM OK",
             "?K": str(int(self._key)),
             "?L": str(int(self._laser)),
+            "?LBOH": str(int(self._lbo_heater)),
             "?P": f"{self._power if emitting else 0:.3f}",
             "?LRS": "1" if emitting else "0",
             "?SP": f"{self._power:.4f}",
@@ -116,14 +127,39 @@ class SimulatedVerdi(VerdiController):
         if not sep:
             return f"Command Error: {instruction}"
         name, operand = name.strip(), operand.strip()
-        if name == "P":
+        if name == "B":
+            if operand not in {str(rate) for rate in BAUDRATES}:
+                return f"RANGE ERROR: {instruction}"
+            self._device_baudrate = int(operand)
+        elif name == "CHILLER":
+            if operand == "ON":
+                self._chiller_on = True
+            elif _chiller_temperature(operand):
+                self._chiller_temperature_c = float(operand)
+            else:
+                return f"RANGE ERROR: {instruction}"
+        elif name == "LFP":
+            if not re.fullmatch(r"[+-]?[0-9]{1,124}", operand):
+                return f"RANGE ERROR: {instruction}"
+            # Preserve the operand; Table 5-3 does not specify lock/unlock values.
+            self._front_panel_lock = int(operand)
+        elif name in ("EXIT", "FL", "KNOBDN", "LBOOPT", "MENUDN", "SELECT", "MENUUP"):
+            if operand != "1":
+                return f"RANGE ERROR: {instruction}"
+            if name == "FL":
+                self._flash_count += 1  # No transient optical model.
+            elif name == "LBOOPT":
+                self._lbo_optimizations += 1  # No convergence or completion model.
+            else:
+                self._panel_action = name  # No front-panel menu emulation.
+        elif name == "P":
             if not re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", operand):
                 return f"RANGE ERROR: {instruction}"
             try:
                 self._power = finite_range(float(operand), 0, float(self.model[1:]), "power")
             except ValueError:
                 return f"RANGE ERROR: {instruction}"
-        elif name in ("L", "S", "E", "PROMPT"):
+        elif name in ("L", "S", "E", "PROMPT", "LBOH"):
             if operand not in ("0", "1"):
                 return f"RANGE ERROR: {instruction}"
             value = operand == "1"
@@ -144,6 +180,8 @@ class SimulatedVerdi(VerdiController):
                 self._echo = value
             elif name == "PROMPT":
                 self._prompt = not value
+            elif name == "LBOH":
+                self._lbo_heater = value  # No heating/cooling or fault model.
         else:
             return f"Command Error: {instruction}"
         return ""
@@ -171,3 +209,7 @@ class SimulatedVerdi(VerdiController):
 
     def _close(self) -> None:
         pass  # Disconnect never changes simulated laser state.
+
+
+def _chiller_temperature(operand: str) -> bool:
+    return bool(re.fullmatch(r"[+-]?[0-9]+\.[0-9]", operand)) and isfinite(float(operand))

@@ -6,13 +6,18 @@ const vm = require("node:vm");
 let now = 0;
 let timer;
 let disconnected = false;
+let serverDisabled = "false";
 const nodes = {
     dashboard: {classList: {toggle: (name, value) => {
         assert.equal(name, "connection-lost");
         disconnected = value;
     }}},
     "server-heartbeat": {textContent: ""},
-    "connection-warning": {textContent: ""}
+    "connection-warning": {textContent: ""},
+    "write-controls": {disabled: false, getAttribute: name => {
+        assert.equal(name, "data-server-disabled");
+        return serverDisabled;
+    }}
 };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname,
     "../src/coherent_verdi/assets/watchdog.js"), "utf8"), {
@@ -32,10 +37,15 @@ assert.equal(disconnected, false);
 now = 12000;
 timer();
 assert.equal(disconnected, true);
+assert.equal(nodes["write-controls"].disabled, true);
 assert.match(nodes["connection-warning"].textContent, /all displayed values are stale/);
 // A new received callback recovers without depending on wall-clock/host timestamps.
 nodes["server-heartbeat"].textContent = "1";
 timer();
 assert.equal(disconnected, false);
 assert.equal(nodes["connection-warning"].textContent, "");
+assert.equal(nodes["write-controls"].disabled, false);
+serverDisabled = "true";
+timer();
+assert.equal(nodes["write-controls"].disabled, true);
 console.log(`PASS: browser watchdog startup, live receipt, expiry and recovery (virtual clock; Node ${process.version})`);

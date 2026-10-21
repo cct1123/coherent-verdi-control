@@ -17,12 +17,27 @@ Thumbs.db
 
 # Python development and generated scratch artifacts.
 tmp/
+temp/
+.tmp/
+.temp/
+tmp-*/
+temp-*/
+.tmp-*/
+.temp-*/
+*.tmp
+*.temp
 build/
 dist/
 *.egg-info/
 .ruff_cache/
 .mypy_cache/
+.cache/
+cache/
+.uv-cache/
+.hypothesis/
+.pytest_tmp/
 .coverage
+.coverage.*
 htmlcov/
 .venv-*/
 pytest-cache-files-*/

@@ -2,7 +2,10 @@
 
 A small Python RS-232 controller for **Coherent Verdi V-2, V-5 and V-6** lasers.
 Read power, temperatures and faults; set power; control standby, enable and the
-safety shutter. Includes a simulator and an optional read-only Dash dashboard.
+safety shutter. Includes a simulator and an optional Dash control panel, read-only
+by default, with explicit write enablement.
+All commands and queries in the manual's Tables 5-3 and 5-4 are exposed, including
+service and front-panel commands and their documented long/short aliases.
 
 **Software-tested using simulation and fake serial connections. Physical
 communication, optical behavior and calibration have not yet been validated.**
@@ -128,6 +131,14 @@ operator's beam, cooling, interlock and readiness checks. `start()` clears fault
 and fault history; capture them first. The [controlled-session tutorial](examples/README.md#lesson-5-emission-requires-an-operator-ready-system)
 shows readiness checks and verified normal completion.
 
+The API also exposes baud changes, the Coherent chiller, LBO heater/optimization,
+etalon FLASH, panel locking and menu buttons. Use named methods or a validated
+manual command such as `laser.command("LBO HEATER:1")`. Long query forms such as
+`laser.read("PRINT LIGHT")` are accepted too. See the [complete API](docs/API.md)
+and [manual mapping](docs/PROTOCOL.md#complete-table-5-3-command-coverage).
+Chiller limits, panel-lock values and baud-transition acknowledgment timing are
+not fully specified by the manual; their physical behavior requires verification.
+
 On timeout or malformed communication, a command may already have executed.
 The driver stops that session without retry or replay. Use the physical abort
 procedure; do not send blind cleanup commands or power-cycle to recover serial
@@ -146,13 +157,26 @@ verdi --port COM3 --model V5 diagnostics
 
 For `status` or `watch`, also supply
 `--active-fault-clear-reply "<VERIFIED_TEXT>"` before the subcommand. `watch`
-accepts `--count` and `--interval` in seconds. CLI operations never enable writes.
+accepts `--count` and `--interval` in seconds. These operations never enable writes.
 Without `--port`, commands use the simulator:
 
 ```sh
 verdi status
 verdi watch --count 10 --interval 1
 ```
+
+To execute a write, use `command` with one quoted manual instruction and the
+explicit `--allow-writes` flag. The same power ceiling and operand validation as
+the Python API apply. For example, this changes only the power setpoint:
+
+```sh
+verdi --port COM3 --model V5 command "POWER=0.25" --allow-writes --power-limit-w 0.5
+```
+
+Select the port, model and site-approved setpoint/ceiling for your setup. Writes
+are rejected without `--allow-writes`. Each attempted write emits its transaction
+evidence as JSONL; failures return exit code 2 and are never replayed. Omitting
+the global serial `--port` uses the simulator, including for command execution.
 
 `python -m coherent_verdi` is equivalent to `verdi`. Python applications can
 inspect `last_transaction` after a call or `VerdiError.transaction` after an
@@ -177,7 +201,10 @@ verdi gui
 
 Open [http://127.0.0.1:8050](http://127.0.0.1:8050/). For hardware, supply the same
 global connection settings and verified fault-clear text before `gui`. The
-dashboard monitors one shared connection; it provides no write controls.
+dashboard uses one shared connection. Its overview, all 42 queries, diagnostics
+and fault history are available in read-only mode. Raw capture also requires a
+read-only session. `gui --commission` starts with overview polling paused so an
+unverified active-fault reply can be captured before any automatic status reads.
 `gui --port 8051` changes the HTTP port. Ctrl+C drains acquisition and closes
 communication without changing laser state.
 
@@ -187,9 +214,31 @@ For example, a hardware dashboard on HTTP port 8051 uses:
 verdi --port COM3 --model V5 --baudrate 19200 --active-fault-clear-reply "<VERIFIED_TEXT>" gui --port 8051
 ```
 
+Enable the GUI's full set of power, laser, shutter, service and front-panel
+controls explicitly, with your site-approved power ceiling:
+
+```sh
+verdi --port COM3 --model V5 --active-fault-clear-reply "<VERIFIED_TEXT>" gui --allow-writes --power-limit-w 0.5
+```
+
+For hardware-free exploration: `verdi gui --allow-writes --power-limit-w 0.5`.
+Inputs apply only when clicked; overview refreshes preserve unsent edits.
+Start and shutter-open require the readiness checkbox. The server validates all
+actions; fresh overview data is required for writes other than standby and
+shutter-close. Results distinguish acknowledgment, matching readback, mismatch
+and failure. Commands without getters report acceptance only.
+
+One acquisition caller drains a bounded request queue. Standby/shutter-close
+requests precede routine reads and cancel older queued writes that could change
+operation; they cannot interrupt an exchange already in progress. Duplicate
+browser events are suppressed, queued requests expire after 10 s, and uncertain
+writes are never replayed. Closing the application cancels pending actions and
+drains in-flight I/O without changing laser state. See [GUI details](docs/API.md#gui-control-panel).
+
 ## Reference and development
 
 - [API](docs/API.md): methods, data, errors and monitoring integration.
+- [Developer walkthrough](docs/DEVELOPMENT.md): ownership, request flow and extension points.
 - [Hardware setup and commissioning](docs/HARDWARE.md): first connection, checks and recovery.
 - [Protocol](docs/PROTOCOL.md): manual mappings and firmware uncertainties.
 - [Five hardware tutorials](examples/README.md) and [simulator reference](docs/SIMULATOR.md).

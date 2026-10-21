@@ -54,8 +54,9 @@ def test_capture_preserves_exact_transaction_and_configuration(peer, monkeypatch
     read = peer.read
 
     def timed_read(count):
-        now[0] += 0.001
-        return read(count)
+        result = read(count)
+        now[0] += len(result) * 0.001
+        return result
 
     monkeypatch.setattr(peer, "read", timed_read)
     reply = b"Verdi> ?SV FIRMWARE 7\r\n"
@@ -252,7 +253,7 @@ def test_late_byte_is_failure_evidence_even_though_reply_missed_deadline(peer, m
 
     def late_terminator(count):
         data = read(count)
-        if data == b"\n":
+        if data.endswith(b"\r\n"):
             now[0] = 0.02
         return data
 

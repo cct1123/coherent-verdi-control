@@ -10,8 +10,11 @@ Printed section 5 corresponds to PDF pages 49–58. No newer firmware behavior i
 - Section 5, pp. 5-1–5-4: ASCII instruction terminated by CR/LF or semicolon;
   this library emits **CR/LF only**, one instruction per transaction.
 - `PRINT ` and `?` are equivalent query prefixes; `:` and `=` are equivalent
-  command delimiters (p. 5-3). The controller emits catalogued short queries and
-  `=` commands; the simulator supports the same emitted subset, not all firmware aliases.
+  command delimiters (p. 5-3). `read()`/`capture()` accept short queries and
+  `PRINT`/`?` long names. `command()` accepts the Table 5-3 long/short names and
+  either delimiter. The controller normalizes these to short queries and `=`
+  commands before transmission; the simulator receives these canonical forms.
+  Inputs are uppercase ASCII without terminators; batching is rejected.
 - Replies end in CR/LF; wait for a complete reply before the next instruction.
 - Table 5-1, p. 5-2: a successful command replies with an empty CR/LF when echo
   and prompt are off. There is no documented `OK` command acknowledgment.
@@ -46,7 +49,11 @@ independent record in `VerdiError.transaction`. Command failures distinguish
 `not_sent` from `unknown`; acknowledgment and documented rejection are explicit
 outcomes. There is no automatic retry or replay.
 
-## Exposed operational commands
+## Complete Table 5-3 command coverage
+
+All 16 distinct write operations are exposed, counting LIGHT/POWER as one
+operation and PRINT as a query prefix. Aliases share the same validation,
+write permission and failure policy as the typed methods below.
 
 | API | Wire form | Source / meaning |
 | --- | --- | --- |
@@ -56,22 +63,51 @@ outcomes. There is no automatic retry or replay.
 | `set_shutter(open=...)` | `S=0/1` | p. 5-6; closes/opens the head shutter |
 | `set_echo(enabled=...)` | `E=0/1` | p. 5-5; change applies to the following command |
 | `set_prompt(enabled=...)` | `PROMPT=0/1` | p. 5-6; **0 enables, 1 disables** prompt; `>=n` is its alternate spelling |
+| `set_baudrate(baudrate)` | `B=n` | p. 5-5 and pp. 5-3–5-4; persistent device setting, followed by host reconfiguration |
+| `chiller_on()` | `CHILLER=ON` | p. 5-5; only for Coherent chiller part 1037271 |
+| `set_chiller_temperature_c(celsius)` | `CHILLER=XX.X` | p. 5-5; rounded to one decimal; physical range unspecified |
+| `exit_screen()` | `EXIT=1` | p. 5-5; EXIT button |
+| `flash()` | `FL=1` | p. 5-5; flash below lasing threshold for etalon recentering |
+| `knob_down()` | `KNOBDN=1` | p. 5-5; KNOB DOWN button |
+| `set_lbo_heater(enabled=...)` | `LBOH=0/1` | p. 5-5; cool down / heating |
+| `optimize_lbo()` | `LBOOPT=1` | p. 5-5; initiate optimization |
+| `set_front_panel_lock(value)` | `LFP=n` | p. 5-5; integer operand, valid values and unlock mapping unspecified |
+| `menu_down()` | `MENUDN=1` | p. 5-5; MENU DOWN button |
+| `menu_select()` | `SELECT=1` | p. 5-5; MENU SELECT button |
+| `menu_up()` | `MENUUP=1` | p. 5-5; MENU UP button |
 
 Writes require `VerdiController(..., allow_writes=True)`. Construction, connection,
-disconnection and monitoring never issue commands. Mode writes are optional explicit
+disconnection and automatic monitoring never issue commands. The optional GUI can
+queue explicit writes only when launched with `--allow-writes`. Mode writes are optional explicit
 operations; they are not connection prerequisites. `disconnect()` only releases the
 communication handle and **does not place the laser in STANDBY**.
 
-The manual also documents service/front-panel operations (baud-rate changes,
-chiller, FLASH, LBO heater/optimization, panel lock and menu buttons). They are
-outside the public operational API. There is no unrestricted raw-write
-escape hatch. Chiller operand details and service sequencing are insufficiently
-specified for this controller's scope. Extending this subset needs a documented
-use case, source review and software tests.
+`command("LBO HEATER:1")`, for example, calls the same validated path as
+`set_lbo_heater(enabled=True)`. All Table 5-3 aliases are accepted, including
+`POWER`, `LIGHT`, `>=n` and the table's bare `LBOOPT` spelling (normalized to
+`LBOOPT=1`). Section 5's `SERIAL BAUDRATE=n` spelling is accepted as well.
+This is a catalogue allowlist; there is no unrestricted raw-write escape hatch.
+
+Baud changes send `B=n` and receive the acknowledgment at the original baud,
+then update the host port under the same lock. The manual specifies host
+reinitialization but not the acknowledgment baud or transition timing. Firmware
+that switches before replying may time out and retire the session. An unknown
+outcome is never retried; establish the actual device baud independently before
+using a fresh controller. A host-reconfiguration failure also retires the session;
+its transaction retains `acknowledged` plus the host error. The recorded baud is
+the rate of the command exchange; following transactions use the new rate.
+
+The chiller's temperature range and `LFP=n` valid values are not defined by this
+manual. The API checks finite decimal temperature and integer panel-lock syntax,
+with the existing instruction-length bound; firmware may reject a value. It does
+not assume a physical chiller limit or that a particular LFP operand unlocks the
+panel. Only the documented chiller `ON` and numeric forms are supported, not OFF.
+Service sequencing and physical completion remain the application's responsibility.
 
 ## Query coverage
 
-All **42** short-form queries from Table 5-4 are accepted by `read()` as short strings.
+All **42** queries from Table 5-4 are accepted by `read()` as short strings or
+their documented long names, prefixed with `?` or `PRINT `.
 Direct parsing groups in [controller.py](../src/coherent_verdi/controller.py) distinguish
 raw text, documented integer codes and decimal numbers. Source pages are below;
 independent test vectors retain units and long names as manual reference data.
@@ -151,8 +187,9 @@ code 47 is listed in Table 5-4 but omitted from Table 6-1.
    beyond the table instead of consuming arbitrary lines.
 3. **Power limits:** Table 2-1 rates models at 2/5/6 W. Those ratings are used as
    conservative software ceilings, not claimed firmware maximum setpoint ranges.
-   A caller can lower the ceiling. No current, temperature or calibration tuning
-   commands are implemented.
+   A caller can lower the ceiling. Chiller temperature control is exposed as
+   documented; no undocumented current, crystal-temperature or calibration
+   tuning commands are added.
 4. **Shutter behavior:** Table 4-3 (p. 4-9) describes idle at minimum power while
    closed and return/ramp after opening. The minimum power and ramp rates are not
    specified. The simulator's zero closed-shutter power is a synthetic fixture;
@@ -181,4 +218,5 @@ The serial adapter's port-less construction, explicit open, read/write timeouts
 and disabled flow control follow the [pySerial API](https://pyserial.readthedocs.io/en/latest/pyserial_api.html).
 The optional client uses Dash callbacks and `dcc.Interval` as described by
 [Dash live updates](https://dash.plotly.com/live-updates). Browser refreshes read
-cached monitor data; they do not create device polling workers.
+cached monitor data or submit bounded requests to the existing acquisition caller;
+they do not create additional device polling workers.

@@ -1,4 +1,7 @@
-"""Read-only Verdi CLI. Supply --port and --model for hardware; otherwise simulate."""
+"""Verdi CLI. Supply --port and --model for hardware; otherwise simulate.
+
+Reads are the default; the command subcommand requires --allow-writes.
+"""
 
 import argparse
 import json
@@ -7,16 +10,13 @@ from collections.abc import Sequence
 from time import sleep
 from typing import Any
 
-from .controller import QUERIES, VerdiController, VerdiError
+from .controller import VerdiController, VerdiError, normalize_query, transaction_evidence
 from .simulator import SimulatedVerdi
 
 
 def _print_transaction(record: dict[str, Any]) -> None:
     """JSONL preserves exact wire bytes as hex."""
-    encoded = dict(record)
-    encoded["request_hex"] = encoded.pop("request").hex()
-    encoded["response_hex"] = encoded.pop("response").hex()
-    print(json.dumps(encoded, allow_nan=False), flush=True)
+    print(json.dumps(transaction_evidence(record), allow_nan=False), flush=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -31,32 +31,51 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "diagnostics"):
         commands.add_parser(name)
-    commands.add_parser("query").add_argument("query", choices=sorted(QUERIES))
+    commands.add_parser("query").add_argument("query", type=normalize_query)
+    command = commands.add_parser("command", help="Execute one documented write, explicitly")
+    command.add_argument("instruction", help='One quoted command, e.g. "LBO HEATER=1"')
+    command.add_argument("--allow-writes", action="store_true", help="Required to enable writes")
+    command.add_argument("--power-limit-w", type=float, help="Site ceiling for power writes")
     commission = commands.add_parser(
         "commission", help="Read-only raw query capture; no interpretation"
     )
     commission.add_argument(
         "--query",
         action="append",
-        choices=sorted(QUERIES),
+        type=normalize_query,
         help="Repeat for each exact query; default: one ?SV",
     )
     watch = commands.add_parser("watch")
     watch.add_argument("--count", type=int, default=10)
     watch.add_argument("--interval", type=float, default=1.0)
-    commands.add_parser("gui").add_argument(
+    gui = commands.add_parser("gui")
+    gui.add_argument(
         "--port", dest="http_port", type=int, default=8050, help="HTTP port (default: 8050)"
+    )
+    gui.add_argument("--allow-writes", action="store_true", help="Enable GUI control actions")
+    gui.add_argument("--power-limit-w", type=float, help="Site ceiling for GUI power writes")
+    gui.add_argument(
+        "--commission", action="store_true", help="Read-only; start with polling paused"
     )
     args = parser.parse_args(argv)
     if args.serial_port is not None and args.model is None:
         parser.error("--port requires --model V2, V5 or V6; the model is not discovered")
     if args.command == "commission" and args.serial_port is None:
         parser.error("commission requires an explicit --port and --model")
+    if args.command == "command" and not args.allow_writes:
+        parser.error("command requires --allow-writes explicitly")
+    if args.command == "gui" and args.commission and args.allow_writes:
+        parser.error("gui --commission requires a read-only session")
     if args.serial_port is None and (
         args.baudrate != 19200 or args.timeout_s != 1.0 or args.active_fault_clear_reply is not None
     ):
         parser.error("serial connection settings require --port")
     try:
+        write_options: dict[str, Any] = (
+            {"allow_writes": args.allow_writes, "power_limit_w": args.power_limit_w}
+            if args.command in ("command", "gui")
+            else {}
+        )
         laser = (
             VerdiController(
                 args.serial_port,
@@ -64,9 +83,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 baudrate=args.baudrate,
                 timeout_s=args.timeout_s,
                 active_fault_clear_reply=args.active_fault_clear_reply,
+                **write_options,
             )
             if args.serial_port is not None
-            else SimulatedVerdi(args.model or "V5")
+            else SimulatedVerdi(args.model or "V5", **write_options)
         )
         # Validate client settings and dependencies before opening a physical port.
         if args.command in ("watch", "gui"):
@@ -78,8 +98,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.command == "gui":
                 if not 1 <= args.http_port <= 65535:
                     raise ValueError("HTTP port must be in [1, 65535]")
+                if args.commission:
+                    monitor.controls.set_commissioning()
                 app = create_app(monitor)
         with laser:
+            if args.command == "command":
+                try:
+                    laser.command(args.instruction)
+                finally:
+                    if record := laser.last_transaction:
+                        _print_transaction(record)
+                return 0
             if args.command == "commission":
                 for query in args.query or ["?SV"]:
                     try:
@@ -116,7 +145,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             def poll() -> None:
                 while not stop.is_set():
                     monitor.poll_once()
-                    stop.wait(monitor.interval_s)
+                    monitor.wait(stop)
 
             worker = Thread(target=poll, name="verdi-monitor")
             worker.start()
@@ -124,6 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 app.run(host="127.0.0.1", port=args.http_port, debug=False, use_reloader=False)
             finally:
                 stop.set()
+                monitor.close()
                 worker.join()  # Drain acquisition before disconnect, including Ctrl+C.
         return 0
     except KeyboardInterrupt:

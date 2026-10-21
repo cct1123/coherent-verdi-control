@@ -91,8 +91,15 @@ controller on the same port. No state or commands are replayed on connection.
    setpoints, settling conditions, tolerances and uncertainty before measurement;
    setpoint readback alone is not optical calibration.
 
-Service-menu, heater, chiller, optimization, calibration and baud-rate writes are
-outside the controller's public operational API.
+The API also exposes all documented service/front-panel commands: LBO heater,
+chiller, optimization, FLASH, panel locking, menu buttons and baud changes. These
+are explicit writes; the sequence above does not validate their physical behavior.
+Use the manual's procedure for each operation. Chiller temperature limits and
+panel-lock operand meanings are unspecified in this manual. Baud changes expect
+an acknowledgment at the old rate before host reconfiguration; transition timing
+must be verified on the actual firmware. A failed change retires the session and
+must not be replayed. See [command coverage and limits](PROTOCOL.md#complete-table-5-3-command-coverage).
+No undocumented calibration or temperature-tuning commands are added.
 
 ## Monitoring and communication failure
 

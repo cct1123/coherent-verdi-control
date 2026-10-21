@@ -8,6 +8,32 @@ from time import monotonic
 from types import TracebackType
 from typing import Any, Self, cast
 
+from .catalogue import BAUDRATES as BAUDRATES
+from .catalogue import QUERIES as QUERIES
+from .catalogue import QUERY_INFO, QUERY_NAMES, STATUS_FIELDS
+
+
+def transaction_evidence(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a JSON-ready copy, or None when no exchange was attempted."""
+    if record is None:
+        return None
+    result = dict(record)
+    result["request_hex"] = result.pop("request").hex()
+    result["response_hex"] = result.pop("response").hex()
+    return result
+
+
+def finite_range(value: float, low: float, high: float, name: str) -> float:
+    """Validate a numeric setting before I/O; booleans are not numbers here."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not low <= value <= high
+        or not isfinite(value)
+    ):
+        raise ValueError(f"{name} must be a finite number in [{low}, {high}]")
+    return float(value)
+
 
 class VerdiError(Exception):
     """Communication or reply failure. Retire the session; never replay a command."""
@@ -26,78 +52,50 @@ class DeviceError(VerdiError):
         self.response = response
 
 
-BAUDRATES = (1200, 2400, 4800, 9600, 19200, 38400, 57600)
-
-
-def finite_range(value: float, low: float, high: float, name: str) -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not low <= value <= high
-        or not isfinite(value)
-    ):
-        raise ValueError(f"{name} must be a finite number in [{low}, {high}]")
-    return float(value)
-
-
-_TEXT = {
-    "?ACAD",
-    "?D1PC",
-    "?D1RCF",
-    "?D1TD",
-    "?D15V",
-    "?ED",
-    "?LBOD",
-    "?SV",
-    "?VD",
+_COMMAND_NAMES = {
+    "BAUDRATE": "B",
+    "SERIAL BAUDRATE": "B",  # Section 5, pp. 5-3..5-4.
+    "CHILLER": "CHILLER",
+    "ECHO": "E",
+    "EXIT SCREEN": "EXIT",
+    "FLASH": "FL",
+    "KNOB DOWN": "KNOBDN",
+    "LASER": "L",
+    "LBO HEATER": "LBOH",
+    "LBO OPTIMIZE": "LBOOPT",
+    "LIGHT": "P",
+    "POWER": "P",
+    "LOCK FRONT PANEL": "LFP",
+    "MENU DOWN": "MENUDN",
+    "MENU SELECT": "SELECT",
+    "MENU UP": "MENUUP",
+    "PROMPT": "PROMPT",
+    ">": "PROMPT",
+    "SHUTTER": "S",
 }
-_CODES = {
-    "?B": BAUDRATES,
-    "?D1SS": range(7),
-    "?LBOSS": range(7),
-    "?ESS": range(4),
-    "?LRS": range(4),
-    "?VSS": range(4),
-    "?L": range(3),
-    "?DIOS": range(2),
-    "?K": range(2),
-    "?LBOH": range(2),
-    "?LBOOS": range(2),
-    "?M": range(2),
-    "?S": range(2),
-}
-_NONNEGATIVE = {
-    "?C",
-    "?D1C",
-    "?D1H",
-    "?D1RCM",
-    "?HH",
-    "?P",
-    "?PSH",
-    "?SP",
-}
-
-QUERIES = frozenset(
-    _TEXT
-    | _CODES.keys()
-    | _NONNEGATIVE
-    | {
-        "?BT",
-        "?D1HST",
-        "?D1ST",
-        "?D1T",
-        "?EST",
-        "?ET",
-        "?LBOST",
-        "?LBOT",
-        "?VST",
-        "?VT",
-        "?F",
-        "?FH",
-    }
-)
 
 _NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)")
+
+
+def normalize_query(query: str) -> str:
+    """Accept Table 5-4 short names and PRINT/? long-name aliases."""
+    if not isinstance(query, str):
+        raise ValueError(f"unknown query: {query!r}")
+    try:
+        encode_instruction(query)
+    except ValueError as exc:
+        raise ValueError(f"unknown query: {query!r}") from exc
+    query = query.strip(" ")
+    if query.startswith("PRINT "):
+        name = query[6:].strip(" ")
+    elif query.startswith("?"):
+        name = query[1:]
+    else:
+        raise ValueError(f"unknown query: {query!r}")
+    short = QUERY_NAMES.get(name, "?" + name)
+    if short not in QUERIES:
+        raise ValueError(f"unknown query: {query!r}")
+    return short
 
 
 def encode_instruction(instruction: str) -> bytes:
@@ -164,19 +162,20 @@ def parse_value(
         return parse_faults(
             payload, clear_reply=active_fault_clear_reply if query == "?F" else "SYSTEM OK"
         )
-    if query in _TEXT:
+    spec = QUERY_INFO[query]
+    if spec.kind == "text":
         return payload
-    if query in _CODES:
+    if spec.kind == "code":
         if not re.fullmatch(r"[0-9]+", payload):
             raise VerdiError(f"{query}: undocumented value {payload!r}")
         integer_value = _parse_integer(payload)
-        if integer_value not in _CODES[query]:
+        if integer_value not in spec.choices:
             raise VerdiError(f"{query}: undocumented value {payload!r}")
         return integer_value
     if not _NUMBER.fullmatch(payload):
         raise VerdiError(f"{query}: expected decimal number, received {payload!r}")
     value = float(payload)
-    if not isfinite(value) or (query in _NONNEGATIVE and value < 0):
+    if not isfinite(value) or (spec.kind == "nonnegative" and value < 0):
         raise VerdiError(f"{query}: invalid numeric value {payload!r}")
     return value
 
@@ -238,6 +237,19 @@ class VerdiController:
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def allow_writes(self) -> bool:
+        return self._allow_writes
+
+    @property
+    def power_limit_w(self) -> float:
+        return self._power_limit_w
+
+    @property
+    def failed(self) -> bool:
+        """Failure latch, readable without waiting for a device transaction."""
+        return self._failed
 
     is_simulated = False
 
@@ -347,9 +359,8 @@ class VerdiController:
                 failure.transaction = dict(record)
 
     def read(self, query: str) -> float | int | str | list[int]:
-        """Read one documented short query; unknown strings never reach the wire."""
-        if not isinstance(query, str) or query not in QUERIES:
-            raise ValueError(f"unknown query: {query!r}")
+        """Read one documented query, accepting short and PRINT/? long aliases."""
+        query = normalize_query(query)
         with self._lock:
             return self._request(query)
 
@@ -359,8 +370,7 @@ class VerdiController:
         Framing and device errors are still enforced. Empty payloads are evidence,
         never an assertion that the instrument is clear or ready.
         """
-        if not isinstance(query, str) or query not in QUERIES:
-            raise ValueError(f"unknown query: {query!r}")
+        query = normalize_query(query)
         with self._lock:
             if self._allow_writes:
                 raise PermissionError("capture requires a read-only controller")
@@ -384,25 +394,14 @@ class VerdiController:
         """JSON-ready dictionary from 14 sequential reads, serialized against writes."""
         with self._lock:
             started = monotonic()
-            sample = {
+            sample: dict[str, Any] = {
                 "model": self.model,
                 "sampled_at": datetime.now(UTC).isoformat(),
                 "simulated": self.is_simulated,
-                "laser_state": self.read_laser_state(),
-                "keyswitch_on": bool(self.read("?K")),
-                "shutter_open": bool(self.read("?S")),
-                "power_w": self.read_power_w(),
-                "set_power_w": self.read("?SP"),
-                "diode_current_a": self.read("?D1C"),
-                "diode_temp_c": self.read("?D1T"),
-                "heatsink_temp_c": self.read("?D1HST"),
-                "baseplate_temp_c": self.read("?BT"),
-                "lbo_temp_c": self.read("?LBOT"),
-                "lbo_servo": self.read("?LBOSS"),
-                "etalon_temp_c": self.read("?ET"),
-                "vanadate_temp_c": self.read("?VT"),
-                "faults": self.read_faults(),
             }
+            for field, query in STATUS_FIELDS:
+                value = self.read(query)
+                sample[field] = bool(value) if field in ("keyswitch_on", "shutter_open") else value
             sample["duration_s"] = monotonic() - started
             return sample
 
@@ -458,6 +457,151 @@ class VerdiController:
         if type(enabled) is not bool:
             raise ValueError("enabled must be a bool")
         self._command(f"PROMPT={int(not enabled)}")
+
+    def set_baudrate(self, baudrate: int) -> None:
+        """Send B at the old baud, acknowledge there, then reconfigure the host.
+
+        The manual does not specify acknowledgment baud/timing. A firmware that
+        switches before replying may time out; never retry that uncertain change.
+        """
+        if type(baudrate) is not int or baudrate not in BAUDRATES:
+            raise ValueError("baudrate is not listed in manual Table 5-2")
+        with self._lock:
+            self._command(f"B={baudrate}")
+            try:
+                if self._stream is not None:
+                    self._stream.baudrate = baudrate
+                self._baudrate = baudrate
+            except BaseException as exc:
+                self._failed = True
+                failure = (
+                    VerdiError(f"host baud reconfiguration failed: {exc}")
+                    if isinstance(exc, (OSError, ValueError))
+                    else exc
+                )
+                assert self._last_transaction is not None
+                self._last_transaction["error"] = f"{type(failure).__name__}: {failure}"
+                if isinstance(failure, VerdiError):
+                    failure.transaction = dict(self._last_transaction)
+                if failure is exc:
+                    raise
+                raise failure from exc
+
+    def chiller_on(self) -> None:
+        """CHILLER=ON; only for the Coherent chiller, part 1037271."""
+        self._command("CHILLER=ON")
+
+    def set_chiller_temperature_c(self, temperature_c: float) -> None:
+        """CHILLER=XX.X; device enforces its undocumented temperature range."""
+        if isinstance(temperature_c, bool) or not isinstance(temperature_c, (int, float)):
+            raise ValueError("temperature_c must be a finite number")
+        try:
+            value = float(temperature_c)
+        except OverflowError as exc:
+            raise ValueError("temperature_c must be a finite number") from exc
+        if not isfinite(value):
+            raise ValueError("temperature_c must be a finite number")
+        instruction = f"CHILLER={value:.1f}"
+        encode_instruction(instruction)  # Bound the wire format, not the physical range.
+        self._command(instruction)
+
+    def exit_screen(self) -> None:
+        self._command("EXIT=1")
+
+    def flash(self) -> None:
+        """Drop below lasing threshold to allow the etalon to recenter."""
+        self._command("FL=1")
+
+    def knob_down(self) -> None:
+        self._command("KNOBDN=1")
+
+    def set_lbo_heater(self, *, enabled: bool) -> None:
+        if type(enabled) is not bool:
+            raise ValueError("enabled must be a bool")
+        self._command(f"LBOH={int(enabled)}")
+
+    def optimize_lbo(self) -> None:
+        """Initiate optimization; acknowledgment does not establish completion."""
+        self._command("LBOOPT=1")
+
+    def set_front_panel_lock(self, value: int) -> None:
+        """LFP=n; the manual does not define n's range or unlock mapping."""
+        if type(value) is not int or not -(10**123) < value < 10**124:
+            raise ValueError("front panel lock value must be an integer fitting one instruction")
+        self._command(f"LFP={value}")
+
+    def menu_down(self) -> None:
+        self._command("MENUDN=1")
+
+    def menu_select(self) -> None:
+        self._command("SELECT=1")
+
+    def menu_up(self) -> None:
+        self._command("MENUUP=1")
+
+    def command(self, instruction: str) -> None:
+        """Execute one Table 5-3 command via the same validated typed methods.
+
+        Accept long/short names with = or :. This is an allowlist, not raw I/O.
+        PRINT queries belong in read()/capture(). Terminators are added internally.
+        """
+        if not isinstance(instruction, str):
+            raise ValueError("command must be a documented instruction string")
+        encode_instruction(instruction)
+        if instruction.strip(" ") == "LBOOPT":
+            self.optimize_lbo()
+            return
+        match = re.fullmatch(r" *([^=:]+?) *[=:] *([^=:]+?) *", instruction)
+        if match is None:
+            raise ValueError("command requires a documented name and one operand")
+        name, operand = match.groups()
+        name = _COMMAND_NAMES.get(name, name)
+        if name == "P":
+            if not _NUMBER.fullmatch(operand):
+                raise ValueError("power operand must be decimal watts")
+            self.set_power_w(float(operand))
+        elif name == "B":
+            if not re.fullmatch(r"[0-9]+", operand):
+                raise ValueError("baudrate operand must be an integer")
+            self.set_baudrate(int(operand))
+        elif name == "CHILLER":
+            if operand == "ON":
+                self.chiller_on()
+            elif _NUMBER.fullmatch(operand):
+                self.set_chiller_temperature_c(float(operand))
+            else:
+                raise ValueError("chiller operand must be ON or a decimal temperature")
+        elif name == "LFP":
+            if not re.fullmatch(r"[+-]?[0-9]+", operand):
+                raise ValueError("front panel lock operand must be an integer")
+            self.set_front_panel_lock(int(operand))
+        elif name in ("L", "S", "E", "PROMPT", "LBOH"):
+            if operand not in ("0", "1"):
+                raise ValueError(f"{name} operand must be 0 or 1")
+            enabled = operand == "1"
+            if name == "L":
+                self.start() if enabled else self.stop()
+            elif name == "S":
+                self.set_shutter(open=enabled)
+            elif name == "E":
+                self.set_echo(enabled=enabled)
+            elif name == "PROMPT":
+                self.set_prompt(enabled=not enabled)
+            else:
+                self.set_lbo_heater(enabled=enabled)
+        else:
+            actions = {
+                "EXIT": self.exit_screen,
+                "FL": self.flash,
+                "KNOBDN": self.knob_down,
+                "LBOOPT": self.optimize_lbo,
+                "MENUDN": self.menu_down,
+                "SELECT": self.menu_select,
+                "MENUUP": self.menu_up,
+            }
+            if name not in actions or operand != "1":
+                raise ValueError(f"unknown command or operand: {instruction!r}")
+            actions[name]()
 
     def __enter__(self) -> Self:
         self.connect()
@@ -530,12 +674,20 @@ class VerdiController:
                 if remaining <= 0:
                     raise VerdiError(f"reply timed out after {len(response)} bytes")
                 self._stream.timeout = remaining
-                chunk = self._stream.read(1)
+                # Read queued bytes together. Asking for more than is available
+                # would make pySerial wait for a full buffer, delaying short replies.
+                size = min(4096 - len(response), max(1, self._stream.in_waiting))
+                chunk = self._stream.read(size)
                 response.extend(chunk)
                 if not chunk or monotonic() > deadline:
                     raise VerdiError(f"reply timed out after {len(response)} bytes")
-                if response.endswith(b"\r\n"):
-                    record["pending_bytes"] = self._stream.in_waiting
+                terminator = response.find(b"\r\n")
+                if terminator >= 0:
+                    # A chunk can contain a complete reply AND unsolicited bytes.
+                    # Retain all consumed evidence and reject the entire exchange.
+                    record["pending_bytes"] = (
+                        len(response) - terminator - 2 + self._stream.in_waiting
+                    )
                     if record["pending_bytes"]:
                         raise VerdiError(
                             "unexpected trailing input after reply: "

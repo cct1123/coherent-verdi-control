@@ -19,9 +19,11 @@ with SimulatedVerdi("V5", allow_writes=True) as laser:
     assert laser.read_faults() == [2, 999]
 ```
 
-The fixture supplies all 42 short queries, the six command forms emitted by the
-controller, CR/LF framing and echo/prompt layouts. `echo` and `prompt` constructor
-options select initial reply formatting. `last_transaction` provides the latest
+The fixture supplies all 42 queries and every Table 5-3 write operation emitted
+by the controller, CR/LF framing and echo/prompt layouts. Long/short input aliases
+are normalized by the public controller API before reaching the fixture.
+`echo` and `prompt` constructor options select initial reply formatting.
+`last_transaction` provides the latest
 exchange record, as on the serial controller. Disconnecting does not change fixture state.
 
 Its simple state rules are deliberate test policies:
@@ -37,6 +39,16 @@ Its simple state rules are deliberate test policies:
 - `SYSTEM OK` for no active faults is a simulator convention. The manual only
   specifies this text for history. Physical controllers require independently
   verified `active_fault_clear_reply` configuration.
+- Baud writes change the fixture's `?B` and controller baud setting. The fixture
+  acknowledges at the old rate; it does not establish physical transition timing.
+- LBO heater writes change `?LBOH`; no cooling/heating, interlock or fault behavior
+  is synthesized. LBO optimization and FLASH only record initiation; servo and
+  optical transients or completion are not modeled.
+- The fixture includes the optional chiller. It records ON and the temperature
+  setpoint without modeling a physical temperature range or cooling response.
+- Panel-lock writes retain the integer operand without assigning undocumented
+  lock/unlock meanings. Menu/button commands record the last action without a
+  front-panel UI model. EXIT does not clear the fixture's fault history.
 
 Temperatures, hours, currents and other numerical replies are constants or simple
 fixture values. They establish no physical performance or calibration claim.

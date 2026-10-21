@@ -23,6 +23,7 @@ class FakeSerial:
         self.write_failure = self.read_failure = self.open_failure = self.close_failure = None
         self.in_waiting_failure = None
         self.partial = False
+        self.max_read = 4096
 
     @property
     def in_waiting(self):
@@ -45,6 +46,7 @@ class FakeSerial:
     def read(self, size):
         if self.read_failure:
             raise self.read_failure
+        size = min(size, self.max_read)
         chunk = self.pending[:size]
         del self.pending[:size]
         return bytes(chunk)
@@ -359,7 +361,7 @@ def test_pending_count_failure_latches_without_replaying(peer, monkeypatch, when
 
         def fail_after_terminator(size):
             result = read(size)
-            if result == b"\n":
+            if result.endswith(b"\r\n"):
                 peer.in_waiting_failure = OSError("adapter input-count failure")
             return result
 
@@ -394,6 +396,7 @@ def test_uncertain_write_is_never_replayed(peer, failure):
 
 
 def test_one_deadline_includes_write_and_all_bytes(peer, monkeypatch):
+    peer.max_read = 1  # Model a fragmented, slowly arriving reply.
     now = [0.0]
     monkeypatch.setattr("coherent_verdi.controller.monotonic", lambda: now[0])
     read = peer.read
@@ -439,6 +442,7 @@ def test_write_exhausting_deadline_never_reads_or_retries(peer, monkeypatch, wri
 
 
 def test_read_timeout_uses_budget_remaining_after_write(peer, monkeypatch):
+    peer.max_read = 1
     now = [0.0]
     monkeypatch.setattr("coherent_verdi.controller.monotonic", lambda: now[0])
     write, read = peer.write, peer.read
@@ -495,7 +499,7 @@ def test_complete_reply_after_deadline_rejected(peer, monkeypatch):
 
     def late_terminator(size):
         result = read(size)
-        if result == b"\n":
+        if result.endswith(b"\r\n"):
             now[0] = 0.02
         return result
 
@@ -577,3 +581,45 @@ def test_verified_clear_reply_is_used_only_for_active_faults(peer, clear):
         known, unknown = laser.read_faults()
         assert known == 30
         assert unknown == 999
+
+
+@pytest.mark.parametrize("fragment_size", [1, 2, 3, 6, 4096])
+def test_chunked_reads_preserve_framing_and_all_wire_evidence(peer, fragment_size):
+    peer.max_read = fragment_size
+    peer.responses.append(b"1.234\r\n")
+    with VerdiController("FAKE-ONLY") as laser:
+        assert laser.read_power_w() == 1.234
+        assert laser.last_transaction["response"] == b"1.234\r\n"
+
+
+def test_buffered_reply_needs_one_read_and_one_timeout_configuration(peer, monkeypatch):
+    calls = []
+    read = peer.read
+
+    def counted(size):
+        calls.append(size)
+        return read(size)
+
+    monkeypatch.setattr(peer, "read", counted)
+    peer.responses.append(b"1.234\r\n")
+    with VerdiController("FAKE-ONLY") as laser:
+        assert laser.read_power_w() == 1.234
+    assert calls == [7]
+
+
+def test_whole_chunk_arriving_after_deadline_still_fails_with_complete_evidence(peer, monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("coherent_verdi.controller.monotonic", lambda: now[0])
+    read = peer.read
+
+    def late_chunk(size):
+        now[0] = 0.02
+        return read(size)
+
+    monkeypatch.setattr(peer, "read", late_chunk)
+    peer.responses.append(b"1.234\r\n")
+    with VerdiController("FAKE-ONLY", timeout_s=0.01) as laser:
+        with pytest.raises(VerdiError, match="timed out"):
+            laser.read_power_w()
+        assert laser.last_transaction["response"] == b"1.234\r\n"
+        assert laser.failed

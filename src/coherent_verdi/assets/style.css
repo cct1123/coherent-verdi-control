@@ -10,3 +10,20 @@ th { width: 55%; font-weight: 500; }
 td { font-variant-numeric: tabular-nums; }
 .connection-lost #sample { opacity: 0.4; }
 footer { margin-top: 18px; }
+.card { margin-top: 24px; padding: 20px; background: white; border: 1px solid #dce1e6; border-radius: 10px; }
+h2 { margin-top: 0; font-size: 1.25rem; }
+fieldset { border: 1px solid #dce1e6; padding: 16px; border-radius: 6px; }
+legend { font-weight: 600; }
+label { display: block; margin: 12px 0 6px; }
+input { padding: 9px; max-width: 100%; box-sizing: border-box; }
+button { padding: 10px 15px; margin: 8px 8px 8px 0; border: 1px solid #a9b8c6; border-radius: 5px; background: #edf3f9; color: #172331; cursor: pointer; }
+button:hover:enabled { background: #d8e8f6; }
+button:disabled { opacity: .45; cursor: default; }
+button.stop { background: #fff1df; border-color: #b78b50; }
+details { margin-top: 16px; }
+summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+pre { overflow: auto; max-height: 380px; padding: 12px; background: #f3f5f7; font-size: .8rem; }
+#query-results { overflow-x: auto; margin-top: 16px; font-size: .85rem; }
+#query-results th { width: auto; }
+#submission { color: #295477; overflow-wrap: anywhere; }
+@media (max-width: 600px) { main { padding: 12px; } .card { padding: 12px; } th { width: auto; } }

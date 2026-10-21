@@ -76,14 +76,13 @@ def test_staleness_and_empty_history():
 def test_freshness_ignores_wall_clock_steps(monkeypatch, wall_clock_offset_s):
     now = [0.0]
     with SimulatedVerdi(model="V5") as controller:
-        status = controller.status()
-        shifted = status | {
-            "sampled_at": (
-                datetime.fromisoformat(status["sampled_at"])
-                + timedelta(seconds=wall_clock_offset_s)
-            ).isoformat()
-        }
-        monkeypatch.setattr(controller, "status", lambda: shifted)
+
+        class ShiftedDatetime:
+            @staticmethod
+            def now(tz):
+                return datetime.now(tz) + timedelta(seconds=wall_clock_offset_s)
+
+        monkeypatch.setattr("coherent_verdi.gui_session.datetime", ShiftedDatetime)
         service = Monitor(controller, clock=lambda: now[0])
         service.poll_once()
         assert service.snapshot()["health"] == "LIVE"
@@ -92,17 +91,17 @@ def test_freshness_ignores_wall_clock_steps(monkeypatch, wall_clock_offset_s):
         assert service.snapshot()["age_s"] == 60
 
 
-def test_freshness_includes_slow_sampling(monkeypatch):
+def test_freshness_includes_delayed_publication(monkeypatch):
     now = [0.0]
     with SimulatedVerdi(model="V5") as controller:
-        original = controller.status
-
-        def delayed():
-            now[0] += 60
-            return original()
-
-        monkeypatch.setattr(controller, "status", delayed)
         service = Monitor(controller, clock=lambda: now[0])
+        publish = service.record
+
+        def delayed(sample, started):
+            now[0] += 60
+            return publish(sample, started)
+
+        monkeypatch.setattr(service, "record", delayed)
         service.poll_once()
         assert service.snapshot()["age_s"] == 60
         assert service.snapshot()["health"] == "STALE"
@@ -138,7 +137,7 @@ def test_dash_routes_callbacks_assets_and_no_independent_polling(callback_payloa
     assert data["health"]["children"] == "ERROR"
     assert data["laser"]["children"] == "UNKNOWN"
     assert data["error"]["children"]
-    assert data["power-graph"]["figure"]["data"][0]["y"][-1] is None
+    assert data["power-graph"]["extendData"][0]["y"][0][-1] is None
 
 
 def test_blank_exception_is_error_with_unavailable_current_values(monkeypatch, callback_payload):
@@ -146,10 +145,10 @@ def test_blank_exception_is_error_with_unavailable_current_values(monkeypatch, c
         service = Monitor(controller)
         service.poll_once()
 
-        def fail():
+        def fail(query):
             raise RuntimeError()
 
-        monkeypatch.setattr(controller, "status", fail)
+        monkeypatch.setattr(controller, "read", fail)
         service.poll_once()
         data = service.snapshot()
         assert data["health"] == "ERROR"
@@ -326,10 +325,10 @@ def test_cli_watch_flushes_each_record_before_waiting(monkeypatch):
 
 
 def test_cli_watch_returns_failure_when_any_sample_failed(monkeypatch, capsys):
-    def fail(self):
+    def fail(self, query):
         raise RuntimeError()
 
-    monkeypatch.setattr(VerdiController, "status", fail)
+    monkeypatch.setattr(VerdiController, "read", fail)
     assert main(["watch", "--count", "1"]) == 2
     sample = json.loads(capsys.readouterr().out)
     assert sample["status"] is None and sample["error"] == "RuntimeError:"
@@ -337,13 +336,13 @@ def test_cli_watch_returns_failure_when_any_sample_failed(monkeypatch, capsys):
 
 def test_gui_launcher_drains_acquisition_before_disconnect(monkeypatch):
     entered, release, finished = Event(), Event(), Event()
-    original_status = VerdiController.status
+    original_read = VerdiController.read
     original_disconnect = VerdiController.disconnect
 
-    def sample(controller):
+    def sample(controller, query):
         entered.set()
         assert release.wait(3)
-        result = original_status(controller)
+        result = original_read(controller, query)
         finished.set()
         return result
 
@@ -359,7 +358,7 @@ def test_gui_launcher_drains_acquisition_before_disconnect(monkeypatch):
             release.set()
             raise KeyboardInterrupt
 
-    monkeypatch.setattr(VerdiController, "status", sample)
+    monkeypatch.setattr(VerdiController, "read", sample)
     monkeypatch.setattr(VerdiController, "disconnect", disconnect)
     monkeypatch.setattr("coherent_verdi.gui.create_app", lambda monitor: App())
     assert main(["gui"]) == 130
