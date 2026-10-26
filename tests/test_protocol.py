@@ -46,7 +46,7 @@ def test_documented_errors(instruction, wire):
 
 
 @pytest.mark.parametrize(
-    "wire", [b"", b"1\n", b"1\r", b"1\r\n2\r\n", b"\xff\r\n", b"\r\n", b"\x001\r\n", b"?P\r\n"]
+    "wire", [b"", b"1\n", b"1\r", b"1\r\n2\r\n", b"\r\n", b"\x001\r\n", b"?P\r\n"]
 )
 def test_bad_query_framing(wire):
     with pytest.raises(VerdiError):
@@ -210,7 +210,11 @@ def test_table_5_1_error_layouts_preserve_instruction_and_error(echo, prompt, in
     sim = SimulatedVerdi(echo=echo, prompt=prompt)
     sim.connect()
     try:
-        assert sim._exchange((instruction + "\r\n").encode()) == wire
+        terminal_wire = (
+            (instruction + " " if echo else "") + error + " " + instruction + "\r\n"
+        ).encode()
+        terminal_wire += b"Verdi>" if prompt else b""
+        assert sim._simulate_response((instruction + "\r\n").encode()) == terminal_wire
     finally:
         sim.disconnect()
 

@@ -20,9 +20,9 @@
             ? "SERVER UPDATE LOST — all displayed values are stale. Check the dashboard server."
             : heartbeat === "" ? "Waiting for the monitoring server…" : "";
         root.classList.toggle("connection-lost", stale);
-        const controls = document.getElementById("write-controls");
-        if (controls) {
+        // Operate controls and the front-panel replica.
+        document.querySelectorAll("fieldset[data-server-disabled]").forEach(function (controls) {
             controls.disabled = stale || controls.getAttribute("data-server-disabled") === "true";
-        }
+        });
     }, 1000);
 }());

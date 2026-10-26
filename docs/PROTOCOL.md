@@ -7,22 +7,40 @@ Printed section 5 corresponds to PDF pages 49–58. No newer firmware behavior i
 
 ## Wire contract
 
+- **Encoding policy:** section 5-1 specifies ASCII instructions; Table 5-1 shows
+  ASCII response layouts. Table 5-2 specifies 8 data bits, no parity and one stop
+  bit, with no flow control. Eight data bits do not specify an extended character
+  set. The manual identifies no cp1252, Latin-1 or UTF-8 response encoding.
+  The supplied V2 firmware 6.05 captures of `?SV` (`6.05`) and `?F` (`SYSTEM OK`)
+  contain only ASCII bytes. These sources support ASCII as the decoding baseline.
+  Unknown high-bit payloads remain bytes; they are
+  neither decoded using a guessed code page nor modified by stripping high bits.
+  Raw capture always
+  preserves payload bytes, and typed measurements retain their value checks.
 - Section 5, pp. 5-1–5-4: ASCII instruction terminated by CR/LF or semicolon;
   this library emits **CR/LF only**, one instruction per transaction.
 - `PRINT ` and `?` are equivalent query prefixes; `:` and `=` are equivalent
-  command delimiters (p. 5-3). `read()`/`capture()` accept short queries and
-  `PRINT`/`?` long names. `command()` accepts the Table 5-3 long/short names and
-  either delimiter. The controller normalizes these to short queries and `=`
-  commands before transmission; the simulator receives these canonical forms.
-  Inputs are uppercase ASCII without terminators; batching is rejected.
+  command delimiters (p. 5-3). `get_value()`/`capture()` accept short queries and
+  `PRINT`/`?` long names and normalize them to short queries.
+  Byte `get()`/`set()`/`command()` calls preserve supplied bytes; settings use
+  canonical short names and `=`. Named setters construct these canonical forms.
+  Instructions omit terminators; batching is rejected.
 - Replies end in CR/LF; wait for a complete reply before the next instruction.
 - Table 5-1, p. 5-2: a successful command replies with an empty CR/LF when echo
   and prompt are off. There is no documented `OK` command acknowledgment.
 - Table 5-1 provides four single-line layouts combining optional `Verdi>` prefix
   and echoed instruction. The parser accepts these without writing mode settings
-  during connection. Additional lines, control bytes and malformed replies fail.
+  during connection. A 2026-10-23 capture on V2 firmware 6.05 also showed an
+  unterminated `Verdi V-2>` after the reply, arriving between requests. The driver
+  accepts `Verdi>` and the exact configured model's `Verdi V-N>` as a prefix,
+  one suffix after CR/LF. It performs no standalone prompt read before transmission. Other
+  model variants follow the same spelling; their firmware behavior is unverified.
+  Typed parsing rejects malformed framing in the consumed reply. Raw capture permits arbitrary
+  payload bytes; typed reads retain numeric, code and fault validation.
 - Error prefixes: `RANGE ERROR:`, `Command Error:`, `Query Error:`. A device error
   preserves the instruction and reply. It is not retried.
+  If `Query Error:` explicitly names a different `?` query, the connection is
+  invalidated: a terminated error frame alone does not establish alignment.
 - Multiple results use `&`. Faults are returned as integer lists; unknown positive
   codes are preserved, never discarded or treated as clear.
 - Table 5-2: 8 data bits, no parity, 1 stop bit, no hardware/software handshaking.
@@ -30,24 +48,37 @@ Printed section 5 corresponds to PDF pages 49–58. No newer firmware behavior i
 - The port is DCE; only pins 2, 3, 5 are used. No electrical/cable validation has
   occurred. No model-identification query is specified; callers select V2/V5/V6.
 
-The 1 s default transaction deadline, 4096-byte response ceiling, strict decimal
+The 1 s default timeout per write/read stage, 4096-byte response ceiling, strict decimal
 parser and connection failure policy are **software choices**, not manufacturer
 response-time or firmware guarantees. A partial response, I/O error or lost
 acknowledgment makes the serial session unusable. The command may have executed.
-There is no automatic retry, input-buffer purge, mode normalization or state replay.
+There is no automatic retry, recovery purge, mode normalization or state replay.
+Explicit `purge_buffers()` discards host TX, then RX queues under the transaction lock. It preserves failure state and
+transaction evidence; they do not establish device-side synchronization.
+Windows pySerial clears host RX/TX queues when opening the port. That operation
+does not clear an unfinished instruction already received by the laser.
 
-Before transmitting and after reading a complete frame, the serial adapter checks
-`in_waiting`. Unexpected queued bytes reject the transaction and latch failure;
-they are never silently discarded. This prevents an already-buffered extra line
-from becoming the next query's reply. It cannot identify arbitrarily delayed,
-untagged replies or eliminate OS/adapter buffering races. The checks establish no
-quiet-time guarantee, and reopening does not establish resynchronization.
+With `prompt_enabled=True` (the hardware default), the transaction always waits
+for the full CR/LF reply and one exact terminal prompt. An empty RX queue after
+CR/LF does not complete the exchange. `command()` writes once, uses pySerial
+`read_until(b"\r\n")`, then `read_until(b">")`, with a fixed timeout for each
+stage. One lock prevents the next instruction from being sent early.
+With an explicitly configured prompt-disabled instrument, `prompt_enabled=False`
+completes at CR/LF. No connection-time mode writes, sleeps or automatic purges
+are used. There is no input-queue polling or automatic pre-transmission read.
 
-Each attempted transaction records consumed bytes, UTC start, duration, settings,
-queued-byte count and outcome in `last_transaction`. Exchange errors carry an
-independent record in `VerdiError.transaction`. Command failures distinguish
-`not_sent` from `unknown`; acknowledgment and documented rejection are explicit
-outcomes. There is no automatic retry or replay.
+The byte API performs no encoding, decoding or numeric conversion. `get` removes
+framing and the echoed query, returning payload bytes. `set` and `command` return
+unchanged wire replies. `last_transaction["response"]` always retains the full
+wire reply. `get_value` and named helpers explicitly opt into text/value interpretation.
+Raw byte commands use canonical short names and `=`. A raw `B=n` leaves the
+host baud unchanged; use the named helper to coordinate the host transition.
+
+Each attempted transaction records only `instruction`, `request`, `response`,
+`payload`, `outcome` and `error` in `last_transaction`. Exchange errors carry an
+independent record in `VerdiError.transaction`. Local refusals preserve the
+previous record; a failed command has an `unknown` outcome. Acknowledgment and
+documented rejection are explicit outcomes for typed helpers. There is no automatic retry or replay.
 
 ## Complete Table 5-3 command coverage
 
@@ -82,11 +113,9 @@ queue explicit writes only when launched with `--allow-writes`. Mode writes are 
 operations; they are not connection prerequisites. `disconnect()` only releases the
 communication handle and **does not place the laser in STANDBY**.
 
-`command("LBO HEATER:1")`, for example, calls the same validated path as
-`set_lbo_heater(enabled=True)`. All Table 5-3 aliases are accepted, including
-`POWER`, `LIGHT`, `>=n` and the table's bare `LBOOPT` spelling (normalized to
-`LBOOPT=1`). Section 5's `SERIAL BAUDRATE=n` spelling is accepted as well.
-This is a catalogue allowlist; there is no unrestricted raw-write escape hatch.
+`set(b"LBOH=1")` returns the raw reply. `set_lbo_heater(enabled=True)`
+uses the same byte transport and explicitly interprets the acknowledgment.
+Text command aliases and the separate text-command parser have been removed.
 
 Baud changes send `B=n` and receive the acknowledgment at the original baud,
 then update the host port under the same lock. The manual specifies host
@@ -94,8 +123,8 @@ reinitialization but not the acknowledgment baud or transition timing. Firmware
 that switches before replying may time out and retire the session. An unknown
 outcome is never retried; establish the actual device baud independently before
 using a fresh controller. A host-reconfiguration failure also retires the session;
-its transaction retains `acknowledged` plus the host error. The recorded baud is
-the rate of the command exchange; following transactions use the new rate.
+its transaction retains `acknowledged` plus the host error. Following successful
+reconfiguration, transactions use the new rate.
 
 The chiller's temperature range and `LFP=n` valid values are not defined by this
 manual. The API checks finite decimal temperature and integer panel-lock syntax,
@@ -106,19 +135,20 @@ Service sequencing and physical completion remain the application's responsibili
 
 ## Query coverage
 
-All **42** queries from Table 5-4 are accepted by `read()` as short strings or
+All **42** queries from Table 5-4 are accepted by `get_value()` as short strings or
 their documented long names, prefixed with `?` or `PRINT `.
 Direct parsing groups in [controller.py](../src/coherent_verdi/controller.py) distinguish
 raw text, documented integer codes and decimal numbers. Source pages are below;
 independent test vectors retain units and long names as manual reference data.
 
 For commissioning, `capture()` accepts the same query catalogue only on a
-read-only controller. It enforces ASCII and a single CR/LF frame, permits an empty
-payload, and removes documented echo/prompt decoration without interpreting
+read-only controller. It enforces a single CR/LF frame, permits an empty
+payload, and removes documented echo/prompt decoration at the byte level without interpreting
 values or faults. Documented device errors are still rejected and recorded.
 The returned transaction record is evidence, not a claim about device health.
-CLI `commission` exposes this path as JSONL;
-normal query/status parsing remains unchanged.
+CLI `commission` exposes this path as JSONL. Capture payloads are bytes; text
+queries return strings for ASCII data or bytes for non-ASCII data. No character
+encoding is guessed. Numeric, code and fault parsing retains its validation.
 
 | Source | Queries |
 | --- | --- |
@@ -181,10 +211,11 @@ code 47 is listed in Table 5-4 but omitted from Table 6-1.
    evidence but remain unsupported by normal fault parsing.
    Simulated controllers alone default to the fixture convention `SYSTEM OK`.
    Do not infer physical compatibility from that simulator convention or from ?FH.
-2. **Echo framing:** the implementation follows Table 5-1's one-line layouts.
-   Real character echo timing, any separately terminated echo lines and prompt
-   transition ordering require capture; the parser deliberately fails on layouts
-   beyond the table instead of consuming arbitrary lines.
+2. **Echo framing:** Table 5-1's one-line layouts and the captured V2 firmware
+   6.05 standalone `Verdi V-2>` prompt are supported. That capture establishes
+   prompt text and delayed arrival, not a timing bound. Real character echo timing,
+   separately terminated echo lines, other firmware and prompt transition ordering
+   still require capture; the parser never consumes arbitrary additional lines.
 3. **Power limits:** Table 2-1 rates models at 2/5/6 W. Those ratings are used as
    conservative software ceilings, not claimed firmware maximum setpoint ranges.
    A caller can lower the ceiling. Chiller temperature control is exposed as

@@ -1,147 +1,152 @@
-# Five first steps with your Verdi
+# First steps with your Verdi
 
-These are **hardware-only Python scripts** for a human operator. Each script is
-independent: it imports the installed controller, shows every device command and
-closes its serial connection before returning. There are no notebooks, shared
-helper scripts or simulation switches.
+These are **hardware-only tutorial notebooks** for a human operator. Each notebook
+is split into short numbered sections: a few sentences of explanation, then a
+small code cell you run and check before moving on. Each notebook is independent.
+None uses shared helper code or a simulation switch.
 
-Read each script before running it. Physical communication and optical behavior
-have not yet been validated with this package. Work with your lab's laser operator
-and follow the [hardware setup guide](../docs/HARDWARE.md) and
-[operator manual](../verdi.manual_v5.pdf).
+Read-only serial communication on a V2, firmware 6.05, was exercised in lessons
+01-03 on 2026-10-26. Emission control, optical behavior and calibration remain
+unverified on hardware. Work with your lab's laser operator and follow the
+[hardware setup guide](../docs/HARDWARE.md) and [operator manual](../verdi.manual_v5.pdf).
 
-## 1. Install and find the settings
+## 1. Install and open the notebooks
 
-Use Python **3.11 or later**. Open a terminal in the repository folder, then run:
+Use Python **3.11 or later** and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+Open a terminal in the repository folder, then run:
 
 ```sh
-python -m pip install .
+uv sync
+uv run --with jupyter jupyter lab examples
 ```
 
-This installs the Python controller and pySerial. No Jupyter or Dash is needed.
-Use the same Python environment to run the examples.
+`uv sync` creates `.venv` with the controller and pySerial. The second command
+starts JupyterLab in that environment, adding Jupyter only for this session, and
+opens the `examples` folder in your browser. In VS Code, you can instead open a
+notebook and choose the `.venv` interpreter as its kernel.
 
 Connect the computer to the Verdi power supply using RS-232, or a USB-to-RS-232
 adapter. A USB-to-TTL UART adapter is a different electrical interface and is not
 suitable. Verify cable pinout/DCE orientation against manual Figure 5-1.
 
-Ask the operator to confirm these values, then edit the settings near the top of
-each script you use:
+[Lesson 0](00_device_discovery.ipynb) finds the port and shows where to read
+the model and baud rate. Section 1 of lessons 1–6 lists the settings to enter:
+port, model and baud rate, plus the verified no-fault reply for lessons 5–6 and the approved watts for
+lessons 5–6. Ask the operator to confirm each value. Keep one serial connection
+owner: close other terminal programs, dashboards or notebooks that use this port.
+The driver uses 8 data bits, no parity, 1 stop bit and no flow control. It never
+scans ports or detects baud automatically.
 
-| Setting | What to enter |
+## 2. Work through the lessons
+
+Do the lessons in order. Lesson 0 opens no port; lessons 1–4 only read. Lessons 5 and 6 change the
+instrument and need the operator's approved conditions and limits.
+
+| Lesson | What you do |
 | --- | --- |
-| `PORT` | Your known serial port, for example `"COM3"` on Windows or `"/dev/ttyUSB0"` on Linux. In Windows, the adapter's COM number is shown in Device Manager under Ports. |
-| `MODEL` | `"V2"`, `"V5"` or `"V6"`, matching the actual laser. The version query cannot discover this for you. |
-| `BAUDRATE` | The baud selected on the front panel. `19200` is the factory default; verify it rather than assuming. |
-| `ACTIVE_FAULT_CLEAR_REPLY` | Lessons 2–5 need the exact independently verified no-active-fault text returned by `?F`, as a Python string. See below. |
-| `TARGET_W` | Lessons 4–5 only: the operator-approved power request in watts, as a number. |
-| `POWER_LIMIT_W` | Lessons 4–5 only: the site's maximum permitted setpoint for this session, in watts. It may be lower than the model rating. |
+| [0. Find the port](00_device_discovery.ipynb) | Identify the adapter's port from the operating system's device list. Opens no port and sends nothing. |
+| [1. First connection](01_connect.ipynb) | Open the port, read the software version and release the port. |
+| [2. Quick status](02_quick_status.ipynb) | Read power, laser state, shutter, keyswitch and active faults. |
+| [3. Health check](03_health_check.ipynb) | Inspect 41 queries in nine subsystem sections (`?DIOS` skipped after device rejection), preserving byte payloads without changing settings. |
+| [4. Pre-key-on readiness](04_pre_key_on_readiness.ipynb) | Check warm-up, refresh serial readiness readings and verify front-panel and physical conditions. Queries only. |
+| [5. Set power in standby](05_set_power.ipynb) | Check standby, closed shutter and no faults, then store and verify a setpoint. Never enables or opens the shutter. |
+| [6. One controlled session](06_controlled_session.ipynb) | Check readiness, store power, enable, open the safety shutter once, read power, close the shutter and verify standby. |
 
-Keep one serial connection owner: close other terminal programs, dashboards or
-scripts that use this port. The driver uses 8 data bits, no parity, 1 stop bit and
-no flow control. It never scans ports or detects baud automatically.
+Run the cells one at a time (Shift+Enter) and read each result before the next.
+Creating the controller sends nothing. Every connecting lesson has two separate
+sections: **Open the serial port** and **Start serial communication**. The first
+cell calls only `connect()` and prints its Boolean result. Inspect it before
+proceeding. `True` confirms the local port opened; it does not confirm a laser reply
+or readiness. Opening errors raise an exception. The communication section
+explicitly purges host queues once before its first query. The
+last cell, **Disconnect**, releases the port. Cells that write ask you to type `SET` or
+`RUN`; any other answer cancels. Those confirmations record your intended action.
+They do not replace the lab's operating procedure.
 
-## 2. Run the lessons
+### Clear serial buffers before the first query
 
-Run the commands below **one at a time** from the repository folder. The first
-three only read. Lessons 4 and 5 change the instrument and need the operator's
-approved conditions and limits.
+After updating the package, restart the notebook kernel to load the purge API.
+Open the port in its own cell:
 
-| Lesson | Command | What it does |
-| --- | --- | --- |
-| [1. First connection](01_connect.py) | `python examples/01_connect.py` | Opens the selected port, reads one software-version query and releases the port. |
-| [2. Read status](02_read_status.py) | `python examples/02_read_status.py` | Displays state, power, temperatures and active fault codes. |
-| [3. Diagnose faults](03_read_faults.py) | `python examples/03_read_faults.py` | Displays active faults and history without clearing either or restarting the laser. |
-| [4. Set power in standby](04_set_power.py) | `python examples/04_set_power.py` | Checks standby/closed shutter/no faults, changes the setpoint and verifies the result. Never enables or opens the shutter. |
-| [5. One controlled session](05_controlled_session.py) | `python examples/05_controlled_session.py` | Checks readiness, sets power, enables, opens the safety shutter once, samples power, closes the shutter and verifies standby. |
+```python
+connected = laser.connect(override=True)
+print("Serial port open:", connected)
+```
 
-Each script prints its connection settings and asks you to type `CONNECT` before
-opening a port. Check them carefully. Any other answer cancels. Lessons 4 and 5
-also ask for `SET` or `RUN` before the write sequence. These are confirmations
-of your intended actions, not replacements for the lab's operating procedure.
+`override=True` closes an older controller-owned connection to the same port in
+this Python process before opening the new one. It cannot take a port from a raw
+`ser` handle, another kernel or another application; close that owner first.
+A failed controller still needs a fresh controller object. Restart the kernel once
+after this driver update so later controller connections can be tracked.
 
-### Lesson 1: understand a query
+After inspecting the result, start communication in a separate section and cell:
 
-`laser.read("?SV")` means "ask the instrument for its software version." The `?`
-prefix requests information. Compare the reported version with the instrument.
-If it times out or produces unexpected framing, stop and resolve the link before
-running further lessons. A successful version query alone does not validate all
-other commands or the physical laser system.
+```python
+laser.purge_buffers()  # Explicit host TX/RX discard, separate from connection
+reply = laser.get(b"?SV")
+print(repr(reply))
+```
 
-`with laser:` opens the connection. Leaving that block releases the port even
-when an error occurs. **Releasing a port does not shut down a laser.**
+`purge_buffers()` is the single buffer-maintenance method. It requires an open
+connection and sends no Verdi instruction. It aborts/discards pending host TX,
+then discards RX; it does not wait for transmission.
+It does not reset the laser's command parser or clear a controller's failure latch.
+Save evidence before discarding bytes after an error; purging does not make a
+failed controller reusable. No lesson purges or retries automatically after a failure.
 
-### Before lesson 2: establish the fault-clear text
+All connecting lessons use `laser.get(b"?SV")` and display byte payloads without echo, CR/LF or prompt,
+including CR/LF and the following prompt. They wait for the complete exchange
+before sending another query. They require the instrument prompt to be enabled
+and do not change its echo/prompt settings. No fault-clear text is needed to
+capture raw status bytes. Lesson 5 uses `set(b"P=...")` and compares byte payloads explicitly to verify
+the stored setpoint, standby, closed shutter and the verified no-fault reply.
+Lesson 6 also uses raw `get()`/`set()` calls, explicitly comparing byte
+payloads before enabling, opening, closing and returning to standby. Replies
+and command acknowledgments remain available as raw byte records.
+
+### Before writing in lessons 5–6: establish the fault-clear payload
 
 The manual gives `SYSTEM OK` for fault **history**, `?FH`, but leaves the
 no-active-fault reply to `?F` unspecified. Do not guess it or copy a simulator's
 value. Have the operator establish the actual reply and its meaning using the
 single-owner capture procedure in the [hardware guide](../docs/HARDWARE.md#fault-clear-reply-and-full-status).
 
-Replace `ACTIVE_FAULT_CLEAR_REPLY = None` with that verified string. `None` means
-"not configured"; it is not a reply sent to the instrument. An empty reply is not
-supported by the current parser. If the reply is unknown, use lesson 1 and resolve
-this question before full status or write operations.
+Enter it as `ACTIVE_FAULT_CLEAR_REPLY` in section 1: payload bytes in both lessons
+(e.g. `b"SYSTEM OK"` only if verified). `None` means "not
+configured". It is not a reply sent to the instrument. An empty reply is not
+supported by the current parser.
 
-### Lessons 2 and 3: understand the readings
-
-- Laser state codes are `0` standby, `1` on and `2` fault. Shutter/key values are
-  displayed as `True` or `False`, meaning the reported state is on/open or off/closed.
-- `set_power_w` is the requested setpoint; `power_w` is the instrument's reported
-  power. They are different quantities. A closed shutter does not establish a
-  particular reported power or diode current.
-- Temperatures are degrees Celsius (`degC`), current is amperes (`A`) and power is
-  watts (`W`). Compare values with the front panel and the operator's expectations.
-- `status()` returns a dictionary: `status["power_w"]` selects its power value.
-  It uses 14 sequential queries; values are not all acquired at the same instant.
-- Fault lists contain integer codes. `[]` means no faults reported in that list.
-  Keep unknown codes and look up meanings in [the protocol reference](../docs/PROTOCOL.md#fault-code-reference).
-  A clear history does not prove the current system is safe.
-
-### Lesson 4: a stored request is not optical output
-
-Fill in both watt settings with values approved for your setup; no example watts
-are supplied as safe defaults. The driver checks the model ceiling, your lower
-site ceiling and the four-decimal value sent to the instrument.
-
-`set_power_w()` sends the power request. `read("?SP")` checks the stored setpoint,
-while `read_power_w()` would query reported optical power. The script requires
-standby and a closed shutter, then verifies those states and absence of active
-faults after the write. Confirm firmware readback precision before using its exact
-four-decimal comparison. **The new setpoint remains stored after the script ends.**
-
-### Lesson 5: emission requires an operator-ready system
+### Lesson 6: emission requires an operator-ready system
 
 Have the operator complete warmup and establish the correct key-ON / remote-standby
 configuration with shutter closed. **Turning the physical key can itself enable
 the laser**; do not turn it merely to satisfy a software check. Confirm cooling,
 interlocks, approved beam termination and a physical abort procedure first.
 
-The script requires all four temperature servos to report `LOCKED` (code `1`).
-It reads fault history before `start()`, because enable also resets faults/history.
-It then performs one sequence without waiting for keyboard input while enabled.
-The immediate power sample does not prove optical settling, stability or calibration.
-Never use the head safety shutter as an experimental modulator.
+The emission sequence is one cell, so nothing waits for keyboard input while the
+laser is enabled or the shutter is open. Never use the head safety shutter as an
+experimental modulator.
 
-On normal completion, shutter closure and standby are read back and verified.
-The target remains stored. Standby leaves temperature servos powered; complete
-heater/cooling shutdown follows the manual, separately from this script.
+## 3. What to do when a cell stops
 
-## 3. What to do when something stops
+**When a cell raises an error, stop.** Do not re-run cells or retry commands. Run
+the **Disconnect** cell, then resolve the cause with the operator.
 
 | Message or symptom | Meaning and next action |
 | --- | --- |
-| Edit settings / invalid model / invalid watts | A required setting is missing or invalid. Correct it before connecting; the scripts reject these inputs before opening. |
-| Port cannot open | Confirm the selected port, adapter/driver and other connection owners with the operator. Do not scan by opening other ports. |
+| Fill in settings / invalid model / invalid watts | A required setting is missing or invalid. Correct it in section 1 and run the cells again from the top. The port has not been opened. |
+| Port cannot open | Confirm the selected port, adapter/driver and other connection owners with the operator. Do not scan by opening other ports. If you re-run section 2 while connected, run **Disconnect** first. |
 | `invalid fault list` | The no-fault response is unverified or unexpected. Preserve the exact error and establish its meaning; do not assume it means no faults. |
-| Not in standby / shutter open / servo not locked / active faults | A required starting condition is absent. The script stops before writes. Resolve it through the operator's procedure. |
-| Timeout, malformed reply, readback mismatch or Ctrl+C | Stop. A write may already have executed. Use the physical abort procedure when needed; do not retry or reconnect blindly. |
+| Not in standby / shutter open / servo not locked / active faults | A required starting condition is absent. The cell stops before writing. Resolve it through the operator's procedure. |
+| `Cancelled` | You did not type `SET` or `RUN`. Nothing further was sent. |
+| Timeout, malformed reply, readback mismatch or kernel interrupt | Stop. A write may already have executed. Use the physical abort procedure when needed; do not retry or reconnect blindly. |
 
-The examples stop subsequent commands after a failed step. They release
-communication without sending automatic cleanup writes over an uncertain link.
-If failure occurs after enable or shutter opening, **the laser may remain on or
-the shutter may remain open**. Software exit, Ctrl+C and port disconnection are
-not emergency stops. Use the operator's physical procedure.
+After a communication failure the controller refuses further commands. Restart
+the kernel to begin a new session once the link is understood. The notebooks send
+no automatic cleanup writes over an uncertain link. If failure occurs after enable
+or shutter opening, **the laser may remain on or the shutter may remain open**.
+Interrupting the kernel, closing the notebook and disconnecting the port are not
+emergency stops. Use the operator's physical procedure.
 
-These examples are tested with fake serial peers only. Testing the code does not
+These notebooks are tested with fake serial peers only. Testing the code does not
 establish the real instrument's timing, wiring, safety or optical calibration.

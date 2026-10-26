@@ -5,29 +5,57 @@ Read power, temperatures and faults; set power; control standby, enable and the
 safety shutter. Includes a simulator and an optional Dash control panel, read-only
 by default, with explicit write enablement.
 All commands and queries in the manual's Tables 5-3 and 5-4 are exposed, including
-service and front-panel commands and their documented long/short aliases.
+service and front-panel commands, plus documented long/short query aliases.
 
-**Software-tested using simulation and fake serial connections. Physical
-communication, optical behavior and calibration have not yet been validated.**
+**Read-only serial communication was exercised on a Verdi V-2, firmware 6.05,
+in notebooks 01–03 on 2026-10-26. Emission control, optical behavior and
+calibration remain unverified on hardware.**
 
 ## Install
 
-Requires Python **3.11+**. From a downloaded or cloned checkout:
+Requires Python **3.11+** and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+From a downloaded or cloned checkout:
 
 ```sh
-python -m pip install .
+uv sync
 ```
 
-Or install directly from the repository (requires Git):
+This creates `.venv` from the locked `uv.lock`, with the controller, pySerial and
+the development tools. Run commands and scripts inside it with `uv run`, for example
+`uv run verdi status` or `uv run python my_script.py`; no activation is needed.
+Use `uv sync --extra gui` to add the optional Dash dashboard (Dash and
+dash-bootstrap-components); a later plain
+`uv sync` removes it again.
+
+To use the controller from another uv project, add it from the repository
+(requires Git):
 
 ```sh
-python -m pip install "git+https://github.com/cct1123/coherent-verdi-control.git"
+uv add "coherent-verdi-control @ git+https://github.com/cct1123/coherent-verdi-control.git"
 ```
 
-pySerial is installed automatically. Dash is optional. No background
-service or project configuration files are needed to use the package.
+pySerial is installed automatically. The dashboard dependencies are optional. No background
+service or project configuration files are needed to use the package. The package
+is standard; `pip install .` also works outside uv.
 
 ## Connect and read
+
+The simplest interface sends and receives bytes:
+
+```python
+from coherent_verdi import VerdiController
+
+with VerdiController("COM5", model="V2", baudrate=19200, timeout_s=2) as laser:
+    print(repr(laser.get(b"?SV")))
+```
+
+`get()` returns payload bytes after removing echo, CR/LF and the prompt.
+The complete wire reply remains in `last_transaction["response"]`. The next
+instruction waits until both the reply and prompt have arrived. No automatic
+encoding or decoding occurs. The instrument prompt must be enabled; use
+`prompt_enabled=False` only for an instrument already configured without prompts.
+See lessons [1](examples/01_connect.ipynb) and [2](examples/02_quick_status.ipynb).
+The examples below use explicit typed helpers for interpreted values.
 
 Connect the computer's RS-232 port, or a USB-to-**RS-232** adapter, to the Verdi
 power supply. Verify the cable against Figure 5-1 of the supplied
@@ -42,10 +70,10 @@ baud detection. Keep one connection owner and close other serial clients.
 from coherent_verdi import VerdiController
 
 with VerdiController("COM3", model="V5", baudrate=19200) as laser:
-    print("Software:", laser.read("?SV"))
+    print("Software:", laser.get_value("?SV"))
     print("Laser state:", laser.read_laser_state())  # 0 standby, 1 on, 2 fault
     print("Power:", laser.read_power_w(), "W")
-    print("LBO temperature:", laser.read("?LBOT"), "°C")
+    print("LBO temperature:", laser.get_value("?LBOT"), "°C")
 ```
 
 Replace `COM3` with your port, such as `/dev/ttyUSB0` on Linux. Start with one
@@ -69,15 +97,15 @@ Use the read-only commissioning command to capture the actual wire evidence.
 Start with one version query; after checking that exchange, select the fault query:
 
 ```sh
-verdi --port COM3 --model V5 --baudrate 19200 commission
-verdi --port COM3 --model V5 --baudrate 19200 commission --query ?F
+uv run verdi --port COM3 --model V5 --baudrate 19200 commission
+uv run verdi --port COM3 --model V5 --baudrate 19200 commission --query ?F
 ```
 
-Each attempt produces a JSON line with timestamps, connection settings, payload,
-encoded request and received response bytes as hex, and any error. `captured` means evidence was
+Each attempt produces a JSON line with instruction, request/reply bytes as hex,
+payload, outcome and any error. `captured` means evidence was
 collected; it does not interpret the reply or establish no faults. No fault-clear
 setting is required for capture. Stop on a failed exchange; no recovery or replay
-is attempted. Details and buffer-check limits are in the hardware guide.
+is attempted. Details and communication limits are in the hardware guide.
 
 ```python
 from coherent_verdi import VerdiController
@@ -94,7 +122,7 @@ with VerdiController(
 ```
 
 Status comprises 14 sequential queries, not a simultaneous measurement. The
-default transaction deadline is 1 s; configure `timeout_s` for the actual link.
+default timeout is 1 s per write/read stage; configure `timeout_s` for the actual link.
 
 ## Set power and control
 
@@ -119,22 +147,22 @@ with VerdiController(
     power_limit_w=CEILING_W,
     active_fault_clear_reply="<VERIFIED_CLEAR_TEXT>",
 ) as laser:
-    if laser.read_laser_state() != 0 or laser.read("?S") != 0 or laser.read_faults():
+    if laser.read_laser_state() != 0 or laser.get_value("?S") != 0 or laser.read_faults():
         raise RuntimeError("Require standby, shutter closed and no active faults")
     laser.set_power_w(TARGET_W)
-    print("Setpoint:", laser.read("?SP"), "W")
+    print("Setpoint:", laser.get_value("?SP"), "W")
 ```
 
 The setpoint remains stored. The API also provides `start()`, `stop()` and
 `set_shutter(open=True/False)`. Laser enable and shutter opening require the
 operator's beam, cooling, interlock and readiness checks. `start()` clears faults
-and fault history; capture them first. The [controlled-session tutorial](examples/README.md#lesson-5-emission-requires-an-operator-ready-system)
+and fault history; capture them first. The [controlled-session notebook](examples/06_controlled_session.ipynb)
 shows readiness checks and verified normal completion.
 
 The API also exposes baud changes, the Coherent chiller, LBO heater/optimization,
 etalon FLASH, panel locking and menu buttons. Use named methods or a validated
-manual command such as `laser.command("LBO HEATER:1")`. Long query forms such as
-`laser.read("PRINT LIGHT")` are accepted too. See the [complete API](docs/API.md)
+manual command such as `laser.set(b"LBOH=1")`. Long query forms such as
+`laser.get_value("PRINT LIGHT")` are accepted too. See the [complete API](docs/API.md)
 and [manual mapping](docs/PROTOCOL.md#complete-table-5-3-command-coverage).
 Chiller limits, panel-lock values and baud-transition acknowledgment timing are
 not fully specified by the manual; their physical behavior requires verification.
@@ -147,12 +175,13 @@ heater/cooling procedure. Use the head shutter only as a safety shutter.
 
 ## Command line
 
-The installed `verdi` command reads hardware when given an explicit port and model:
+The `verdi` command, run through `uv run`, reads hardware when given an explicit
+port and model (`--no-prompt` only when the device prompt is disabled):
 
 ```sh
-verdi --port COM3 --model V5 --baudrate 19200 query ?SV
-verdi --port COM3 --model V5 query ?P
-verdi --port COM3 --model V5 diagnostics
+uv run verdi --port COM3 --model V5 --baudrate 19200 query ?SV
+uv run verdi --port COM3 --model V5 query ?P
+uv run verdi --port COM3 --model V5 diagnostics
 ```
 
 For `status` or `watch`, also supply
@@ -161,8 +190,8 @@ accepts `--count` and `--interval` in seconds. These operations never enable wri
 Without `--port`, commands use the simulator:
 
 ```sh
-verdi status
-verdi watch --count 10 --interval 1
+uv run verdi status
+uv run verdi watch --count 10 --interval 1
 ```
 
 To execute a write, use `command` with one quoted manual instruction and the
@@ -170,7 +199,7 @@ explicit `--allow-writes` flag. The same power ceiling and operand validation as
 the Python API apply. For example, this changes only the power setpoint:
 
 ```sh
-verdi --port COM3 --model V5 command "POWER=0.25" --allow-writes --power-limit-w 0.5
+uv run verdi --port COM3 --model V5 command "P=0.25" --allow-writes --power-limit-w 0.5
 ```
 
 Select the port, model and site-approved setpoint/ceiling for your setup. Writes
@@ -178,8 +207,8 @@ are rejected without `--allow-writes`. Each attempted write emits its transactio
 evidence as JSONL; failures return exit code 2 and are never replayed. Omitting
 the global serial `--port` uses the simulator, including for command execution.
 
-`python -m coherent_verdi` is equivalent to `verdi`. Python applications can
-inspect `last_transaction` after a call or `VerdiError.transaction` after an
+`uv run python -m coherent_verdi` is equivalent to `uv run verdi`. Python
+applications can inspect `last_transaction` after a call or `VerdiError.transaction` after an
 exchange failure; commissioning writes those records as JSONL.
 
 ## Simulator and optional dashboard
@@ -192,11 +221,11 @@ with SimulatedVerdi("V5") as laser:
 ```
 
 Synthetic readings do not establish hardware accuracy or timing.
-For the optional dashboard, install the GUI extra from the checkout:
+For the optional dashboard, sync the GUI extra from the checkout:
 
 ```sh
-python -m pip install ".[gui]"
-verdi gui
+uv sync --extra gui
+uv run verdi gui
 ```
 
 Open [http://127.0.0.1:8050](http://127.0.0.1:8050/). For hardware, supply the same
@@ -208,22 +237,32 @@ unverified active-fault reply can be captured before any automatic status reads.
 `gui --port 8051` changes the HTTP port. Ctrl+C drains acquisition and closes
 communication without changing laser state.
 
+The dashboard opens with a replica of the Verdi power-supply front panel: AC ON
+and LASER EMISSION indicators, key switch, two-line display, MENU UP/DOWN,
+SELECT, EXIT, SHUTTER OPEN, POWER LEVEL 1/2 and the POWER ADJUST knob. The
+display is synthesized from queries; the laser's own LCD cannot be read over
+RS-232, so MENU keys change the laser's menu but not the replica. The knob only
+edits the target (SET POWER sends it), POWER LEVEL presets are stored in the
+browser rather than the laser, and the key switch is read-only. Indicators without
+a live sample show as hollow (unknown), never as off. Bootstrap's stylesheet is
+bundled with the package, so the dashboard works without internet access.
+
 For example, a hardware dashboard on HTTP port 8051 uses:
 
 ```sh
-verdi --port COM3 --model V5 --baudrate 19200 --active-fault-clear-reply "<VERIFIED_TEXT>" gui --port 8051
+uv run verdi --port COM3 --model V5 --baudrate 19200 --active-fault-clear-reply "<VERIFIED_TEXT>" gui --port 8051
 ```
 
 Enable the GUI's full set of power, laser, shutter, service and front-panel
 controls explicitly, with your site-approved power ceiling:
 
 ```sh
-verdi --port COM3 --model V5 --active-fault-clear-reply "<VERIFIED_TEXT>" gui --allow-writes --power-limit-w 0.5
+uv run verdi --port COM3 --model V5 --active-fault-clear-reply "<VERIFIED_TEXT>" gui --allow-writes --power-limit-w 0.5
 ```
 
-For hardware-free exploration: `verdi gui --allow-writes --power-limit-w 0.5`.
+For hardware-free exploration: `uv run verdi gui --allow-writes --power-limit-w 0.5`.
 Inputs apply only when clicked; overview refreshes preserve unsent edits.
-Start and shutter-open require the readiness checkbox. The server validates all
+Start and shutter-open require the readiness switch. The server validates all
 actions; fresh overview data is required for writes other than standby and
 shutter-close. Results distinguish acknowledgment, matching readback, mismatch
 and failure. Commands without getters report acceptance only.
@@ -241,21 +280,27 @@ drains in-flight I/O without changing laser state. See [GUI details](docs/API.md
 - [Developer walkthrough](docs/DEVELOPMENT.md): ownership, request flow and extension points.
 - [Hardware setup and commissioning](docs/HARDWARE.md): first connection, checks and recovery.
 - [Protocol](docs/PROTOCOL.md): manual mappings and firmware uncertainties.
-- [Five hardware tutorials](examples/README.md) and [simulator reference](docs/SIMULATOR.md).
+- [Hardware tutorial notebooks](examples/README.md) and [simulator reference](docs/SIMULATOR.md).
 
-From a checkout, run the software-only checks:
+From a checkout, sync every extra and run the software-only checks:
 
 ```sh
-python -m pip install -e ".[dev,gui]"
-python -m pytest -q
-python -m ruff check .
-python -m ruff format --check .
-python -m mypy
+uv sync --all-extras
+uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
 node scripts/test_watchdog.cjs
-python -m build
-python scripts/install_smoke.py
+uv build
+uv run scripts/install_smoke.py
 ```
 
-Tests replace physical serial access with fakes, including the hardware examples.
+`uv sync` installs the project in editable mode plus the `dev` dependency group
+(pytest, ruff, mypy); `uv.lock` pins every version, and CI runs
+`uv sync --locked` so a stale lock fails. Change dependencies with `uv add` /
+`uv remove` (`--dev` for tools, `--optional gui` for the dashboard) and refresh
+pins with `uv lock --upgrade`; commit `uv.lock` with `pyproject.toml`.
+
+Tests replace physical serial access with fakes, including the tutorial notebooks.
 Node.js is needed only for the dashboard watchdog test. Source distributions
-include the manual, examples and tests; wheels contain the controller package.
+include the manual, tutorial notebooks and tests; wheels contain the controller package.

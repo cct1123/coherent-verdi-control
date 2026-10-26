@@ -1,6 +1,7 @@
 recursive-include scripts *.py *.cjs
-recursive-include examples *.py *.md
+include examples/README.md
+include examples/0[0-6]_*.ipynb
 recursive-include tests *.py
 recursive-include docs *.md
 recursive-include .github *.yml
-include README.md .gitignore .gitattributes verdi.manual_v5.pdf
+include README.md .gitignore .gitattributes uv.lock verdi.manual_v5.pdf

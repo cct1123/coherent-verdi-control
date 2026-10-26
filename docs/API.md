@@ -1,10 +1,48 @@
 # Python API
 
+## Byte communication
+
+```python
+with VerdiController("COM5", model="V2", baudrate=19200, timeout_s=2) as laser:
+    reply = laser.get(b"?SV")
+    print(repr(reply))  # e.g. b'6.05'
+```
+
+`get`, `set` and `command` require `bytes` instructions without terminators.
+A CR/LF terminator is appended, and the complete reply and prompt are consumed.
+`get` removes framing and the echoed query, returning payload bytes without
+text decoding or numeric conversion. `set` and `command` return unchanged wire
+bytes. The complete reply always remains in `last_transaction["response"]`;
+`get` also stores its byte payload in `last_transaction["payload"]`.
+
+With the default `prompt_enabled=True`, completion means a CR/LF reply followed
+by the exact `Verdi>` or selected model's `Verdi V-N>` prompt, even if the prompt
+arrives after the RX queue becomes empty. The lock covers the entire exchange.
+Set `prompt_enabled=False` only when the instrument prompt is already disabled;
+then CR/LF completes a reply. Opening does not change instrument settings.
+Explicit prompt commands update the expected framing for subsequent requests.
+
+Canonical byte writes use `NAME=value`, enforce write permission and the power
+ceiling, and preserve the supplied instruction. Use `set_baudrate()` for baud
+changes so the device and host are reconfigured together. Timeouts retain partial
+bytes and stop the session without replay. Raw device error replies remain bytes
+for the caller to inspect.
+
+Use `get(b"?P")` for a query and `set(b"P=0.25")` for a setting.
+Both delegate to the single `command(bytes)` implementation, which also accepts
+both instruction types directly. `get` returns payload bytes; `set` and `command`
+return full wire bytes. `get_value("?P")` opts
+into query normalization and value parsing; named helpers opt into typed settings.
+The old `read`, `write`, `command_text` and `_command` methods are removed.
+
+## Typed helpers and connection settings
+
 The package exports `VerdiController`, `SimulatedVerdi`, `VerdiError` and `DeviceError`.
 
 ```text
 VerdiController(port, *, model="V5", baudrate=19200, timeout_s=1.0,
-                allow_writes=False, power_limit_w=None, active_fault_clear_reply=None)
+                allow_writes=False, power_limit_w=None, active_fault_clear_reply=None,
+                prompt_enabled=True)
 SimulatedVerdi(model="V5", *, allow_writes=False, power_limit_w=None,
                echo=False, prompt=False)
 ```
@@ -21,8 +59,11 @@ Physical clear-fault text must be independently verified before configuring
 
 | Method | Result / behavior |
 | --- | --- |
-| `connect()` / `disconnect()` | Open / release the port; neither sends instructions |
-| `read("?P")` | One of 42 queries, including PRINT/? long-name aliases; float, integer, string or fault-code list |
+| `connect(override=True)` / `disconnect()` | Open and return `True` / release the port; neither sends instructions; failures raise |
+| `purge_buffers()` | Purge TX, then RX, while holding the transaction lock |
+| `get(b"?P")` | Payload bytes after removing echo, CR/LF and prompt; full wire reply retained in transaction evidence |
+| `set(b"S=0")` | Canonical byte command; complete acknowledgment and prompt as bytes |
+| `get_value("?P")` | One of 42 queries, including PRINT/? long-name aliases; float, integer, string, bytes or fault-code list |
 | `capture("?F")` | Read-only exchange; transaction record without interpreting values or faults |
 | `read_power_w()` | Measured-power report in W |
 | `read_laser_state()` | Integer: 0 standby, 1 on, 2 fault |
@@ -43,14 +84,16 @@ Physical clear-fault text must be independently verified before configuring
 | `optimize_lbo()` | `LBOOPT=1`, initiate optimization without waiting for completion |
 | `set_front_panel_lock(value)` | `LFP=n`, integer operand; manual does not define valid values/unlock mapping |
 | `menu_down()` / `menu_select()` / `menu_up()` | `MENUDN=1` / `SELECT=1` / `MENUUP=1` |
-| `command(instruction)` | One Table 5-3 long/short command, using `=` or `:`, through the typed validation paths |
 
-For example, `read("PRINT LIGHT")` and `read("?LIGHT")` both transmit `?P`.
-`command("LBO HEATER:1")` transmits `LBOH=1`. `POWER`/`LIGHT`, `>=n`,
-bare `LBOOPT`, and section 5's `SERIAL BAUDRATE=n` spelling are supported.
-Inputs use uppercase ASCII without terminators; every exchange remains one
-CR/LF-terminated instruction. Unknown names, batching and injected controls fail
-before transmission. Power aliases enforce `power_limit_w` as typed setters do.
+For example, `get_value("PRINT LIGHT")` and `get_value("?LIGHT")` both transmit `?P`.
+Text queries such as `?SV` return a string for printable ASCII or the undecoded
+payload as `bytes` for non-ASCII data. No cp1252 or other encoding is guessed.
+Numeric, code and fault queries still require valid typed values. To inspect a
+reply without interpreting its value, use `laser.capture("?SV")["payload"]`;
+capture payloads are always bytes. The complete wire reply remains in `response`.
+
+Byte settings use canonical short names and `=` (for example, `set(b"LBOH=1")`).
+They do not normalize text aliases.
 
 All writes require `allow_writes=True`, including service/front-panel commands.
 Chiller control accepts only ON or a finite numeric temperature, without inventing
@@ -81,6 +124,44 @@ callers: it serializes transactions and complete status groups. Never create
 concurrent owners of one port. Disconnect releases communication without shutting
 down the laser. A healthy disconnected controller can reopen; a failed session cannot.
 
+Buffer purges are explicit host operations, available with writes disabled and
+after a failed exchange while the connection is still open. They send no Verdi
+instructions, keep `last_transaction` intact, and do not clear `failed` or reset
+the laser's input parser. A purge error invalidates the session. The simulator
+implements them as no-ops because it has no serial queues.
+
+```python
+connected = laser.connect()
+print("Serial port open:", connected)
+```
+
+Inspect the result before running a separate communication cell:
+
+```python
+laser.purge_buffers()  # Explicit host queue discard, if intended
+reply = laser.get(b"?SV")
+print(repr(reply))
+```
+
+`True` confirms local port opening, not a reply from the instrument or readiness.
+Opening failures raise an exception rather than returning `False`.
+
+`connect(override=True)` (the default) replaces an older `VerdiController` connection
+for the same port in this Python process. Replacement waits for the old transaction
+lock, closes its handle, then opens the new handle. It sends no instrument commands
+and preserves the old transaction record and failure state. `override=False`
+refuses replacement. A failed controller itself remains retired: construct a fresh
+controller to reconnect. Neither replacement nor reopening proves device synchronization.
+
+Windows will not allow takeover from a raw `serial.Serial` object, another notebook
+kernel or another application. Close that owner explicitly. Do not terminate other
+processes as an automatic recovery action. Controllers created before loading the
+ownership-aware driver are not registered; restart the kernel once after updating.
+
+
+`purge_buffers()` aborts/discards queued output and discards received input.
+It does not wait for transmission, retry a query or wait for incoming bytes to stop.
+
 ## Transaction evidence and errors
 
 `last_transaction` returns a copy of the most recent attempted transaction, or None
@@ -89,26 +170,30 @@ session refusals do not replace it. `capture(query)` returns the same flat recor
 
 | Field | Meaning |
 | --- | --- |
-| `instruction`, `request`, `response` | Instruction text, encoded request bytes and consumed reply bytes |
-| `payload` | Undecorated text when available, otherwise None |
-| `timestamp_utc`, `duration_s` | ISO 8601 UTC start and elapsed seconds |
-| `port`, `model`, `baudrate`, `timeout_s`, `simulated` | Connection configuration and source |
-| `write_attempted`, `pending_bytes` | Whether transmission was attempted; unexpected queued-byte count |
+| `instruction`, `request`, `response` | Instruction bytes, request bytes and consumed reply bytes |
+| `payload` | Undecorated string or bytes when available, otherwise None; capture always uses bytes |
 | `outcome`, `error` | Result and diagnostic text, or None for no error |
 
-Outcomes are `ok` for a parsed query, `captured` for raw capture, `acknowledged`
+Raw byte operations use `received`: a complete frame was received, without interpreting acceptance or a device error.
+Outcomes for explicit typed helpers are `ok` for a parsed query, `captured` for raw capture, `acknowledged`
 for a successful command, `rejected` for a complete device rejection, `failed` for
-a query failure, and `not_sent` or `unknown` for a failed command. `unknown` means
+a query failure, and `unknown` for a failed command. `unknown` means
 the command may have executed; never automatically replay it. An acknowledgment
-establishes protocol acceptance, not physical execution. Partial and late consumed
-bytes remain in `response`; queued bytes left unread are reported in `pending_bytes`.
+establishes protocol acceptance, not physical execution. Partial consumed bytes
+remain in `response`. The record has exactly six fields: `instruction`, `request`,
+`response`, `payload`, `outcome` and `error`. Connection metadata and timing are not recorded.
 
 `ValueError` and `PermissionError` reject local inputs before I/O. `VerdiError.transaction`
 is an independent transaction record when an exchange failed, otherwise None.
 `DeviceError` also retains `instruction` and `response` text for a complete documented
 rejection; that aligned session remains usable. Catch `DeviceError` before `VerdiError`.
+An explicit `Query Error:` naming a different `?` query raises `VerdiError` and
+invalidates the session because request/reply alignment is uncertain.
 Other communication or parsing failures retire the session. No method clears the
-failure latch, retries commands or purges input. Unexpected/interrupted I/O also
+failure latch or retries commands. Buffer purges are explicit only; the driver
+never automatically purges input for recovery. Windows pySerial
+purges host RX/TX queues during port opening; this does not reset the device's
+input parser. Unexpected/interrupted I/O also
 retires the session and propagates. Disconnect remains available; cleanup errors add
 a note to an already-active exception.
 
@@ -119,11 +204,12 @@ or `error.transaction` on `VerdiError`. Byte fields need explicit encoding for J
 
 `capture(query)` accepts the 42 catalogued queries and their PRINT/? aliases only
 on a read-only controller.
-It enforces ASCII and one CR/LF frame, removes documented echo/prompt decoration,
-and permits empty payloads. It bypasses value, state and fault interpretation;
+It enforces one CR/LF frame, removes documented echo/prompt decoration,
+and returns a byte payload, including empty, non-ASCII and control bytes.
+It bypasses value, state and fault interpretation;
 documented device errors still raise `DeviceError`. Capturing an empty or
 clear-looking `?F` reply does not establish no faults or configure its clear token.
-Normal `read()` and `status()` retain their parsing requirements.
+Normal `get_value()` and `status()` retain their parsing requirements.
 
 ```powershell
 verdi --port COM3 --model V5 commission
@@ -133,7 +219,11 @@ verdi --port COM3 --model V5 commission --query ?SV --query ?F
 The default sends one `?SV`. Repeat `--query` for the exact ordered sequence.
 Each attempt emits one JSONL record to stdout, with `request_hex`/`response_hex`
 replacing the bytes. Commissioning stops at the first rejection, framing or
-communication error with exit code 2. It needs no fault-clear configuration;
+communication error with exit code 2. Byte payloads are also encoded in
+`payload_hex`; `payload` contains ASCII text when decodable, otherwise null.
+The CLI's ordinary query/diagnostics output and GUI cache represent byte-valued
+results as `{"bytes_hex": "..."}`. This preserves bytes without text conversion.
+Commissioning needs no fault-clear configuration;
 interpreting and verifying captured data remains the operator's responsibility.
 
 ## Optional monitoring
@@ -181,10 +271,20 @@ The GUI exposes every documented getter and write operation:
   decoded state codes; diagnostics read version, hours and fault history.
 - Capture: raw payload and wire evidence in read-only sessions. Start the CLI
   with `gui --commission` to pause overview polling before the first read.
-- Operate: power Apply, Start/reset faults, Standby, shutter Open/Close. Start
-  and Open require the operator readiness checkbox. Editing a field sends no
+- Front-panel replica: AC ON (lit while the laser answers serial queries; there
+  is no AC-power query), LASER EMISSION (`?L` ON), read-only key switch (`?K`),
+  a two-line display synthesized from the overview, MENU UP/DOWN, SELECT and
+  EXIT (`MENUUP`, `MENUDN`, `SELECT`, `EXIT`), SHUTTER OPEN, POWER LEVEL 1/2
+  and POWER ADJUST. SHUTTER OPEN toggles: it opens only when the browser
+  showed CLOSED and the latest live sample agrees, otherwise it closes. The
+  knob (drag, wheel or arrow keys; Shift for ×10) edits the target only;
+  SET POWER sends it. POWER LEVEL presets live in browser storage and light
+  while the reported setpoint matches. Lamps without a live sample are hollow.
+- Remote operation: power Apply, Start/reset faults, Standby, shutter
+  Open/Close. Start and Open (including the panel's SHUTTER OPEN) require the
+  operator readiness switch. Editing a field or turning the knob sends no
   instruction, and refreshes do not replace unsent input.
-- Advanced: LBO heater, optimization, FLASH, Coherent chiller ON/temperature,
+- Service commands: LBO heater, optimization, FLASH, Coherent chiller ON/temperature,
   panel-lock integer, all menu/button commands, baud, echo and prompt.
 
 `gui --allow-writes --power-limit-w N` enables controls; defaults remain read-only.
@@ -195,6 +295,7 @@ is usable. These are protocol controls, not independent emergency interlocks.
 
 Results distinguish `queued`, `running`, `acknowledged`, `verified` (query matches
 the request), `mismatch`, `readback_failed`, `rejected`, `failed`, and `cancelled`.
+Reads finish as `read`, raw captures as `captured` and polling changes as `applied`.
 Writes retain their own acknowledgment evidence independently of subsequent
 readback. A local validation failure or complete device rejection is `rejected`;
 an adapter exception after transmission is `failed`, retaining an `unknown`
@@ -214,7 +315,8 @@ fresh complete sample. Only 128 action records and 64 browser registrations are
 retained; an expired browser must reload. Transport failures retire the controller
 and reject subsequent actions; no recovery, re-enable or command replay occurs.
 
-The browser watchdog disables writes after 10 s without a server heartbeat.
+The browser watchdog disables every write group (Remote operation, front panel
+and service commands) after 10 s without a server heartbeat.
 Server-side permissions and telemetry checks remain authoritative. All controls
 share the same connection owner; do not add another acquisition caller or serial
 client. Hardware and service-sequence limitations in PROTOCOL.md still apply.
@@ -224,12 +326,15 @@ client. Hardware and service-sequence limitations in PROTOCOL.md still apply.
 [Developer walkthrough](DEVELOPMENT.md) traces a click to its transaction and
 explains how to extend the package.
 
-`catalogue.py` is the shared query catalogue: names, units, reply constraints and
-overview acquisition order. `controller.py` contains the hardware API, protocol
-parsing, bounded chunked serial I/O, transaction evidence encoding and errors.
+`controller.py` contains the query catalogue (names, units, reply constraints,
+code labels and overview acquisition order), the hardware API, protocol parsing,
+bounded pySerial reads, transaction evidence encoding and errors.
 `simulator.py` supplies independent in-memory replies through the same API.
-`gui.py` contains the optional monitoring cache and Dash view; `gui_session.py`
-coordinates its request queue, readback and evidence. `__init__.py` exports
+`gui.py` contains the optional monitoring cache, its request queue with readback
+and evidence (`ControlSession`), and the Dash view, built with
+dash-bootstrap-components. Its `assets/` hold the bundled Bootstrap 5 stylesheet,
+`style.css`, the heartbeat watchdog (`watchdog.js`) and the browser-only knob and
+display-contrast handlers (`panel.js`). `__init__.py` exports
 the four public types; `__main__.py` implements read commands and explicitly
 enabled writes through `command --allow-writes`. Importing the
 package starts no threads and opens no ports. pySerial loads on physical connect;

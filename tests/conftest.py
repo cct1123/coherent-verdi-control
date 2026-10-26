@@ -4,6 +4,16 @@ import pytest
 import serial
 import serial.tools.list_ports
 
+from coherent_verdi.controller import _PORT_OWNERS
+
+
+@pytest.fixture(autouse=True)
+def isolate_serial_ownership():
+    """Each hardware-free test owns its own fake handles, including failed closes."""
+    _PORT_OWNERS.clear()
+    yield
+    _PORT_OWNERS.clear()
+
 
 @pytest.fixture(autouse=True)
 def prohibit_physical_hardware(monkeypatch):

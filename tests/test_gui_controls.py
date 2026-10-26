@@ -1,15 +1,20 @@
 """Full GUI operation coverage; all device exchanges use in-memory fixtures."""
 
+import json
 from threading import Event, Thread
 
 import pytest
 from fakes import FaultyVerdi, RecordingVerdi
 
 from coherent_verdi.__main__ import main
-from coherent_verdi.catalogue import QUERY_INFO
-from coherent_verdi.controller import QUERIES
-from coherent_verdi.gui import Monitor, create_app
-from coherent_verdi.gui_session import SERVICE_ACTIONS, display_value
+from coherent_verdi.controller import QUERIES, QUERY_INFO
+from coherent_verdi.gui import (
+    SERVICE_ACTIONS,
+    Monitor,
+    create_app,
+    describe_action,
+    display_value,
+)
 
 
 def submit(session, action, value=None, *, confirmed=True, client=None, sequence=1):
@@ -67,9 +72,57 @@ def test_every_gui_write_and_available_readback(action, value, wire, state):
         assert record["transaction"]["request_hex"] == wire.hex()
         assert record["transaction"]["outcome"] == "acknowledged"
         if state == "verified":
-            assert record["readback"]["matches"] is True
+            readback = record["readback"]
+            assert readback["matches"] is True
+            assert type(readback["expected"]) is type(readback["actual"])  # 9600, not 9600.0.
         else:
             assert record["readback"] is None  # Never invent an unsupported getter.
+
+
+@pytest.mark.parametrize(
+    "action,value,summary",
+    [
+        ("start", None, "Requested 1 · ON; read back 1 · ON"),
+        ("power", 0.25, "Requested 0.25; read back 0.25 W"),
+        ("baudrate", "9600", "Requested 9600; read back 9600 baud"),
+        ("read", "?SV", "?SV: SIMULATOR"),
+        ("read", "?L", "?L: 0 · STANDBY"),
+    ],
+)
+def test_action_summaries_show_only_physical_units(action, value, summary):
+    with RecordingVerdi(allow_writes=True) as laser:
+        laser.set_key(True)
+        monitor = Monitor(laser)
+        monitor.poll_once()
+        key = submit(monitor.controls, action, value)
+        monitor.poll_once()
+        assert describe_action(result(monitor.controls, key)) == summary
+
+
+@pytest.mark.parametrize("value", ["", "   ", None])
+def test_missing_service_operand_is_rejected_before_io(value):
+    keys = []
+
+    class MidSample(RecordingVerdi):
+        armed = False
+
+        def _simulate_response(self, request):
+            if self.armed and request == b"?P\r\n":  # Arrives between overview reads.
+                self.armed = False
+                keys.append(submit(monitor.controls, "chiller_temperature", value))
+            return super()._simulate_response(request)
+
+    with MidSample(allow_writes=True) as laser:
+        monitor = Monitor(laser)
+        monitor.poll_once()  # A LIVE sample, so only the operand check can refuse.
+        before = len(laser.requests)
+        laser.armed = True
+        sample = monitor.poll_once()
+        record = result(monitor.controls, keys[0])
+        assert record["state"] == "rejected" and "decimal temperature" in record["error"]
+        assert b"CHILLER" not in b"".join(laser.requests[before:])
+        # A write refused before I/O does not discard the overview sample.
+        assert sample["status"] is not None and "interrupted" not in sample
 
 
 def test_every_query_and_diagnostics_in_read_only_commissioning():
@@ -105,6 +158,32 @@ def test_raw_capture_can_inspect_unverified_empty_fault_reply_without_polling():
         assert record["result"]["response_hex"] == "0d0a"
         assert not laser.failed
         assert laser.requests == (b"?F\r\n",)
+
+
+@pytest.mark.parametrize("action", ["read", "capture", "diagnostics"])
+def test_binary_reply_survives_gui_cache_and_json_export(action):
+    payload = b"6.\x9605"
+    with FaultyVerdi() as laser:
+        monitor = Monitor(laser)
+        session = monitor.controls
+        session.set_commissioning()
+        laser.inject(b"?SV" + payload + b"\r\n")
+        key = submit(session, action, None if action == "diagnostics" else "?SV")
+        monitor.poll_once()
+        record = result(session, key)
+        assert record["state"] == ("captured" if action == "capture" else "read")
+        value = record["result"]
+        if action == "capture":
+            assert value["payload"] is None and value["payload_hex"] == payload.hex()
+            assert describe_action(record) == f"Captured bytes: {payload!r}"
+        elif action == "diagnostics":
+            assert value["?SV"] == {"bytes_hex": payload.hex()}
+        else:
+            assert value == {"bytes_hex": payload.hex()}
+            assert describe_action(record) == f"?SV: {payload!r}"
+        snapshot = session.snapshot()
+        assert json.loads(json.dumps(snapshot, allow_nan=False)) == snapshot
+        assert not laser.failed
 
 
 def test_browser_cannot_override_write_permission_or_capture_restriction():
@@ -206,7 +285,7 @@ def test_command_interrupts_polling_between_reads_without_publishing_mixed_statu
         monitor.poll_once()
         history_length = len(monitor.snapshot()["history"])
         before = len(laser.requests)
-        original = laser._exchange
+        original = laser._simulate_response
         queued = []
 
         def enqueue_after_first_read(request):
@@ -215,7 +294,7 @@ def test_command_interrupts_polling_between_reads_without_publishing_mixed_statu
                 queued.append(submit(session, "standby"))
             return answer
 
-        monkeypatch.setattr(laser, "_exchange", enqueue_after_first_read)
+        monkeypatch.setattr(laser, "_simulate_response", enqueue_after_first_read)
         assert monitor.poll_once()["interrupted"] is True
         assert laser.requests[before:] == (b"?L\r\n", b"L=0\r\n", b"?L\r\n")
         assert len(monitor.snapshot()["history"]) == history_length
@@ -360,14 +439,14 @@ def test_rendering_and_submission_remain_responsive_during_a_blocked_exchange(mo
         app = create_app(monitor)
         monitor.poll_once()
         entered, release = Event(), Event()
-        original = laser._exchange
+        original = laser._simulate_response
 
         def blocked(request):
             entered.set()
             assert release.wait(3)
             return original(request)
 
-        monkeypatch.setattr(laser, "_exchange", blocked)
+        monkeypatch.setattr(laser, "_simulate_response", blocked)
         key = submit(monitor.controls, "power", 0.25)
         worker = Thread(target=monitor.poll_once)
         worker.start()
@@ -552,3 +631,115 @@ def test_wait_subtracts_acquisition_time_and_close_wakes_immediately(monkeypatch
         stop.set()
         monitor.wait(stop)
         assert len(waits) == 2
+
+
+def panel_click(app, monitor, trigger, **state):
+    """Click a front-panel key through the real submit callback; return the queued record."""
+    before = {item["id"] for item in monitor.controls.snapshot()["actions"]}
+    state = {"browser-session": monitor.controls.new_client(), "operator-ready": ["ready"]} | state
+    response = app.server.test_client().post(
+        "/_dash-update-component",
+        json=callback_request(app, "submission.children", trigger=trigger, state=state),
+    )
+    assert response.status_code == 200, response.data
+    new = [item for item in monitor.controls.snapshot()["actions"] if item["id"] not in before]
+    return response.json["response"]["submission"]["children"], (new[0] if new else None)
+
+
+def test_front_panel_display_and_lamps_never_invent_state():
+    from coherent_verdi.gui import lcd_lines, panel_lamps
+
+    with RecordingVerdi() as laser:
+        monitor = Monitor(laser)
+        empty = monitor.latest()
+        assert lcd_lines(empty) == ("LIGHT        -.--- W", "NO DATA".ljust(20))
+        assert set(panel_lamps(empty).values()) == {"led unknown", "unknown"}
+        laser.set_key(True)
+        monitor.poll_once()
+        live = monitor.latest()
+        assert lcd_lines(live) == ("LIGHT        0.000 W", "STANDBY SET  0.0000W")
+        lamps = panel_lamps(live)
+        assert lamps == {
+            "ac": "led on",
+            "emission": "led",
+            "shutter": "led",
+            "key": "on",
+            "shown": "closed",
+        }
+        laser.set_faults(5, 12)
+        monitor.poll_once()
+        assert lcd_lines(monitor.latest())[1] == "FAULT 5,12".ljust(20)
+        assert all(len(line) == 20 for line in lcd_lines(monitor.latest()))
+        stale = live | {"health": "STALE"}
+        assert lcd_lines(stale)[1].strip() == "STALE SAMPLE"
+        assert panel_lamps(stale)["ac"] == "led unknown"
+
+
+def test_front_panel_shutter_key_opens_only_when_browser_and_live_sample_agree():
+    with RecordingVerdi(allow_writes=True) as laser:
+        laser.set_key(True)
+        laser.start()
+        monitor = Monitor(laser)
+        app = create_app(monitor)
+        monitor.poll_once()
+        for shown, action in (("closed", "shutter_open"), ("open", "shutter_close")):
+            _, record = panel_click(app, monitor, "panel-shutter", **{"panel-shutter": shown})
+            assert record["action"] == action
+            monitor.poll_once()
+        # The browser showed CLOSED, but the server's latest sample says OPEN: close it.
+        laser.set_shutter(open=True)
+        monitor.poll_once()
+        _, record = panel_click(app, monitor, "panel-shutter", **{"panel-shutter": "closed"})
+        assert record["action"] == "shutter_close"
+        monitor.poll_once()
+        # No live sample backs the browser's CLOSED: never open.
+        stale = Monitor(laser)
+        _, record = panel_click(
+            create_app(stale), stale, "panel-shutter", **{"panel-shutter": "closed"}
+        )
+        assert record["action"] == "shutter_close"
+
+
+def test_front_panel_keys_queue_documented_commands_and_presets():
+    with RecordingVerdi(allow_writes=True) as laser:
+        monitor = Monitor(laser)
+        app = create_app(monitor)
+        layout = app.server.test_client().get("/_dash-layout").data
+        assert all(name.encode() in layout for name in ("front-panel", "panel-knob", "panel-ac"))
+        monitor.poll_once()
+        message, record = panel_click(app, monitor, "panel-level-1")
+        assert record is None and "preset" in message
+        for trigger, wire, state in (
+            ("panel-menu-up", b"MENUUP=1\r\n", {}),
+            ("panel-menu-down", b"MENUDN=1\r\n", {}),
+            ("panel-select", b"SELECT=1\r\n", {}),
+            ("panel-exit", b"EXIT=1\r\n", {}),
+            ("panel-level-2", b"P=0.3000\r\n", {"panel-level-2-value": 0.3}),
+            ("panel-apply-power", b"P=0.1250\r\n", {"target-power": 0.125}),
+        ):
+            before = len(laser.requests)
+            _, record = panel_click(app, monitor, trigger, **state)
+            assert record["state"] == "queued" and len(laser.requests) == before
+            monitor.poll_once()
+            assert laser.requests[before] == wire
+            assert result(monitor.controls, record["id"])["state"] in ("acknowledged", "verified")
+
+
+def test_front_panel_refresh_and_read_only_lock(callback_payload):
+    with RecordingVerdi() as laser:
+        laser.set_key(True)
+        monitor = Monitor(laser)
+        app = create_app(monitor)
+        client = app.server.test_client()
+        monitor.poll_once()
+        data = client.post("/_dash-update-component", json=callback_payload(app)).json["response"]
+        assert data["front-panel"]["className"] == "front-panel"
+        assert data["panel-key"]["className"] == "keyswitch on"
+        assert data["panel-shutter"]["data-shown"] == "closed"
+        assert data["panel-setpoint"]["data"] == 0.0
+        response = client.post(
+            "/_dash-update-component", json=callback_request(app, "query-results")
+        )
+        controls = response.json["response"]
+        assert controls["front-panel"] == {"disabled": True, "data-server-disabled": "true"}
+        assert controls["panel-menu-up"]["disabled"] is True

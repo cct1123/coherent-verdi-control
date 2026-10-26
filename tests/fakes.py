@@ -15,10 +15,10 @@ class RecordingVerdi(SimulatedVerdi):
         with self._lock:
             return tuple(self._requests)
 
-    def _exchange(self, request):
+    def _simulate_response(self, request):
         with self._lock:
             self._requests.append(request)
-            return super()._exchange(request)
+            return super()._simulate_response(request)
 
 
 class FaultyVerdi(RecordingVerdi):
@@ -32,12 +32,12 @@ class FaultyVerdi(RecordingVerdi):
     def inject_timeout(self, *, after_apply=False):
         self.inject(VerdiError("simulated response timeout"), after_apply=after_apply)
 
-    def _exchange(self, request):
+    def _simulate_response(self, request):
         if not self._injections:
-            return super()._exchange(request)
+            return super()._simulate_response(request)
         response, after_apply = self._injections.popleft()
         if after_apply:
-            super()._exchange(request)
+            super()._simulate_response(request)
         else:
             self._requests.append(request)
         if isinstance(response, Exception):

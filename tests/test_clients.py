@@ -13,8 +13,12 @@ from fakes import FaultyVerdi
 from fakes import RecordingVerdi as SimulatedVerdi
 
 from coherent_verdi import VerdiController
-from coherent_verdi.__main__ import main
+from coherent_verdi.__main__ import main as cli_main
 from coherent_verdi.gui import Monitor, create_app
+
+
+def main(args):
+    return cli_main(["--no-prompt", *args])
 
 
 def rendered_components(response):
@@ -82,7 +86,7 @@ def test_freshness_ignores_wall_clock_steps(monkeypatch, wall_clock_offset_s):
             def now(tz):
                 return datetime.now(tz) + timedelta(seconds=wall_clock_offset_s)
 
-        monkeypatch.setattr("coherent_verdi.gui_session.datetime", ShiftedDatetime)
+        monkeypatch.setattr("coherent_verdi.gui.datetime", ShiftedDatetime)
         service = Monitor(controller, clock=lambda: now[0])
         service.poll_once()
         assert service.snapshot()["health"] == "LIVE"
@@ -148,7 +152,7 @@ def test_blank_exception_is_error_with_unavailable_current_values(monkeypatch, c
         def fail(query):
             raise RuntimeError()
 
-        monkeypatch.setattr(controller, "read", fail)
+        monkeypatch.setattr(controller, "get_value", fail)
         service.poll_once()
         data = service.snapshot()
         assert data["health"] == "ERROR"
@@ -175,7 +179,7 @@ def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch, callback_
         service = Monitor(controller)
         service.poll_once()
         entered, release, rendered = Event(), Event(), Event()
-        original = sim._exchange
+        original = sim._simulate_response
         attempted = []
 
         def blocking(request):
@@ -184,7 +188,7 @@ def test_gui_is_responsive_during_blocked_controller_poll(monkeypatch, callback_
             assert release.wait(5)
             return original(request)
 
-        monkeypatch.setattr(sim, "_exchange", blocking)
+        monkeypatch.setattr(sim, "_simulate_response", blocking)
         responses = []
 
         def render():
@@ -226,15 +230,20 @@ def serial_cli(monkeypatch):
     sim = SimulatedVerdi("V5")
     opened = []
 
+    from test_serial import FakeSerial
+
+    class Peer(FakeSerial):
+        def write(self, request):
+            self.responses.append(sim._simulate_response(request) + b"Verdi>")
+            return super().write(request)
+
     def open_serial(controller):
         opened.append(controller)
+        controller._stream = Peer()
         sim.connect()
 
     monkeypatch.setattr(VerdiController, "_open", open_serial)
     monkeypatch.setattr(VerdiController, "_close", lambda controller: sim.disconnect())
-    monkeypatch.setattr(
-        VerdiController, "_exchange", lambda controller, request: sim._exchange(request)
-    )
     yield sim, opened
     sim.disconnect()
 
@@ -328,7 +337,7 @@ def test_cli_watch_returns_failure_when_any_sample_failed(monkeypatch, capsys):
     def fail(self, query):
         raise RuntimeError()
 
-    monkeypatch.setattr(VerdiController, "read", fail)
+    monkeypatch.setattr(VerdiController, "get_value", fail)
     assert main(["watch", "--count", "1"]) == 2
     sample = json.loads(capsys.readouterr().out)
     assert sample["status"] is None and sample["error"] == "RuntimeError:"
@@ -336,7 +345,7 @@ def test_cli_watch_returns_failure_when_any_sample_failed(monkeypatch, capsys):
 
 def test_gui_launcher_drains_acquisition_before_disconnect(monkeypatch):
     entered, release, finished = Event(), Event(), Event()
-    original_read = VerdiController.read
+    original_read = VerdiController.get_value
     original_disconnect = VerdiController.disconnect
 
     def sample(controller, query):
@@ -358,7 +367,7 @@ def test_gui_launcher_drains_acquisition_before_disconnect(monkeypatch):
             release.set()
             raise KeyboardInterrupt
 
-    monkeypatch.setattr(VerdiController, "read", sample)
+    monkeypatch.setattr(VerdiController, "get_value", sample)
     monkeypatch.setattr(VerdiController, "disconnect", disconnect)
     monkeypatch.setattr("coherent_verdi.gui.create_app", lambda monitor: App())
     assert main(["gui"]) == 130
@@ -407,7 +416,7 @@ import sys, threading
 before = threading.enumerate()
 from coherent_verdi import VerdiController, SimulatedVerdi
 with SimulatedVerdi() as laser:
-    assert laser.read('?P') == 0
+    assert laser.get_value('?P') == 0
 assert threading.enumerate() == before
 for name in ('serial', 'dash', 'plotly', 'coherent_verdi.gui'):
     assert name not in sys.modules, name

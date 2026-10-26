@@ -52,15 +52,16 @@ class SimulatedVerdi(VerdiController):
         echo: bool = False,
         prompt: bool = False,
     ) -> None:
+        if type(echo) is not bool or type(prompt) is not bool:
+            raise ValueError("echo and prompt must be bools")
         super().__init__(
             "SIMULATOR",
             model=model,
             allow_writes=allow_writes,
             power_limit_w=power_limit_w,
             active_fault_clear_reply="SYSTEM OK",
+            prompt_enabled=prompt,
         )
-        if type(echo) is not bool or type(prompt) is not bool:
-            raise ValueError("echo and prompt must be bools")
         self._echo = echo
         self._prompt = prompt
         self._key = False
@@ -186,7 +187,7 @@ class SimulatedVerdi(VerdiController):
             return f"Command Error: {instruction}"
         return ""
 
-    def _exchange(self, request: bytes) -> bytes:
+    def _simulate_response(self, request: bytes) -> bytes:
         with self._lock:
             if request.endswith(b"\r\n"):
                 body = request[:-2]
@@ -196,13 +197,14 @@ class SimulatedVerdi(VerdiController):
                 raise ValueError("simulator accepts one printable ASCII instruction at a time")
             instruction = body.decode("ascii")
             query = instruction.startswith("?")
-            parts = ["Verdi>"] if self._prompt else []
+            parts: list[str] = []
             if self._echo:
                 parts.append(instruction)
             payload = self._query(instruction) if query else self._apply(instruction)
             if payload:
                 parts.append(payload)
-            return (" ".join(parts) + "\r\n").encode("ascii")
+            self._prompt_enabled = self._prompt
+            return (" ".join(parts) + "\r\n").encode("ascii") + (b"Verdi>" if self._prompt else b"")
 
     def _open(self) -> None:
         pass  # Keep fixture state across an explicit reconnect.

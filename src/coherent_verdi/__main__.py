@@ -10,7 +10,14 @@ from collections.abc import Sequence
 from time import sleep
 from typing import Any
 
-from .controller import VerdiController, VerdiError, normalize_query, transaction_evidence
+from .controller import (
+    VerdiController,
+    VerdiError,
+    decode_response,
+    json_ready,
+    normalize_query,
+    transaction_evidence,
+)
 from .simulator import SimulatedVerdi
 
 
@@ -28,12 +35,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--baudrate", type=int, default=19200, help="Match the front-panel baud")
     parser.add_argument("--timeout-s", type=float, default=1.0)
     parser.add_argument("--active-fault-clear-reply", help="Independently verified ?F clear text")
+    parser.add_argument("--no-prompt", action="store_true", help="Device prompt is disabled")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "diagnostics"):
         commands.add_parser(name)
     commands.add_parser("query").add_argument("query", type=normalize_query)
     command = commands.add_parser("command", help="Execute one documented write, explicitly")
-    command.add_argument("instruction", help='One quoted command, e.g. "LBO HEATER=1"')
+    command.add_argument("instruction", help='One canonical setting, e.g. "LBOH=1"')
     command.add_argument("--allow-writes", action="store_true", help="Required to enable writes")
     command.add_argument("--power-limit-w", type=float, help="Site ceiling for power writes")
     commission = commands.add_parser(
@@ -83,6 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 baudrate=args.baudrate,
                 timeout_s=args.timeout_s,
                 active_fault_clear_reply=args.active_fault_clear_reply,
+                prompt_enabled=not args.no_prompt,
                 **write_options,
             )
             if args.serial_port is not None
@@ -104,7 +113,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         with laser:
             if args.command == "command":
                 try:
-                    laser.command(args.instruction)
+                    reply = laser.set(args.instruction.encode("ascii"))
+                    decode_response(args.instruction, reply, query=False, model=laser.model)
                 finally:
                     if record := laser.last_transaction:
                         _print_transaction(record)
@@ -123,9 +133,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     if args.command == "status"
                     else laser.read_diagnostics()
                     if args.command == "diagnostics"
-                    else laser.read(args.query)
+                    else laser.get_value(args.query)
                 )
-                print(json.dumps(result, indent=2, allow_nan=False))
+                print(json.dumps(json_ready(result), indent=2, allow_nan=False))
                 return 0
 
             if args.command == "watch":

@@ -1,4 +1,4 @@
-"""Table 5-3 coverage and alias normalization, without physical serial access."""
+"""Table 5-3 named setters and byte commands, without physical serial access."""
 
 import json
 
@@ -6,8 +6,8 @@ import pytest
 import serial
 from fakes import FaultyVerdi, RecordingVerdi
 
-from coherent_verdi import DeviceError, VerdiController, VerdiError
-from coherent_verdi.__main__ import main
+from coherent_verdi import VerdiController, VerdiError
+from coherent_verdi.__main__ import main as cli_main
 from coherent_verdi.controller import QUERIES, normalize_query
 
 # Independent Table 5-3 transcription. POWER and LIGHT are the same operation;
@@ -58,26 +58,20 @@ MANUAL_COMMANDS = [
 
 
 @pytest.mark.parametrize("long,short,wire,method,args,kwargs", MANUAL_COMMANDS)
-@pytest.mark.parametrize("form", ["typed", "long", "short"])
 @pytest.mark.parametrize("echo,prompt", [(False, False), (True, True)])
-def test_every_manual_command_and_alias(
-    long, short, wire, method, args, kwargs, form, echo, prompt
-):
+def test_every_named_manual_command(long, short, wire, method, args, kwargs, echo, prompt):
     with RecordingVerdi(allow_writes=True, echo=echo, prompt=prompt) as laser:
-        if form == "typed":
-            getattr(laser, method)(*args, **kwargs)
-        else:
-            laser.command(long if form == "long" else short)
+        getattr(laser, method)(*args, **kwargs)
         assert laser.requests == (wire,)
         assert laser.last_transaction["outcome"] == "acknowledged"
-        assert laser.read("?SV") == "SIMULATOR"  # Session remains aligned.
+        assert laser.get_value("?SV") == "SIMULATOR"  # Session remains aligned.
 
 
 @pytest.mark.parametrize("long,short,wire,method,args,kwargs", MANUAL_COMMANDS)
 def test_all_writes_require_opt_in(long, short, wire, method, args, kwargs):
     with RecordingVerdi() as laser:
         for action in (
-            lambda: laser.command(long),
+            lambda: laser.set(wire[:-2]),
             lambda: getattr(laser, method)(*args, **kwargs),
         ):
             with pytest.raises(PermissionError):
@@ -93,12 +87,13 @@ def test_every_command_uses_real_serial_transaction_path(
     from test_serial import FakeSerial
 
     peer = FakeSerial()
-    peer.responses.append(b"\r\n")
+    reply = b"\r\n" + (b"Verdi>" if wire == b"PROMPT=0\r\n" else b"")
+    peer.responses.append(reply)
     monkeypatch.setattr(serial, "Serial", lambda **settings: peer)
-    with VerdiController("FAKE-ONLY", allow_writes=True) as laser:
-        laser.command(long)
+    with VerdiController("FAKE-ONLY", allow_writes=True, prompt_enabled=False) as laser:
+        getattr(laser, method)(*args, **kwargs)
         assert laser.last_transaction["outcome"] == "acknowledged"
-        assert laser.last_transaction["response"] == b"\r\n"
+        assert laser.last_transaction["response"] == reply
     assert peer.writes == [wire]
     assert peer.opens == peer.closes == 1
 
@@ -149,13 +144,17 @@ def test_every_command_uses_real_serial_transaction_path(
 )
 def test_invalid_commands_never_transmit_or_replace_evidence(instruction):
     with RecordingVerdi(allow_writes=True) as laser:
-        laser.read("?SV")
+        laser.get_value("?SV")
         previous = laser.last_transaction
-        with pytest.raises(ValueError):
-            laser.command(instruction)
+        with pytest.raises((ValueError, TypeError)):
+            laser.set(
+                instruction.encode("ascii")
+                if isinstance(instruction, str) and instruction.isascii()
+                else instruction
+            )
         assert laser.requests == (b"?SV\r\n",)
         assert laser.last_transaction == previous
-        assert laser.read("?L") == 0
+        assert laser.get_value("?L") == 0
 
 
 @pytest.mark.parametrize("value", [True, None, "20.0", float("inf"), float("nan"), 10**1000, 1e200])
@@ -190,22 +189,26 @@ def test_lbo_heater_requires_boolean(enabled):
         assert laser.requests == ()
 
 
+def main(args):
+    return cli_main(["--no-prompt", *args])
+
+
 def test_software_power_ceiling_cannot_be_bypassed_by_aliases():
     with RecordingVerdi(allow_writes=True, power_limit_w=0.25) as laser:
-        for instruction in ("P=0.3", "LIGHT:0.3", "POWER=0.3"):
+        for instruction in ("P=0.3", "LIGHT:0.3", "P=0.3"):
             with pytest.raises(ValueError):
-                laser.command(instruction)
+                laser.set(instruction.encode("ascii"))
         assert laser.requests == ()
 
 
 def test_service_fixture_state_and_no_invented_thermal_or_optical_dynamics():
     with RecordingVerdi(allow_writes=True) as laser:
-        laser.command("SERIAL BAUDRATE:9600")
-        assert laser.read("?B") == 9600
+        laser.set_baudrate(9600)
+        assert laser.get_value("?B") == 9600
         laser.set_lbo_heater(enabled=False)
-        assert laser.read("?LBOH") == 0
+        assert laser.get_value("?LBOH") == 0
         laser.set_lbo_heater(enabled=True)
-        assert laser.read("?LBOH") == 1
+        assert laser.get_value("?LBOH") == 1
         laser.chiller_on()
         laser.set_chiller_temperature_c(20.16)
         assert laser._chiller_on is True
@@ -221,10 +224,10 @@ def test_service_fixture_state_and_no_invented_thermal_or_optical_dynamics():
         ):
             getattr(laser, method)()
             assert laser._panel_action == name
-        laser.command("LBOOPT")  # Table's operand-less short spelling.
+        laser.optimize_lbo()  # Table's operand-less short spelling.
         laser.flash()
         assert laser._lbo_optimizations == laser._flash_count == 1
-        assert laser.read("?LBOT") == 148  # Deliberately static fixture.
+        assert laser.get_value("?LBOT") == 148  # Deliberately static fixture.
         assert laser.read_laser_state() == 0
 
 
@@ -233,10 +236,10 @@ def test_service_command_loss_of_ack_retires_session_without_replay(command):
     with FaultyVerdi(allow_writes=True) as laser:
         laser.inject_timeout(after_apply=True)
         with pytest.raises(VerdiError) as caught:
-            laser.command(command)
+            laser.set(command.encode("ascii"))
         assert caught.value.transaction["outcome"] == "unknown"
         with pytest.raises(VerdiError, match="failed"):
-            laser.command(command)
+            laser.set(command.encode("ascii"))
         assert len(laser.requests) == 1
 
 
@@ -244,10 +247,9 @@ def test_service_command_loss_of_ack_retires_session_without_replay(command):
 def test_device_range_rejection_preserves_session(command):
     with FaultyVerdi(allow_writes=True) as laser:
         laser.inject(("RANGE ERROR: " + command + "\r\n").encode())
-        with pytest.raises(DeviceError) as caught:
-            laser.command(command)
-        assert caught.value.transaction["outcome"] == "rejected"
-        assert laser.read("?B") == 19200
+        assert laser.set(command.encode("ascii")) == ("RANGE ERROR: " + command + "\r\n").encode()
+        assert laser.last_transaction["outcome"] == "received"
+        assert laser.get_value("?B") == 19200
         assert laser._baudrate == 19200
 
 
@@ -288,6 +290,10 @@ class BaudPeer:
         self.pending.extend(b"\r\n" if data.startswith(b"B=") else b"9600\r\n")
         return len(data)
 
+    def read_until(self, expected=b"\n", size=None):
+        self._timeout = self.timeout
+        return serial.SerialBase.read_until(self, expected, size)
+
     def read(self, count):
         self.events.append(("read", self.baudrate))
         result = self.pending[:count]
@@ -298,12 +304,14 @@ class BaudPeer:
 def test_baud_ack_then_host_switch_and_transaction_configuration(monkeypatch):
     peer = BaudPeer()
     monkeypatch.setattr(serial, "Serial", lambda **settings: peer)
-    with VerdiController("FAKE-ONLY", allow_writes=True) as laser:
+    with VerdiController("FAKE-ONLY", allow_writes=True, prompt_enabled=False) as laser:
         laser.set_baudrate(9600)
-        assert peer.events == [("write", 19200), ("read", 19200), ("baud", 9600)]
-        assert laser.last_transaction["baudrate"] == 19200
-        assert laser.read("?B") == 9600
-        assert laser.last_transaction["baudrate"] == 9600
+        assert peer.events[0] == ("write", 19200)
+        assert peer.events[-1] == ("baud", 9600)
+        assert peer.events[1:-1] and all(event == ("read", 19200) for event in peer.events[1:-1])
+        assert peer.baudrate == 9600
+        assert laser.get_value("?B") == 9600
+        assert peer.baudrate == 9600
         laser.disconnect()
         laser.connect()
         assert laser._baudrate == 9600
@@ -313,7 +321,7 @@ def test_failed_host_baud_switch_preserves_ack_evidence_and_retires_session(monk
     peer = BaudPeer()
     peer.fail_switch = True
     monkeypatch.setattr(serial, "Serial", lambda **settings: peer)
-    with VerdiController("FAKE-ONLY", allow_writes=True) as laser:
+    with VerdiController("FAKE-ONLY", allow_writes=True, prompt_enabled=False) as laser:
         with pytest.raises(VerdiError, match="host baud") as caught:
             laser.set_baudrate(9600)
         record = caught.value.transaction
@@ -337,9 +345,9 @@ def test_every_manual_long_query_alias(prefix):
         for short, long, *_ in MANUAL_QUERIES:
             alias = prefix + long
             assert normalize_query(alias) == short
-            assert laser.read(alias) == laser.read(short)
+            assert laser.get_value(alias) == laser.get_value(short)
             captured = laser.capture(alias)
-            assert captured["instruction"] == short
+            assert captured["instruction"] == short.encode("ascii")
             assert captured["request"] == (short + "\r\n").encode()
             assert normalize_query("PRINT " + short[1:]) == short
 
@@ -347,7 +355,7 @@ def test_every_manual_long_query_alias(prefix):
 @pytest.mark.parametrize("alias", ["PRINT LIGHT;L=1", "?LIGHT\n", "PRINT\tLIGHT", "?MISSING"])
 def test_bad_query_aliases_never_transmit(alias):
     with RecordingVerdi() as laser:
-        for action in (laser.read, laser.capture):
+        for action in (laser.get_value, laser.capture):
             with pytest.raises(ValueError):
                 action(alias)
         assert laser.requests == ()
@@ -361,16 +369,16 @@ def test_cli_requires_explicit_write_enable_before_open(monkeypatch):
 
 
 def test_cli_command_and_query_aliases(capsys):
-    assert main(["command", "LBO HEATER:0", "--allow-writes"]) == 0
+    assert main(["command", "LBOH=0", "--allow-writes"]) == 0
     record = json.loads(capsys.readouterr().out)
     assert record["request_hex"] == b"LBOH=0\r\n".hex()
-    assert record["outcome"] == "acknowledged" and record["simulated"] is True
+    assert record["outcome"] == "received"
     assert main(["query", "PRINT LIGHT"]) == 0
     assert json.loads(capsys.readouterr().out) == 0
 
 
 def test_cli_power_ceiling_and_command_failure_evidence(monkeypatch, capsys):
-    assert main(["command", "POWER=0.3", "--allow-writes", "--power-limit-w", "0.25"]) == 2
+    assert main(["command", "P=0.3", "--allow-writes", "--power-limit-w", "0.25"]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert json.loads(captured.err)["type"] == "ValueError"

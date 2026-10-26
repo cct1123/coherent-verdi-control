@@ -3,15 +3,18 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
-import venv
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# `uv run` exports the running uv binary; fall back to PATH for direct invocation.
+UV = os.environ.get("UV") or shutil.which("uv") or "uv"
 
 
 def run(args: list[str], *, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -39,33 +42,27 @@ def main() -> None:
         "scripts/test_watchdog.cjs",
         "tests/conftest.py",
         "README.md",
+        "examples/README.md",
         "verdi.manual_v5.pdf",
         "src/coherent_verdi/py.typed",
         "src/coherent_verdi/assets/watchdog.js",
+        "src/coherent_verdi/assets/panel.js",
+        "src/coherent_verdi/assets/bootstrap.min.css",
     }
     required.update(
-        p.relative_to(ROOT).as_posix()
-        for p in (ROOT / "examples").iterdir()
-        if p.suffix in (".py", ".md")
+        p.relative_to(ROOT).as_posix() for p in (ROOT / "examples").glob("0[0-6]_*.ipynb")
     )
     required.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md"))
     if missing := required - members:
         raise RuntimeError(f"source distribution lacks supporting files: {sorted(missing)}")
     with tempfile.TemporaryDirectory(prefix="verdi-install-smoke-") as directory:
         env_path = Path(directory) / "env"
-        venv.EnvBuilder(with_pip=True).create(env_path)
+        run([UV, "venv", "--quiet", "--python", sys.executable, str(env_path)])
         executable = env_path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        run(
-            [
-                str(executable),
-                "-m",
-                "pip",
-                "install",
-                "--no-cache-dir",
-                str(wheel),
-            ]
-        )
-        run([str(executable), "-m", "pip", "check"])
+        install = [UV, "pip", "install", "--quiet", "--python", str(executable)]
+        # Refresh guarantees the freshly built wheel, not a cached one, is installed.
+        run([*install, "--refresh-package", project["name"], str(wheel)])
+        run([UV, "pip", "check", "--python", str(executable)])
         # CWD outside source and isolated mode prove this imports the installed wheel.
         check = run(
             [
@@ -78,6 +75,7 @@ def main() -> None:
                 "assets = Path(coherent_verdi.__file__).parent / 'assets'; "
                 "assert assets.joinpath('style.css').exists(); "
                 "assert assets.joinpath('watchdog.js').exists(); "
+                "assert assets.joinpath('panel.js').exists(); "
                 "print(coherent_verdi.__file__)",
             ],
             cwd=directory,
@@ -96,13 +94,11 @@ def main() -> None:
 from unittest.mock import patch
 import serial, sys
 from coherent_verdi.__main__ import main
-reply = iter(bytes([c]) for c in b'WHEEL-TEST-FIRMWARE\r\n')
 with patch.object(serial, 'Serial') as factory:
     stream = factory.return_value
-    stream.in_waiting = 0
     stream.write.side_effect = len
-    stream.read.side_effect = lambda size: next(reply, b'')
-    assert main(['--port', 'FAKE-ONLY', '--model', 'V5', *sys.argv[1:]]) == 0
+    stream.read_until.return_value = b'WHEEL-TEST-FIRMWARE\r\n'
+    assert main(['--no-prompt', '--port', 'FAKE-ONLY', '--model', 'V5', *sys.argv[1:]]) == 0
     assert stream.port == 'FAKE-ONLY'
     stream.open.assert_called_once_with()
     stream.close.assert_called_once_with()
@@ -113,36 +109,60 @@ with patch.object(serial, 'Serial') as factory:
             data = json.loads(result.stdout)
             if command == ["commission"]:
                 assert data["payload"] == "WHEEL-TEST-FIRMWARE"
-                assert data["outcome"] == "captured" and data["simulated"] is False
+                assert data["outcome"] == "captured"
                 assert bytes.fromhex(data["response_hex"]) == b"WHEEL-TEST-FIRMWARE\r\n"
             else:
                 assert data == "WHEEL-TEST-FIRMWARE"
-        # Hardware examples run only with substituted peers in the install check.
+        # Hardware notebooks run only with substituted peers in the install check.
         example_check = r"""
-import builtins, runpy, sys
+import builtins, json, sys
+from pathlib import Path
 from unittest.mock import patch
+import serial.tools.list_ports
 from coherent_verdi import SimulatedVerdi, VerdiController
-sim = SimulatedVerdi('V5')
+sim = SimulatedVerdi('V5', prompt=True)
 sim.set_key(True)
 requests = []
-main = runpy.run_path(sys.argv[1])['main']
-main.__globals__.update(PORT='FAKE-ONLY', MODEL='V5', BAUDRATE=19200,
-    ACTIVE_FAULT_CLEAR_REPLY='SYSTEM OK', TARGET_W=0.25, POWER_LIMIT_W=0.5)
-def confirm(prompt):
-    return 'CONNECT' if 'CONNECT' in prompt else 'SET' if 'SET' in prompt else 'RUN'
+settings = dict(PORT='FAKE-ONLY', MODEL='V5', BAUDRATE=19200,
+    ACTIVE_FAULT_CLEAR_REPLY=(b'SYSTEM OK' if Path(sys.argv[1]).name.startswith(('05_', '06_'))
+        else 'SYSTEM OK'), TARGET_W=0.25, POWER_LIMIT_W=0.5)
+cells = json.load(open(sys.argv[1], encoding='utf-8'))['cells']
 
-def exchange(controller, request):
-    requests.append(request)
-    return sim._exchange(request)
+class NotebookPeer:
+    pending = b""
+    def open(self):
+        sim.connect()
+    def close(self):
+        sim.disconnect()
+    def write(self, request):
+        requests.append(request)
+        self.pending += sim._simulate_response(request)
+        return len(request)
+    def read_until(self, expected=b"\n", size=None):
+        end = self.pending.find(expected)
+        count = len(self.pending) if end < 0 else end + len(expected)
+        if size is not None:
+            count = min(count, size)
+        result, self.pending = self.pending[:count], self.pending[count:]
+        return result
+    def reset_output_buffer(self):
+        pass
+    def reset_input_buffer(self):
+        self.pending = b""
 
-with patch.object(VerdiController, '_open', lambda c: sim.connect()), \
-     patch.object(VerdiController, '_close', lambda c: sim.disconnect()), \
-     patch.object(VerdiController, '_exchange', exchange), \
-     patch.object(builtins, 'input', confirm):
-    main()
-assert requests[0] == b'?SV\r\n'
+namespace = {}
+with patch.object(serial, 'Serial', lambda **kwargs: NotebookPeer()), \
+     patch.object(serial.tools.list_ports, 'comports', lambda: []), \
+     patch.object(builtins, 'input', lambda p: 'RUN' if 'RUN' in p else 'SET'):
+    for cell in (c for c in cells if c['cell_type'] == 'code'):
+        exec(''.join(cell['source']), namespace)
+        if 'parameters' in cell['metadata'].get('tags', ()):
+            namespace.update(settings)
+# Device discovery only lists ports; every other lesson starts with ?SV.
+discovery = Path(sys.argv[1]).name.startswith('00_')
+assert requests == [] if discovery else requests[0] == b'?SV\r\n'
 """
-        for example in sorted((ROOT / "examples").glob("0*.py")):
+        for example in sorted((ROOT / "examples").glob("0*.ipynb")):
             run([str(executable), "-I", "-c", example_check, str(example)], cwd=directory)
         entrypoint = env_path / ("Scripts/verdi.exe" if os.name == "nt" else "bin/verdi")
         result = json.loads(run([str(entrypoint), "query", "?SV"], cwd=directory).stdout)
@@ -157,17 +177,8 @@ assert requests[0] == b'?SV\r\n'
         assert missing_gui.returncode == 2
         assert json.loads(missing_gui.stderr)["type"] == "ModuleNotFoundError"
         print(f"PASS: isolated controller wheel, assets, CLI, examples; {check.stdout.strip()}")
-        run(
-            [
-                str(executable),
-                "-m",
-                "pip",
-                "install",
-                "--no-cache-dir",
-                f"{wheel}[gui]",
-            ]
-        )
-        run([str(executable), "-m", "pip", "check"])
+        run([*install, f"{wheel}[gui]"])
+        run([UV, "pip", "check", "--python", str(executable)])
         smoke = run(
             [str(executable), "-I", str(Path(__file__).resolve()), "--gui-smoke"], cwd=directory
         )
@@ -193,18 +204,19 @@ def gui_smoke() -> None:
     serial.tools.list_ports.grep = prohibited
     sim = SimulatedVerdi("V5")
     requests = []
-    original_exchange = sim._exchange
+    original_exchange = sim._simulate_response
 
     def exchange(request: bytes) -> bytes:
         requests.append(request)
         return original_exchange(request)
 
-    sim._exchange = exchange
+    sim._simulate_response = exchange
     with sim as controller:
         telemetry = Monitor(controller, history_size=2)
         app = create_app(telemetry)
         client = app.server.test_client()
-        for path in ("/", "/_dash-layout", "/assets/style.css", "/assets/watchdog.js"):
+        assets = ("bootstrap.min.css", "style.css", "watchdog.js", "panel.js")
+        for path in ("/", "/_dash-layout", *(f"/assets/{name}" for name in assets)):
             assert client.get(path).status_code == 200, path
         key = next(iter(app.callback_map))
         payload = {
@@ -248,7 +260,8 @@ def gui_smoke() -> None:
         fault_view = refresh("LIVE")
         assert fault_view["laser"]["children"] == "FAULT"
         assert "999" in fault_view["faults"]["children"]
-        sim._exchange = lambda request: b""  # Test-only malformed reply; never real hardware.
+        # Test-only malformed reply; never real hardware.
+        sim._simulate_response = lambda request: b""
         telemetry.poll_once()
         error_view = refresh("ERROR")
         assert error_view["laser"]["children"] == "UNKNOWN"

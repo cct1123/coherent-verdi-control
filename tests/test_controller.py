@@ -15,7 +15,7 @@ from coherent_verdi.controller import QUERIES
 def test_invalid_queries_are_rejected_before_io(query):
     with SimulatedVerdi() as laser:
         with pytest.raises(ValueError):
-            laser.read(query)
+            laser.get_value(query)
         assert laser.requests == ()
         assert laser.read_power_w() == 0
 
@@ -40,9 +40,9 @@ def test_status_duration_includes_every_query(monkeypatch):
     monkeypatch.setattr("coherent_verdi.controller.monotonic", lambda: ticks[0])
 
     class TimedSimulator(SimulatedVerdi):
-        def _exchange(self, request):
+        def _simulate_response(self, request):
             ticks[0] += 0.125
-            return super()._exchange(request)
+            return super()._simulate_response(request)
 
     sim = TimedSimulator(model="V5")
     with sim as laser:
@@ -67,7 +67,7 @@ def test_constructor_settings_are_runtime_validated(kwargs):
 @pytest.mark.parametrize("reply", [True, "", " ", "1", "30", "1&2", "OK\r\n", "é", "X" * 129])
 def test_invalid_or_fault_code_clear_override_rejected(reply):
     with pytest.raises(ValueError, match="active_fault_clear_reply"):
-        VerdiController("FAKE-ONLY", active_fault_clear_reply=reply)
+        VerdiController("FAKE-ONLY", active_fault_clear_reply=reply, prompt_enabled=False)
 
 
 @pytest.mark.parametrize("history", ["False", "True", 0, 1, None])
@@ -88,7 +88,7 @@ def test_model_specific_servo_codes_reject_invalid_firmware_data(query, model, i
     sim.inject(f"{invalid}\r\n".encode())
     with sim as c:
         with pytest.raises(VerdiError, match="not documented"):
-            c.read(query)
+            c.get_value(query)
         with pytest.raises(VerdiError):
             c.read_power_w()
     assert len(sim.requests) == 1
@@ -102,7 +102,7 @@ def test_model_specific_servo_codes_preserve_supported_and_unresolved_v5_variant
     sim = FaultyVerdi(model)
     sim.inject(f"{valid}\r\n".encode())
     with sim as c:
-        assert c.read(query) == valid
+        assert c.get_value(query) == valid
 
 
 @pytest.mark.parametrize("operand", ["1e-1", "0_1", "nan", "inf", "-1", "6"])
@@ -111,8 +111,11 @@ def test_simulator_power_rejects_undocumented_numeric_syntax_and_software_limits
     sim.connect()
     try:
         instruction = f"P={operand}".encode()
-        assert sim._exchange(instruction + b"\r\n") == b"RANGE ERROR: " + instruction + b"\r\n"
-        assert sim._exchange(b"?SP\r\n") == b"0.0000\r\n"
+        assert (
+            sim._simulate_response(instruction + b"\r\n")
+            == b"RANGE ERROR: " + instruction + b"\r\n"
+        )
+        assert sim._simulate_response(b"?SP\r\n") == b"0.0000\r\n"
     finally:
         sim.disconnect()
 
@@ -123,8 +126,8 @@ def test_simulator_never_accepts_batched_or_malformed_instructions(wire):
     sim.connect()
     try:
         with pytest.raises(ValueError):
-            sim._exchange(wire)
-        assert sim._exchange(b"?L\r\n") == b"0\r\n"
+            sim._simulate_response(wire)
+        assert sim._simulate_response(b"?L\r\n") == b"0\r\n"
     finally:
         sim.disconnect()
 
@@ -135,12 +138,12 @@ def test_closed_shutter_idle_is_not_diode_off_and_fault_cuts_current():
     with c:
         c.set_key(True)
         c.start()
-        assert c.read("?S") == 0
-        assert c.read("?D1C") > 0  # Magnitude is a fixture, not a hardware claim.
-        assert c.read("?C") == c.read("?D1C")
+        assert c.get_value("?S") == 0
+        assert c.get_value("?D1C") > 0  # Magnitude is a fixture, not a hardware claim.
+        assert c.get_value("?C") == c.get_value("?D1C")
         c.set_faults(30)
-        assert c.read("?D1C") == 0
-        assert c.read("?S") == 0
+        assert c.get_value("?D1C") == 0
+        assert c.get_value("?S") == 0
         assert c.read_laser_state() == 2
 
 
@@ -155,7 +158,7 @@ def test_model_ceiling_and_units(model, limit):
     c = SimulatedVerdi(model, allow_writes=True)
     c.connect()
     c.set_power_w(limit)
-    assert c.read("?SP") == limit
+    assert c.get_value("?SP") == limit
     with pytest.raises(ValueError):
         c.set_power_w(limit + 0.0001)
     assert c.status()["model"] == model
@@ -237,7 +240,7 @@ def test_warm_fixture_requires_explicit_key_enable_and_shutter():
         assert laser.read_power_w() == 0.5
         laser.set_key(False)
         assert laser.read_laser_state() == 0
-        assert laser.read("?S") == 0
+        assert laser.get_value("?S") == 0
 
 
 def test_explicit_echo_and_reversed_prompt_setting():
@@ -258,7 +261,7 @@ def test_every_query_through_simulated_protocol(model):
     c = SimulatedVerdi(model, allow_writes=True)
     c.connect()
     for query in QUERIES:
-        c.read(query)
+        c.get_value(query)
     assert c.read_diagnostics()["software_version"].startswith("SIMULATOR")
 
 
@@ -272,7 +275,7 @@ def test_applied_command_with_lost_acknowledgment_is_not_replayed():
     with pytest.raises(VerdiError):
         c.read_laser_state()
     # Inspect the independent fixture only: production code cannot reuse the failed session.
-    assert c._exchange(b"?L\r\n") == b"1\r\n"
+    assert c._simulate_response(b"?L\r\n") == b"1\r\n"
     assert c.requests.count(b"L=1\r\n") == 1
 
 
@@ -312,7 +315,7 @@ def test_integer_conversion_limit_invalidates_session(query):
             sys.set_int_max_str_digits(640)
             sim.inject(b"9" * 641 + b"\r\n")
             with pytest.raises(VerdiError, match="conversion limit"):
-                controller.read(query)
+                controller.get_value(query)
             before = sim.requests
             with pytest.raises(VerdiError):
                 controller.read_laser_state()
