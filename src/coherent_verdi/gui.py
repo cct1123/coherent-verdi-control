@@ -27,6 +27,16 @@ FRESH_BUTTONS = ("apply-power", "start", "shutter-open", "service") + tuple(
     name for name in PANEL_BUTTONS if name != "panel-shutter"
 )
 LCD_WIDTH = 20
+# Match validate_power_w's two-ULP tolerance, including values near powers of two.
+_POWER_STEP_JS = """
+    function onPowerStep(value) {
+        const view = new DataView(new ArrayBuffer(8));
+        view.setFloat64(0, Math.abs(value));
+        const exponent = (view.getUint32(0) >>> 20) & 0x7ff;
+        const ulp = exponent === 0 ? Number.MIN_VALUE : 2 ** (exponent - 1023 - 52);
+        return Math.abs(value - Math.round(value * 100) / 100) <= 2 * ulp;
+    }
+"""
 
 
 def _power_input_limit(limit_w: float) -> float:
@@ -705,15 +715,32 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
             button("Diagnostics + fault history", "diagnostics"),
         ),
         dbc.FormText(
-            "Read value interprets the reply. Capture bytes preserves the byte payload and full "
-            "reply in Transaction evidence, and needs a read-only session. "
-            "Connect first; monitoring starts only when you click Start monitoring."
+            "Read value interprets the payload. Capture bytes preserves payload and wire bytes "
+            "in Transaction evidence and requires a read-only session. Pause monitoring to "
+            "inspect one exchange at a time."
         ),
         dbc.FormText(
             "Query availability depends on firmware. The reference V2 run rejected ?DIOS; "
             "the health-check notebook skips it."
         ),
+        html.Div(
+            [
+                html.Div(id="query-feedback", role="status"),
+                html.Details(
+                    [
+                        html.Summary("Transaction evidence", id="query-evidence-title"),
+                        html.Pre(id="query-evidence-record"),
+                    ],
+                    id="query-evidence",
+                    className="evidence",
+                ),
+            ],
+            id="query-inspection",
+            className="query-feedback",
+            style={"display": "none"},
+        ),
         html.Div(id="query-results"),
+        subtitle="Connect, inspect a selected query, then start monitoring when ready",
     )
     connection = None
     if session is not None:
@@ -772,7 +799,7 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                 [
                     dbc.Col(
                         [
-                            field("Device prompt", "connection-prompt"),
+                            field("Device prompt (existing mode)", "connection-prompt"),
                             dropdown(
                                 "connection-prompt",
                                 {"enabled": "Enabled", "disabled": "Disabled"},
@@ -783,7 +810,7 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                     ),
                     dbc.Col(
                         [
-                            field("Timeout / s", "connection-timeout"),
+                            field("Serial timeout / s", "connection-timeout"),
                             dbc.Input(
                                 id="connection-timeout",
                                 type="number",
@@ -810,7 +837,8 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
             ),
             dbc.FormText(
                 "Match the existing device prompt setting; no modes are changed automatically. "
-                "Timeout applies to serial write and receive waits."
+                "Echo is accepted. Timeout applies to each reply-line and prompt read; a full "
+                "exchange can take longer. No extra wait is added between queries."
             ),
         )
 
@@ -847,13 +875,6 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
     remote = card(
         "Remote operation",
         operate,
-        html.Div(
-            [
-                html.Div(id="submission", role="status", className="submission"),
-                html.Div(id="latest-action", className="latest-action"),
-            ],
-            className="feedback",
-        ),
         subtitle="Explicit power, laser and shutter commands",
     )
     graph = dcc.Graph(
@@ -875,7 +896,7 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                 button("Start monitoring", "resume-polling", tone="primary"),
                 button("Pause monitoring", "pause-polling"),
             ),
-            field("Target sampling interval / s", "monitoring-interval"),
+            field("Overview interval / s", "monitoring-interval"),
             dbc.Input(
                 id="monitoring-interval",
                 type="number",
@@ -887,8 +908,9 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
             row(button("Apply interval", "apply-interval")),
             html.Div(id="polling-state", className="muted"),
             dbc.FormText(
-                "Reads power, diode current and temperatures. Slow serial replies can "
-                "make a cycle longer than the target interval."
+                "Each overview sends 14 queries sequentially for state, power, current and "
+                "temperatures. This interval schedules overviews; it adds no delay between "
+                "their queries. Slow replies can make an overview take longer."
             ),
         )
         # Inputs live outside refreshed results so an unsent edit survives polling.
@@ -904,12 +926,27 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                         className="g-4",
                     ),
                     html.Div(id="connection-warning", role="alert"),
+                    html.Div(
+                        [
+                            html.Div(id="submission", role="status", className="submission"),
+                            html.Div(id="latest-action", className="latest-action"),
+                        ],
+                        className="session-feedback",
+                    ),
                     dcc.Store(id="browser-session", data=controls.new_client()),
                     dcc.Store(id="panel-setpoint"),
                     dcc.Store(id="history-cursor", data=0),
                     dcc.Store(id="connection-generation", data=0),
                     dcc.Store(id="connection-settings"),
                     dcc.Store(id="action-request"),
+                    dcc.Store(id="query-evidence-request"),
+                    dbc.Row(
+                        [
+                            dbc.Col(diagnostics, lg=7),
+                            dbc.Col(card("Live readings", html.Section(id="sample")), lg=5),
+                        ],
+                        className="g-4",
+                    ),
                     dbc.Row(
                         [
                             dbc.Col(
@@ -921,14 +958,7 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                     ),
                     dbc.Row(
                         [
-                            dbc.Col(card("Live readings", html.Section(id="sample")), lg=5),
                             dbc.Col(card("Power history", graph), lg=7),
-                        ],
-                        className="g-4",
-                    ),
-                    dbc.Row(
-                        [
-                            dbc.Col(diagnostics, lg=7),
                             dbc.Col(
                                 card(
                                     "Service commands",
@@ -1093,7 +1123,7 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                 confirmed=confirmed,
                 generation=generation if type(generation) is int else -1,
             )
-            return f"Queued: {action_label(action)}", request_id
+            return "", request_id  # The live action record owns queued/completed feedback.
         except (ValueError, PermissionError) as exc:
             return str(exc), no_update
 
@@ -1101,6 +1131,13 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
         Output("query-results", "children"),
         Output("action-results", "children"),
         Output("latest-action", "children"),
+        Output("query-feedback", "children"),
+        Output("query-inspection", "className"),
+        Output("query-inspection", "style"),
+        Output("query-evidence-title", "children"),
+        Output("query-evidence-record", "children"),
+        Output("query-evidence", "open"),
+        Output("query-evidence-request", "data"),
         [Output(name, "disabled") for name in WRITE_GROUPS],
         [Output(name, "data-server-disabled") for name in WRITE_GROUPS],
         Output("polling-state", "children"),
@@ -1118,8 +1155,11 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
         Input("refresh", "n_intervals"),
         Input("action-request", "data"),
         Input("action-refresh", "n_intervals"),
+        State("query-evidence-request", "data"),
     )
-    def refresh_controls(tick: int, request: Any, action_tick: int) -> tuple[Any, ...]:
+    def refresh_controls(
+        tick: int, request: Any, action_tick: int, previous_query: Any
+    ) -> tuple[Any, ...]:
         data = controls.snapshot()
         disabled = not data["allow_writes"] or data["failed"] or not data["accepting"]
         require_fresh = disabled or data["write_pending"] or monitor.latest()["health"] != "LIVE"
@@ -1170,6 +1210,38 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
             for index, item in enumerate(reversed(data["actions"]))
         ]
         latest = data["actions"][-1] if data["actions"] else None
+        latest_query = next(
+            (
+                item
+                for item in reversed(data["actions"])
+                if item["action"] in ("read", "capture", "diagnostics")
+            ),
+            None,
+        )
+        query_feedback: Any = ""
+        query_key = [latest_query["id"], latest_query["state"]] if latest_query else None
+        query_changed = query_key != previous_query
+        received = "No exchange recorded yet"
+        if latest_query:
+            transaction = latest_query["transaction"]
+            received = (
+                f"{len(transaction['response_hex']) // 2} received bytes"
+                if transaction is not None
+                else "No exchange recorded yet"
+            )
+            query_feedback = [
+                html.Div(
+                    [
+                        badge(latest_query),
+                        " ",
+                        action_label(latest_query["action"]),
+                        " ",
+                        latest_query["value"] or "",
+                    ],
+                    className="query-heading",
+                ),
+                html.P(describe_action(latest_query)),
+            ]
         ceiling = data["power_limit_w"]
         return (
             table(("Query", "Name", "Value", "Unit", "UTC"), queries)
@@ -1179,6 +1251,15 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
             [badge(latest), " ", action_label(latest["action"]), " · ", describe_action(latest)]
             if latest
             else "",
+            query_feedback,
+            "query-feedback " + latest_query["state"] if latest_query else "query-feedback",
+            {} if latest_query else {"display": "none"},
+            f"Transaction evidence · {received}",
+            json.dumps(latest_query, indent=2, allow_nan=False) if latest_query else "",
+            (latest_query is not None and latest_query["state"] in ("failed", "rejected"))
+            if query_changed
+            else no_update,
+            query_key if query_changed else no_update,
             *([disabled] * len(WRITE_GROUPS)),
             *([str(disabled).lower()] * len(WRITE_GROUPS)),
             f"Monitoring active · target interval {monitor.interval_s:g} s"
@@ -1311,10 +1392,13 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
     clientside(
         """
         function (value, max) {
+        """
+        + _POWER_STEP_JS
+        + """
             const ok = typeof value === "number" && isFinite(value);
             const stepped = Math.round(value * 100) / 100;
             const valid = ok && value >= 0 && value <= max &&
-                Math.abs(value - stepped) <= 2 * Number.EPSILON * Math.abs(value);
+                onPowerStep(value);
             const fraction = ok && max > 0 ? Math.min(1, Math.max(0, value / max)) : 0;
             return [
                 {"--level": fraction},
@@ -1333,12 +1417,14 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
     clientside(
         """
         function (setpoint, first, second, max) {
+        """
+        + _POWER_STEP_JS
+        + """
             // Only valid presets can match the stored-setpoint readback.
             return [first, second].map(function (preset) {
                 if (typeof setpoint !== "number" || !isFinite(setpoint)) return "led unknown";
                 if (typeof preset !== "number" || !isFinite(preset) || preset < 0 ||
-                    preset > max || Math.abs(preset - Math.round(preset * 100) / 100) >
-                    2 * Number.EPSILON * Math.abs(preset)) return "led";
+                    preset > max || !onPowerStep(preset)) return "led";
                 return Math.abs(setpoint - preset) < 5e-5 ? "led on" : "led";
             });
         }

@@ -1,5 +1,6 @@
 """Connection and monitoring lifecycle through fake ports and real Dash requests."""
 
+import json
 from threading import Event, Thread
 from types import SimpleNamespace
 
@@ -679,6 +680,90 @@ def test_overview_preserves_hundredths_of_an_ampere(monkeypatch):
 
     fields = {item.get("id"): item for item in components(response.json)}
     assert fields["current"]["children"] == "12.83"
+    session.submit("close")
+    session.step()
+
+
+def test_query_failure_shows_wire_evidence_beside_controls_and_clears_on_disconnect(peer):
+    session = hardware_session()
+    session.submit("connect")
+    session.step()
+    app = create_app(session.monitor, session=session)
+    client = app.server.test_client()
+
+    def refresh(previous=None):
+        response = client.post(
+            "/_dash-update-component",
+            json=callback_request(app, "query-results", state={"query-evidence-request": previous}),
+        )
+        assert response.status_code == 200, response.data
+        return response.json["response"]
+
+    peer.responses.append(b"6.05\r\nVerdi V-2>")
+    session_action(session, "capture", "?SV")
+    session.step()
+    data = refresh()
+    assert data["query-evidence"]["open"] is False
+    # Refreshing the same record leaves the operator's expanded/collapsed state alone.
+    response = client.post(
+        "/_dash-update-component",
+        json=callback_request(
+            app,
+            "query-results",
+            state={"query-evidence-request": data["query-evidence-request"]["data"]},
+        ),
+    )
+    assert "query-evidence" not in response.json["response"]
+
+    # Exact notebook 02 failure: no bytes at all for the following power query.
+    session_action(session, "read", "?P")
+    queued = refresh(data["query-evidence-request"]["data"])
+    session.step()
+    data = refresh(queued["query-evidence-request"]["data"])
+    assert data["query-evidence"]["open"] is True
+    action = json.loads(data["query-evidence-record"]["children"])
+    assert action["state"] == "failed"
+    assert action["transaction"]["instruction"] == "?P"
+    assert action["transaction"]["response_hex"] == ""
+    assert "0 received bytes" in data["query-evidence-title"]["children"]
+    assert "?SV" in str(data["query-results"])  # Earlier results remain visible.
+    assert peer.writes == [b"?SV\r\n", b"?P\r\n"]
+    session.submit("disconnect")
+    session.step()
+    data = refresh()
+    assert data["query-feedback"]["children"] == ""
+    assert data["latest-action"]["children"] == ""
+    assert peer.closes == 1
+
+
+def test_accepted_query_uses_live_record_instead_of_persistent_queued_message(peer):
+    session = hardware_session()
+    session.submit("connect")
+    session.step()
+    app = create_app(session.monitor, session=session)
+    client = app.server.test_client()
+    response = client.post(
+        "/_dash-update-component",
+        json=callback_request(
+            app,
+            "submission.children",
+            trigger="read",
+            state={
+                "browser-session": session.monitor.controls.new_client(),
+                "query-choice": "?SV",
+                "connection-generation": session.monitor.generation,
+            },
+        ),
+    )
+    assert response.status_code == 200, response.data
+    assert response.json["response"]["submission"]["children"] == ""
+    assert not peer.writes  # Callback queues only; it cannot send serial queries.
+    peer.responses.append(b"6.05\r\nVerdi V-2>")
+    session.step()
+    response = client.post("/_dash-update-component", json=callback_request(app, "query-results"))
+    assert "6.05" in str(response.json["response"]["query-feedback"])
+    assert "queued" not in str(response.json["response"]["latest-action"])
+    assert peer.writes == [b"?SV\r\n"]
     session.submit("close")
     session.step()
 

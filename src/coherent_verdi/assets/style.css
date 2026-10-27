@@ -88,9 +88,16 @@ body {
   --bs-btn-disabled-color: var(--muted); --bs-btn-disabled-border-color: var(--line); }
 .btn:disabled, fieldset:disabled .btn { opacity: .45; }
 #query-choice, #service-action { font-size: .85rem; }
-.feedback { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); font-size: .8rem; overflow-wrap: anywhere; }
+.session-feedback > div:not(:empty) { margin: 0 0 14px; font-size: .85rem; overflow-wrap: anywhere; }
 .submission { color: var(--muted); }
 .latest-action { margin-top: 6px; color: var(--ink-2); }
+.query-feedback { margin-top: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--line-soft); font-size: .85rem; overflow-wrap: anywhere; }
+.query-feedback.failed, .query-feedback.rejected { border-color: var(--danger-line); background: var(--danger-soft); }
+.query-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.query-feedback p { margin: 8px 0; }
+.query-feedback .evidence { margin: 0; }
+.query-feedback pre { max-height: 240px; }
 
 /* Tables, activity and evidence */
 .data-table { --bs-table-bg: transparent; --bs-table-hover-bg: var(--line-soft); margin: 0; font-size: .85rem; }

@@ -39,9 +39,10 @@ detection is used.
 
 **Device prompt** describes the laser's existing mode; choosing Enabled or Disabled
 changes the reader configuration, not the instrument. When enabled, the reader
-consumes reply CR/LF and then the exact trailing prompt. **Timeout / s** configures
+consumes reply CR/LF and then the exact trailing prompt. **Serial timeout / s** configures
 serial write and receive waits (0.001–60 seconds). Reply lines, notices and the
-prompt use separate `read_until()` calls with that configured timeout.
+prompt use separate `read_until()` calls with that configured timeout, so a full
+exchange may take longer. Echo is accepted without changing its instrument mode.
 
 Click **Connect** to open the port without queries or settings. Monitoring remains
 paused. Select `?SV` and click **Capture bytes**, then inspect **Transaction evidence**.
@@ -69,7 +70,7 @@ serial owner and close any notebook connection before launching the GUI.
 | Close application | Releases the connection and stops the worker and HTTP server. |
 | Start monitoring | Starts repeated reads of power, setpoint, diode current, temperatures and operating state. |
 | Pause monitoring | Pauses automatic overview reads; explicit query actions remain available. |
-| Apply interval | Applies a target interval of 0.1-3600 seconds; default 1 second. |
+| Apply interval | Applies the overview interval of 0.1-3600 seconds; default 1 second. Each overview sends 14 queries sequentially, with no extra wait between those queries. |
 
 A serial cycle can exceed the target interval. Live readings and sample age show
 the last completed overview. Power history is cleared on connection changes;
@@ -90,6 +91,20 @@ the link is understood. The GUI does not take over another controller-owned port
 Disconnect and Close application do not place the laser in standby or close its shutter.
 
 ## Read values and inspect bytes
+
+Queries and live readings appear above the front panel so a single exchange can
+be inspected before starting monitoring. Pause monitoring when isolating a query;
+otherwise overview queries also use the shared connection. The newest query's
+result and full action record appear beside its controls. Its Transaction evidence
+summary shows the received byte count; failed and rejected records expand there
+automatically. An empty response is explicitly shown as zero received bytes.
+Opening or closing the evidence remains under operator control across refreshes;
+a new failed query opens its evidence automatically.
+The Activity section retains the other action records.
+
+Accepted submissions derive their queued/completed status from the live action
+record. Local validation messages appear directly below the connection controls;
+a completed request no longer leaves a stale "Queued" message behind.
 
 | Control | Result |
 | --- | --- |
