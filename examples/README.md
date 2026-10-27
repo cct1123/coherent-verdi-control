@@ -5,9 +5,12 @@ is split into short numbered sections: a few sentences of explanation, then a
 small code cell you run and check before moving on. Each notebook is independent.
 None uses shared helper code or a simulation switch.
 
-Read-only serial communication on a V2, firmware 6.05, was exercised in lessons
-01-03 on 2026-10-26. Emission control, optical behavior and calibration remain
-unverified on hardware. Work with your lab's laser operator and follow the
+The operator confirmed successful runs of notebooks 00–07 on 2026-10-27 using
+the V2 / firmware 6.05 setup. Notebook 08 remains unresolved: the optional
+shutter-close example records a timeout with extra firmware diagnostics. The
+[hardware validation record](../docs/HARDWARE.md#validation-record-2026-10-27)
+separates that report, saved evidence and remaining limits.
+Work with your lab's laser operator and follow the
 [hardware setup guide](../docs/HARDWARE.md) and [operator manual](../verdi.manual_v5.pdf).
 
 ## 1. Install and open the notebooks
@@ -70,7 +73,7 @@ by `stage = study` or `stage = sweep`. `elapsed_s` is relative to each stage's s
 fields not acquired for a stage remain blank. Study rows retain their UTC timestamps
 and read-window durations; sweep rows retain diode and heatsink temperatures.
 Optional cells plot the study versus time and the sweep versus setpoint.
-Plotting cells are optional; Matplotlib is included in the project environment
+Matplotlib is included in the project environment
 created by `uv sync`.
 
 Lesson 8 is an independent developer guide to the controller's `get_...` and
@@ -143,8 +146,8 @@ numeric, boolean or fault-code conversion. Bytes returned by serial reads remain
 in `laser.last_transaction["response"]`.
 
 Lesson 2 uses direct sequential `laser.read()` calls. There is no diagnostic pause
-setting or added sleep between queries. Its saved empty `?P` response remains
-as hardware evidence; software tests do not establish its physical cause.
+setting or added sleep between queries. Its latest saved run contains successful
+power and status replies after the version query.
 
 The lessons require the instrument prompt to be enabled
 and do not change its echo/prompt settings. Lesson 5 uses `read()` for byte payloads and
@@ -164,23 +167,21 @@ from `read()` before enabling, opening and closing the shutter. It verifies that
 the laser remains ON after shutter closure. Replies
 and command acknowledgments remain available as raw byte records.
 
-Saved outputs remain unchanged from the original hardware runs. In lessons 01–02,
-the saved replies include framing and the transaction records contain historical
-fields; current `read()` returns only the payload and current records use the
-[documented six fields](../docs/API.md#transaction-evidence-and-errors).
-Lesson 06 has no saved execution outputs. Software checks replay all lessons
-with simulated serial peers; they do not regenerate or replace the hardware evidence.
-Lesson 07's 2026-10-27 failed response, containing consecutive `level1 set!` and
-`level0 set!` notices, is replayed exactly in the parser regression tests. The
-subsequent completed ten-reading settling study is preserved separately in
+Saved outputs from the latest operator runs include payload replies and the
+[documented six-field transaction records](../docs/API.md#transaction-evidence-and-errors).
+They are preserved during documentation updates. Software checks replay all
+lessons with simulated serial peers; they do not regenerate or replace hardware
+evidence. Notebook 08's shutter-close exception remains in its saved outputs.
+
+An earlier lesson 07 response from 2026-10-27, containing consecutive `level1 set!`
+and `level0 set!` notices, is replayed exactly in the parser regression tests.
+The completed ten-reading settling study from that earlier session is retained in
 [the extracted hardware evidence](data/07_settling_study_20261027T215736Z.json),
 including its provenance, completion message and final setpoint transaction.
-The original run used separate opening/acquisition cells; it is not an execution
-of the current merged cell. The final parser audit found the notebook's study
-outputs cleared, so those readings were archived without overwriting its current
-source. Restart the notebook kernel
-after updating the driver before beginning a new session. These records are not
-a hardware rerun of the parser redesign.
+That archived study used separate opening/acquisition cells and predates the
+current merged cell and latest successful notebook run. Keep its provenance
+separate from the latest results. Restart the notebook kernel after updating the
+driver before beginning a new session.
 
 ### Fault replies in lessons 5–6
 
@@ -230,5 +231,5 @@ or shutter opening, **the laser may remain on or the shutter may remain open**.
 Interrupting the kernel, closing the notebook and disconnecting the port are not
 emergency stops. Use the operator's physical procedure.
 
-These notebooks are tested with fake serial peers only. Testing the code does not
+Automated notebook tests use fake serial peers. These tests do not
 establish the real instrument's timing, wiring, safety or optical calibration.

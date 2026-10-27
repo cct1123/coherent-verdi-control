@@ -14,7 +14,7 @@ identified separately below; it is not treated as an amendment to the manual.
   set. The manual identifies no cp1252, Latin-1 or UTF-8 response encoding.
   The saved V2 firmware 6.05 read-only notebooks contain only ASCII-compatible
   replies. The [health survey](../examples/03_health_check.ipynb) records 41
-  distinct query payloads (184 bytes); `?DIOS` was not captured. No saved receive
+  distinct query payloads; `?DIOS` was not captured. No saved receive
   byte has its high bit set. These observations support ASCII as the decoding
   baseline but do not distinguish encodings that share the ASCII subset or
   establish every possible firmware reply.
@@ -246,6 +246,9 @@ code 47 is listed in Table 5-4 but omitted from Table 6-1.
    prompt text and delayed arrival, not a timing bound. Real character echo timing,
    separately terminated echo lines, other firmware and prompt transition ordering
    still require capture; the parser never consumes arbitrary additional lines.
+   The saved notebook 08 shutter-close attempt includes extra `incr` and `prom#`
+   diagnostic lines and a timeout. Those lines remain unsupported and preserved
+   in the transaction; see the [hardware run record](HARDWARE.md#validation-record-2026-10-27).
 3. **Power limits:** Table 2-1 rates models at 2/5/6 W. Those ratings are used as
    conservative software ceilings, not claimed firmware maximum setpoint ranges.
    A caller can lower the ceiling. Chiller temperature control is exposed as

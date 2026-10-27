@@ -118,8 +118,12 @@ manual and your site's laser procedure. Writes require explicit permission and
 a site-approved power ceiling. **Disconnecting does not put the laser in standby
 or close its shutter.**
 
-Read-only notebooks 01–03 ran successfully on a V2 with firmware 6.05.
-Emission control and optical behavior remain unverified on hardware.
+On 2026-10-27, the operator confirmed successful runs of notebooks 00–07 on the
+V2 / firmware 6.05 setup. Notebook 08 remains unresolved: its optional shutter-close
+example records a timeout with extra firmware diagnostics. See the
+[validation record](docs/HARDWARE.md#validation-record-2026-10-27) for the evidence
+and scope. These runs do not establish optical calibration, timing guarantees,
+GUI hardware operation or coverage of every optional service command.
 
 ## More detail
 

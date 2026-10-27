@@ -43,6 +43,12 @@ temporary test directory. Notebook hardware outputs and repository data are not
 regenerated. To check a build in another folder, use
 `python scripts/install_smoke.py --dist-dir <folder>`.
 
+The 2026-10-27 software review passed 1,151 tests, Ruff lint/format, mypy, browser
+asset checks, dependency/lock checks and clean-environment package checks for the
+CLI, all nine notebooks and GUI lifecycle. These checks use fake serial ports.
+The operator's notebook run report and saved hardware evidence are documented
+separately in the [hardware validation record](HARDWARE.md#validation-record-2026-10-27).
+
 ## Follow one request
 
 1. `gui.py:create_app` builds the controls and registers three device-action callbacks

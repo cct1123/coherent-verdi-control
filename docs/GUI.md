@@ -7,9 +7,12 @@ are shown separately. After connection, the header identifies SIMULATOR or HARDW
 The whole dashboard, including the laser panel, follows the system light/dark
 preference. An explicit Bootstrap `data-bs-theme="light"` or `"dark"` takes precedence.
 
-Read-only communication was exercised on a V2 running firmware 6.05 in notebooks
-01-03 on 2026-10-26. GUI tests use serial fakes and simulation. These results do
-not validate emission control, optical behavior or calibration on hardware.
+The operator confirmed successful runs of notebooks 00–07 on the V2 / firmware
+6.05 setup on 2026-10-27; notebook 08 remains unresolved. See the
+[hardware validation record](HARDWARE.md#validation-record-2026-10-27).
+GUI validation uses serial fakes
+and browser simulation. Notebook runs do not establish GUI hardware operation,
+optical accuracy or calibration.
 
 ## Launch
 

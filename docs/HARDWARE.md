@@ -2,11 +2,41 @@
 
 The controller implements the RS-232 interface from the supplied
 [Coherent Verdi V-2/V-5/V-6 Operator's Manual](../verdi.manual_v5.pdf),
-part 0171-750-00 Rev IB, sections 1, 3, 4 and 5. Read-only communication on V2
-firmware 6.05 was exercised in notebooks 01-03 on 2026-10-26. Emission control,
-physical timing guarantees, optical behavior and calibration remain unverified.
+part 0171-750-00 Rev IB, sections 1, 3, 4 and 5. The operator confirmed successful
+runs of notebooks 00–07 on the V2 / firmware 6.05 setup on 2026-10-27; notebook 08
+remains unresolved. The
+[validation record below](#validation-record-2026-10-27) distinguishes that report
+from saved results and remaining limits.
 For dashboard startup and byte capture, see the [GUI guide](GUI.md). Use a qualified operator and
 the site's laser procedure for setup, emission and shutdown.
+
+## Validation record: 2026-10-27
+
+The operator confirmed successful runs of notebooks 00–07 and identified notebook
+08 as still unresolved. The saved
+connection settings identify V2, COM5 and 19200 baud; version replies identify
+firmware 6.05. This is an operator bench report, distinct from the fake-serial
+software checks.
+
+| Evidence | Recorded scope |
+| --- | --- |
+| Notebooks 00–04 | Port discovery, version, sequential status, health survey and readiness readings; no saved errors. Discovery itself sends no laser instructions. |
+| Notebook 05 | Key-OFF power storage and readback; no saved errors. |
+| Notebook 06 | Controlled session with the key already ON, power verification and shutter cycle; no saved errors. |
+| Notebook 07 | Settling study, power sweep, plots and combined-CSV save; no saved errors. The recorded values are instrument reports, not independent optical measurements. |
+| Notebook 08 | API query examples and selected opt-in write examples have saved outputs. The shutter-close example retains a timeout with additional `incr` and `prom#` firmware diagnostics. |
+
+Notebook 08 remains an open hardware issue. Preserve its exception as evidence;
+do not describe the API tour as uniformly error-free or infer successful execution
+of every optional setter.
+The extra diagnostic lines are not treated as recognized status notices by the
+controller. No recovery retry or added inter-query delay was introduced.
+
+The runs extend the earlier read-only 01–03 check from 2026-10-26 to the operator's
+power-setting, shutter-cycle and settling/sweep workflows. They do not establish
+GUI hardware operation, optical accuracy/calibration, firmware latency bounds,
+interlock integrity, physical fault-response timing, other models/firmware, or
+unexecuted heater, chiller, optimization, panel-lock and serial-mode operations.
 
 ## Connection
 
