@@ -55,6 +55,9 @@ body {
 #connection-warning:not(:empty), #error:not(:empty) { margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--danger-line); border-radius: 10px;
   font-size: .85rem; color: var(--danger-ink); background: var(--danger-soft); }
 .connection-lost #sample, .connection-lost .front-panel { opacity: .5; }
+#connection-state, #connection-message, #error, .activity-item > p, #latest-action {
+  overflow-wrap: anywhere;
+}
 
 /* Cards */
 .surface { background: var(--surface); height: 100%; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 1px 2px rgba(16, 24, 40, .04); }

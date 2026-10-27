@@ -3,7 +3,8 @@
 Authoritative source: [Coherent Verdi V-2/V-5/V-6 Operator's Manual](../verdi.manual_v5.pdf),
 part **0171-750-00, Rev IB**, © 08/2005. The supplied PDF has 130 pages and SHA-256
 `d4a7a8a2a1e0c678bb00a5fd70be6ea1d649be063ab752de485a59daa3103f73`.
-Printed section 5 corresponds to PDF pages 49–58. No newer firmware behavior is assumed.
+Printed section 5 corresponds to PDF pages 49–58. Captured firmware behavior is
+identified separately below; it is not treated as an amendment to the manual.
 
 ## Wire contract
 
@@ -32,15 +33,15 @@ Printed section 5 corresponds to PDF pages 49–58. No newer firmware behavior i
 - Replies end in CR/LF; wait for a complete reply before the next instruction.
 - Table 5-1, p. 5-2: a successful command replies with an empty CR/LF when echo
   and prompt are off. There is no documented `OK` command acknowledgment.
-- Table 5-1 provides four single-line layouts combining optional `Verdi>` prefix
-  and echoed instruction. The parser accepts these without writing mode settings
-  during connection. A 2026-10-23 capture on V2 firmware 6.05 also showed an
-  unterminated `Verdi V-2>` after the reply, arriving between requests. The driver
-  accepts `Verdi>` and the exact configured model's `Verdi V-N>` as a prefix,
-  one suffix after CR/LF. It performs no standalone prompt read before transmission. Other
-  model variants follow the same spelling; their firmware behavior is unverified.
-  Typed parsing rejects malformed framing in the consumed reply. Raw capture permits arbitrary
-  payload bytes; typed reads retain numeric, code and fault validation.
+- Table 5-1 provides four CR/LF-terminated layouts combining an optional leading
+  `Verdi>` and instruction echo. Payload interpretation removes matching echo and
+  prompt framing from a completed response.
+- V2 firmware 6.05 captures show an unterminated `Verdi V-2>` after reply CR/LF.
+  The restored native reader uses `read_until()` for the reply, then consumes that
+  trailing prompt when `prompt_enabled=True`. `Verdi>` and the exact selected
+  model's `Verdi V-N>` are recognized. With the prompt disabled, CR/LF completes
+  the exchange. Opening sends no echo/prompt writes, and there is no reply-format
+  selection or automatic mode detection.
 - Error prefixes: `RANGE ERROR:`, `Command Error:`, `Query Error:`. A device error
   preserves the instruction and reply. It is not retried.
   If `Query Error:` explicitly names a different `?` query, the connection is
@@ -52,7 +53,7 @@ Printed section 5 corresponds to PDF pages 49–58. No newer firmware behavior i
 - The port is DCE; only pins 2, 3, 5 are used. No electrical/cable validation has
   occurred. No model-identification query is specified; callers select V2/V5/V6.
 
-The 1 s default timeout per write/read stage, 4096-byte response ceiling, strict decimal
+The 1 s default serial write/receive timeout, 4096-byte response ceiling, strict decimal
 parser and connection failure policy are **software choices**, not manufacturer
 response-time or firmware guarantees. A partial response, I/O error or lost
 acknowledgment makes the serial session unusable. The command may have executed.
@@ -62,14 +63,37 @@ transaction evidence; they do not establish device-side synchronization.
 Windows pySerial clears host RX/TX queues when opening the port. That operation
 does not clear an unfinished instruction already received by the laser.
 
-With `prompt_enabled=True` (the hardware default), the transaction always waits
-for the full CR/LF reply and one exact terminal prompt. An empty RX queue after
-CR/LF does not complete the exchange. `command()` writes once, uses pySerial
-`read_until(b"\r\n")`, then `read_until(b">")`, with a fixed timeout for each
-stage. One lock prevents the next instruction from being sent early.
-With an explicitly configured prompt-disabled instrument, `prompt_enabled=False`
-completes at CR/LF. No connection-time mode writes, sleeps or automatic purges
-are used. There is no input-queue polling or automatic pre-transmission read.
+`command()` sends one instruction and uses `read_until()` to receive complete
+notice lines and one CR/LF reply, followed by the enabled trailing prompt. Value
+interpretation occurs only after those reads complete. One lock prevents another
+caller from transmitting early. Write and receive waits use the configured timeout;
+each `read_until()` has its own timeout rather than one combined exchange deadline.
+No per-byte timeout adjustment, queue polling, sleep, recovery purge or replay is
+performed. Bytes returned by serial reads, including incomplete lines returned at
+timeout, remain in the transaction. An I/O exception or interrupt inside a read can
+prevent its internal partial bytes from being returned; earlier completed reads
+remain available.
+
+With `prompt_enabled=False`, reply CR/LF completes the exchange. Explicit successful
+`PROMPT` writes update their acknowledgment and subsequent prompt expectations;
+rejected writes retain the previous mode. Echo is accepted and can be changed only
+through an explicit setter.
+
+The supplied manual defines `PROMPT=0` / `>=0` as prompt ON and `PROMPT=1` /
+`>=1` as OFF (p. 5-6). The separate Single FAP manual specifies the opposite
+`>=n` polarity and different error strings. Those commands are not imported into
+this controller's instruction set.
+
+The observed firmware notices `min current set\r\n`, `level1 set!\r\n` and
+`level0 set!\r\n` are recognized only as exact leading lines. Up to eight
+consecutive notices are accepted, with a separate reply still required. Eight is
+a software bound, not a manufacturer guarantee. Lesson 07 captured the exact
+response `level1 set!\r\nlevel0 set!\r\n0.114\r\nVerdi V-2>` on V2 firmware
+6.05; these messages have no established physical meaning in this driver.
+All consumed notice bytes count toward the response limit and remain in the
+transaction. Extra readings, excessive notices and unknown lines still fail.
+The earlier inferred leading-blank-line exception has been removed now that the
+full response is available.
 
 The byte API returns replies without text decoding or numeric conversion.
 Write operands are validated while the supplied instruction bytes are preserved.
@@ -212,14 +236,11 @@ code 47 is listed in Table 5-4 but omitted from Table 6-1.
 ## Uncertainty register
 
 1. **No active faults:** `SYSTEM OK` is explicit for `?FH`; the clear reply for
-   `?F` is not explicit. Physical controllers therefore reject clear-looking
-   replies unless `active_fault_clear_reply` matches the exact
-   text independently verified for that firmware. Its default is None;
-   malformed/unverified data invalidates the session. Positive fault codes/lists
-   cannot be configured as clear tokens. Empty replies can be captured for
-   evidence but remain unsupported by normal fault parsing.
-   Simulated controllers alone default to the fixture convention `SYSTEM OK`.
-   Do not infer physical compatibility from that simulator convention or from ?FH.
+   `?F` is not explicit in the manual. The parser accepts `SYSTEM OK` for both,
+   consistent with the captured V2 firmware 6.05 reply. Positive fault codes/lists
+   remain faults; malformed data invalidates the session. Empty replies can be
+   captured for evidence but remain unsupported by normal fault parsing.
+   Other firmware still requires raw capture and physical verification.
 2. **Echo framing:** Table 5-1's one-line layouts and the captured V2 firmware
    6.05 standalone `Verdi V-2>` prompt are supported. That capture establishes
    prompt text and delayed arrival, not a timing bound. Real character echo timing,

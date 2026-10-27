@@ -34,13 +34,14 @@ uv run verdi --port COM5 --model V2 --baudrate 19200 query ?SV
 | `--port COM5` | Serial port; Linux examples include `/dev/ttyUSB0` |
 | `--model V2` | Actual model: V2, V5 or V6; required with a serial port |
 | `--baudrate 19200` | Match the front panel; default 19200 |
-| `--timeout-s 2` | Timeout per write/read stage; default 1 second |
-| `--active-fault-clear-reply "TEXT"` | Independently verified no-active-fault `?F` text |
+| `--timeout-s 2` | Serial write and receive timeout; each reply/notice/prompt read has its own wait; default 1 second |
 | `--no-prompt` | Use only when the instrument prompt is already disabled |
 
 Without a serial `--port`, commands use the simulator. `commission` requires
 an explicit hardware port and model. The driver does not discover the model,
 detect baud or configure echo/prompt modes on connection.
+The reader consumes the reply CR/LF and the enabled trailing prompt using
+`read_until()`. It adds no extra delay between queries.
 
 ## Individual queries and diagnostics
 
@@ -64,19 +65,19 @@ uv run verdi --port COM5 --model V2 --baudrate 19200 commission --query ?F > act
 The default is one `?SV` query. Repeat `--query` to select an ordered sequence.
 Each attempt emits one JSON line containing instruction, request/reply bytes as
 hex, payload, outcome and any error. A captured reply is evidence to inspect;
-it does not establish readiness or no active faults. Capture needs no fault-clear
-configuration. It stops at the first rejection or communication failure.
+it does not establish physical readiness. It stops at the first rejection or
+communication failure.
 See [hardware commissioning](HARDWARE.md#first-read).
 
 ## Full status and monitoring
 
-First verify the exact no-active-fault reply using the
+Fault queries interpret `SYSTEM OK` as an empty fault list and preserve positive
+fault codes. Unexpected replies stop the session; inspect them using the
 [hardware procedure](HARDWARE.md#fault-clear-reply-and-full-status).
-Replace `<VERIFIED_TEXT>` before running:
 
 ```sh
-uv run verdi --port COM5 --model V2 --baudrate 19200 --active-fault-clear-reply "<VERIFIED_TEXT>" status
-uv run verdi --port COM5 --model V2 --baudrate 19200 --active-fault-clear-reply "<VERIFIED_TEXT>" watch --count 10 --interval 1
+uv run verdi --port COM5 --model V2 --baudrate 19200 status
+uv run verdi --port COM5 --model V2 --baudrate 19200 watch --count 10 --interval 1
 ```
 
 `status` prints one overview as JSON. `watch` prints JSON lines for repeated
@@ -87,7 +88,7 @@ a simultaneous measurement. Both commands are read-only.
 ## Explicit writes
 
 Prefer the [set-power notebook](../examples/05_set_power.ipynb) for a checked
-standby procedure and the [controlled session](../examples/06_controlled_session.ipynb)
+standby procedure and the [controlled session](../examples/06_key_on_and_run.ipynb)
 for enabling and shutter operation. Confirm physical readiness and the site's
 approved power ceiling before enabling writes.
 

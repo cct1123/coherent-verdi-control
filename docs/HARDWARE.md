@@ -89,11 +89,10 @@ Documented device-error replies are recorded as rejected. It stops on the first
 device rejection, framing or communication failure. Use repeated
 `--query` options only for the specific sequence you intend to inspect.
 
-Set `active_fault_clear_reply` to the exact verified text in the controller
-constructor before using `get_faults()` or `get_status()`. The default deliberately
-rejects unverified clear-looking replies. Empty replies remain unsupported by
-normal fault parsing; positive fault codes cannot be configured as clear. The
-simulator's `SYSTEM OK` convention does not establish physical compatibility.
+`get_faults()` and `get_status()` interpret `SYSTEM OK` as an empty fault list,
+matching the captured V2 firmware 6.05 reply. Positive fault codes are preserved;
+empty or unexpected replies raise `VerdiError`. This parsing convention is not a
+hardware interlock or proof of readiness. Check other firmware against raw replies.
 
 After individual reads pass, check complete status and diagnostics. Preserve
 unknown fault codes. Record raw/parsed values, units, front-panel observations,
@@ -107,15 +106,25 @@ setting `allow_writes=True`. Model ratings are software ceilings, not site limit
 Stop monitoring and release the read-only controller before opening a write-enabled
 controller on the same port. No state or commands are replayed on connection.
 
-1. Verify `set_laser_state(0)` / `?L` gives standby under the operator's procedure.
-2. With shutter closed and no active faults, set one conservative site-approved
-   power and compare `?SP` with the request and front panel. Record quantization;
-   the setpoint remains stored. No automatic ramp or reset is performed.
-3. Before `set_laser_state(1)`, complete LBO warmup and verify key/standby configuration and
-   LOCKED diode, LBO, etalon and vanadate temperature servos (manual pp. 4-2–4-3).
-   The keyswitch itself can enable emission; its operation belongs to the operator.
-   Confirm the shutter is closed. Capture fault history first: `L=1` resets it.
-   Enable once and verify actual state and faults; do not repeatedly enable a faulted laser.
+1. For the separate setpoint-only procedure in lesson 5, keep the physical key
+   in STANDBY/OFF during preparation and verify `?K = 0`.
+   `?L` is a separate laser-state report: 0 is standby; 2 is OFF due to fault.
+   A firmware 6.05 capture reported state 2 with `?F = SYSTEM OK`; do not relabel
+   it as standby or reset it automatically. Capture `?FH` and review the front panel.
+2. With physical key OFF, laser OFF (state 0 or 2), shutter closed and verified
+   clear active faults, set one conservative site-approved power and compare `?SP`
+   with the request and front panel. Record quantization; the setpoint remains
+   stored. Recheck the key and reported conditions after writing.
+3. Lesson 6 is an independent run procedure with the physical key already ON,
+   shutter closed, clear active faults and laser state ON (1) or remote standby (0).
+   No key cycling is required. Verify LOCKED diode, LBO, etalon and vanadate servos
+   (manual pp. 4-2 through 4-3), preserve fault history, then store and verify the
+   approved power in 0.01 W increments and confirm the planned run. Recheck key,
+   state, shutter, faults, servos and power immediately before the shutter cycle.
+   If `?L = 1`, skip serial enable. Only if `?L = 0` and all checks pass, send
+   `L=1` once; it resets faults and clears history. State 2 or any failed check
+   stops without resetting or retrying. The laser may already be enabled during
+   preparation; use the physical abort procedure when needed.
 4. With the beam path cleared for emission, perform one shutter open/close cycle,
    verify `?S` and observe physical behavior. Do not use the safety shutter for
    modulation. Closed-shutter `?P` and reopening dynamics require observation;
@@ -123,6 +132,10 @@ controller on the same port. No state or commands are replayed on connection.
 5. Use a suitable calibrated optical reference if accuracy is required. Define
    setpoints, settling conditions, tolerances and uncertainty before measurement;
    setpoint readback alone is not optical calibration.
+
+Lesson 6 verifies the shutter closed and leaves the laser and physical key ON at
+normal completion. It sends no standby command. Disconnecting sends no laser-state
+commands; full heater/cooling shutdown remains a separate operator procedure.
 
 The API also exposes all documented service/front-panel commands: LBO heater,
 chiller, optimization, FLASH, panel locking, menu buttons and baud changes. These
@@ -148,8 +161,14 @@ Verify error visibility and absence of retries, replay or auto-enable. A lost
 acknowledgment means a write's outcome is unknown. A failed controller cannot be
 reused. Closing/reopening alone does not prove delayed untagged replies have
 cleared: establish a firmware-appropriate resynchronization procedure first.
-The driver consumes the CR/LF reply and then one exact terminal prompt (`Verdi>`
-or the configured model's `Verdi V-N>`). It does not poll for queued bytes before
+The restored native reader consumes the CR/LF reply with `read_until()`, then the
+exact trailing prompt (`Verdi>` or the configured model's `Verdi V-N>`) when
+`prompt_enabled=True`, matching the V2 firmware 6.05 captures. Use
+`prompt_enabled=False` only when the device prompt is already disabled. Echo
+handling and explicit echo/prompt setters remain available. Connection never
+changes these modes. Serial write and receive waits use the configured timeout;
+each notice, reply line and prompt read has its own wait. No extra inter-query
+pause or combined exchange deadline is imposed. The driver does not poll queued bytes before
 transmission. Keep one serial owner and retain the received bytes as evidence;
 there is no guarantee against stale or arbitrarily delayed replies buffered by
 the instrument, OS or adapter. No quiet-time guarantee is implied.

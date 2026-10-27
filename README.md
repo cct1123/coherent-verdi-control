@@ -68,6 +68,11 @@ print("Diode temperature:", laser.read(b"?D1T"))
 `read()` returns payload bytes, such as `b'6.05'`. Supply byte queries without
 `\r\n`; the controller adds the terminator and waits for the full reply and
 prompt before sending the next instruction.
+The native reader uses `read_until()` for the reply CR/LF and, with
+`prompt_enabled=True`, the trailing prompt captured on V2 firmware 6.05.
+Use `prompt_enabled=False` only when the device prompt is already disabled.
+Echo is accepted, and opening sends no echo or prompt changes.
+Serial write and receive waits use `timeout_s`; no extra inter-query delay is added.
 
 Use `get_...` helpers for interpreted values, such as `laser.get_power_w()`
 returning a float in watts. Named `set_...` helpers validate arguments and
@@ -83,8 +88,14 @@ laser.disconnect()
 ```
 
 For step-by-step hardware use, follow the [tutorial notebooks](examples/README.md):
-connect, quick status, health check, pre-key-on readiness, set power in standby,
-and a controlled session.
+connect, quick status, health check, pre-key-on readiness, and set power with the
+physical key OFF. The independent controlled-session notebook starts with the
+physical key already ON. Lesson 07 records a settling trace and power sweep in
+one CSV; lesson 08 provides the executable controller API reference.
+The [controller API reference](examples/08_controller_api_ref.ipynb) uses real hardware to
+walk through byte and typed queries, diagnostics, fault capture and transaction
+evidence, with executable cells for every public controller method. Write examples
+are enabled individually after opening an optional, explicitly configured writer.
 
 ## Optional browser panel
 
@@ -100,9 +111,9 @@ The panel displays power, current and temperatures and provides individual queri
 
 ## Before controlling output
 
-Use the [readiness](examples/04_pre_key_on_readiness.ipynb),
+Use the [readiness](examples/04_check_readiness.ipynb),
 [set-power](examples/05_set_power.ipynb) and
-[controlled-session](examples/06_controlled_session.ipynb) notebooks with the
+[controlled-session](examples/06_key_on_and_run.ipynb) notebooks with the
 manual and your site's laser procedure. Writes require explicit permission and
 a site-approved power ceiling. **Disconnecting does not put the laser in standby
 or close its shutter.**

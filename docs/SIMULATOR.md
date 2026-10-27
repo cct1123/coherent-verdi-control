@@ -23,7 +23,10 @@ The fixture supplies all 42 queries and every Table 5-3 write operation emitted
 by the controller, CR/LF framing and echo/prompt layouts. `get_value()` normalizes
 long/short query aliases before reaching the fixture; byte `read()`/`write()` calls
 preserve the supplied instructions and use canonical short setting commands.
-`echo` and `prompt` constructor options select initial reply formatting.
+`echo` and `prompt` constructor options select the initial instruction echo and
+trailing prompt. Explicit echo/prompt setters update subsequent replies.
+Native serial delivery timing, partial reads and timeout handling are tested
+through fake ports, independently of these simulator-generated replies.
 `last_transaction` provides the latest
 exchange record, as on the serial controller. Disconnecting does not change fixture state.
 
@@ -37,9 +40,9 @@ Its simple state rules are deliberate test policies:
   zero. The enabled diode has a synthetic idle current with the shutter closed.
 - `set_faults()` controls active faults and accumulates history. Clearing faults
   never enables the fixture; explicit enable clears its history.
-- `SYSTEM OK` for no active faults is a simulator convention. The manual only
-  specifies this text for history. Physical controllers require independently
-  verified `active_fault_clear_reply` configuration.
+- `SYSTEM OK` represents no active faults, matching the controller parser and
+  captured V2 firmware 6.05 reply. The manual only specifies this text for history;
+  the fixture does not establish compatibility with other firmware.
 - Baud writes change the fixture's `?B`. The typed `set_baudrate()` helper also
   changes the controller baud setting; raw `write(b"B=9600")` does not change the host.
   The fixture acknowledges at the old rate; it does not establish physical transition timing.

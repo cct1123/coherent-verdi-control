@@ -33,7 +33,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--model", choices=["V2", "V5", "V6"], help="Required for hardware")
     parser.add_argument("--baudrate", type=int, default=19200, help="Match the front-panel baud")
     parser.add_argument("--timeout-s", type=float, default=1.0)
-    parser.add_argument("--active-fault-clear-reply", help="Independently verified ?F clear text")
     parser.add_argument("--no-prompt", action="store_true", help="Device prompt is disabled")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "diagnostics"):
@@ -71,11 +70,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if (
         args.command != "gui"
         and args.serial_port is None
-        and (
-            args.baudrate != 19200
-            or args.timeout_s != 1.0
-            or args.active_fault_clear_reply is not None
-        )
+        and (args.baudrate != 19200 or args.timeout_s != 1.0)
     ):
         parser.error("serial connection settings require --port")
     try:
@@ -94,7 +89,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 model=args.model or "V5",
                 baudrate=args.baudrate,
                 timeout_s=args.timeout_s,
-                clear_reply=args.active_fault_clear_reply,
                 prompt_enabled=not args.no_prompt,
                 **write_options,
             )
@@ -107,7 +101,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 model=args.model,
                 baudrate=args.baudrate,
                 timeout_s=args.timeout_s,
-                active_fault_clear_reply=args.active_fault_clear_reply,
                 prompt_enabled=not args.no_prompt,
                 **write_options,
             )

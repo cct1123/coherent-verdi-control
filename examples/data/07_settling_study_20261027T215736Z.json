@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "provenance": {
+    "source_notebook": "examples/07_power_current_sweep.ipynb",
+    "source": "Saved hardware notebook stdout extracted during the preceding settling-study analysis.",
+    "extracted_artifact_sha256": "073f5706a0b04271a54f9c580c3fad716101632aa1521b9a8cd4fbdafa8ff5f3",
+    "model": "V2",
+    "software_version": "6.05",
+    "original_acquisition_cell_id": "08ac7669",
+    "original_acquisition_execution_count": 7,
+    "note": "Shutter opening and acquisition were separate cells in this run. These are preserved readings, not an execution of the current merged cell. Per-sample raw serial transcripts were not saved."
+  },
+  "rows": [
+    {
+      "sampled_at_utc": "2026-10-27T21:57:36.529875+00:00",
+      "elapsed_s": 13.89000000001397,
+      "target_w": 0.1,
+      "reported_power_w": 0.114,
+      "diode_current_a": 12.7,
+      "sample_duration_s": 0.06300000008195639
+    },
+    {
+      "sampled_at_utc": "2026-10-27T21:57:56.899981+00:00",
+      "elapsed_s": 34.26500000001397,
+      "target_w": 0.1,
+      "reported_power_w": 0.114,
+      "diode_current_a": 12.66,
+      "sample_duration_s": 0.06300000008195639
+    },
+    {
+      "sampled_at_utc": "2026-10-27T21:58:17.267093+00:00",
+      "elapsed_s": 54.625,
+      "target_w": 0.1,
+      "reported_power_w": 0.114,
+      "diode_current_a": 12.66,
+      "sample_duration_s": 0.07800000009592623
+    },
+    {
+      "sampled_at_utc": "2026-10-27T21:58:37.658391+00:00",
+      "elapsed_s": 75.01500000001397,
+      "target_w": 0.1,
+      "reported_power_w": 0.114,
+      "diode_current_a": 12.66,
+      "sample_duration_s": 0.07900000002700835
+    },
+    {
+      "sampled_at_utc": "2026-10-27T21:58:58.023002+00:00",
+      "elapsed_s": 95.39000000001397,
+      "target_w": 0.1,
+      "reported_power_w": 0.114,
+      "diode_current_a": 12.66,
+      "sample_duration_s": 0.06300000008195639
+    },
+    {
+      "sampled_at_utc": "2026-10-27T21:59:18.439970+00:00",
+      "elapsed_s": 115.81200000003446,
+      "target_w": 0.1,
+      "reported_power_w": 0.114,
+      "diode_current_a": 12.66,
+      "sample_duration_s": 0.06299999996554106
+    },
+    {
+      "sampled_at_utc": "2026-10-27T21:59:38.845580+00:00",
+      "elapsed_s": 136.20300000009593,
+      "target_w": 0.1,
+      "reported_power_w": 0.114,
+      "diode_current_a": 12.66,
+      "sample_duration_s": 0.0779999999795109
+    },
+    {
+      "sampled_at_utc": "2026-10-27T21:59:59.248146+00:00",
+      "elapsed_s": 156.60900000005495,
+      "target_w": 0.1,
+      "reported_power_w": 0.114,
+      "diode_current_a": 12.66,
+      "sample_duration_s": 0.0779999999795109
+    },
+    {
+      "sampled_at_utc": "2026-10-27T22:00:19.645504+00:00",
+      "elapsed_s": 177.01500000001397,
+      "target_w": 0.1,
+      "reported_power_w": 0.114,
+      "diode_current_a": 12.66,
+      "sample_duration_s": 0.06300000008195639
+    },
+    {
+      "sampled_at_utc": "2026-10-27T22:00:40.044262+00:00",
+      "elapsed_s": 197.40600000007544,
+      "target_w": 0.1,
+      "reported_power_w": 0.114,
+      "diode_current_a": 12.66,
+      "sample_duration_s": 0.06299999996554106
+    }
+  ],
+  "completion_message": "Settling study complete: laser ON, shutter closed. Review the trace before the sweep.",
+  "final_transaction": {
+    "instruction_hex": "3f5350",
+    "request_hex": "3f53500d0a",
+    "response_hex": "302e313030300d0a566572646920562d323e",
+    "payload": "0.1000",
+    "outcome": "ok",
+    "error": null
+  }
+}

@@ -91,8 +91,8 @@ def test_binary_numeric_or_fault_payload_can_be_captured_but_is_not_a_valid_valu
     assert peer.writes == [(query + "\r\n").encode("ascii")] * 2
 
 
-@pytest.mark.parametrize("reply", [b"SYSTEM OK\r\n", b"0\r\n", b"\r\n"])
-def test_fault_capture_does_not_establish_an_unverified_clear_convention(peer, reply):
+@pytest.mark.parametrize("reply", [b"OK\r\n", b"0\r\n", b"\r\n"])
+def test_fault_capture_does_not_change_fault_parsing(peer, reply):
     peer.responses.extend([reply, reply, b"1.000\r\n"])
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
         captured = laser.get_capture("?F")

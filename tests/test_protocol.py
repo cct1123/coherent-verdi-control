@@ -219,9 +219,11 @@ def test_table_5_1_error_layouts_preserve_instruction_and_error(echo, prompt, in
         sim.disconnect()
 
 
-def test_history_clear_does_not_establish_active_fault_clear_semantics():
-    assert parse_value("?FH", "SYSTEM OK") == []
-    for payload in ("SYSTEM OK", "0", "OK", ""):
+@pytest.mark.parametrize("query", ["?F", "?FH"])
+def test_fault_queries_parse_system_ok_and_preserve_codes(query):
+    assert parse_value(query, "SYSTEM OK") == []
+    assert parse_value(query, b"SYSTEM OK") == []
+    assert parse_value(query, "30&999") == [30, 999]
+    for payload in ("0", "OK", "", "SYSTEM OK&30", "30&"):
         with pytest.raises(VerdiError):
-            parse_value("?F", payload)
-    assert parse_value("?F", "SYSTEM OK", active_fault_clear_reply="SYSTEM OK") == []
+            parse_value(query, payload)

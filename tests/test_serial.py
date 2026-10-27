@@ -285,20 +285,25 @@ def test_uncertain_write_is_never_replayed(peer, failure):
     assert peer.writes in ([], [b"L=1\r\n"])
 
 
-def test_configured_timeout_applies_to_reply_and_prompt(peer, monkeypatch):
-    read_until = peer.read_until
+def test_receive_timeout_stays_configured_through_reply_and_prompt(peer, monkeypatch):
+    clock = [0.0]
+    read = peer.read
     timeouts = []
 
-    def record_timeout(expected, size=None):
-        timeouts.append((expected, peer.timeout))
-        return read_until(expected, size)
+    def record_timeout(size):
+        timeouts.append(peer.timeout)
+        clock[0] += 0.0002
+        return read(size)
 
-    monkeypatch.setattr(peer, "read_until", record_timeout)
+    monkeypatch.setattr("coherent_verdi.controller.monotonic", lambda: clock[0])
+    monkeypatch.setattr(peer, "read", record_timeout)
     peer.responses.append(b"1\r\nVerdi V-2>")
     with VerdiController("FAKE-ONLY", model="V2", timeout_s=0.01) as laser:
         assert laser.read(b"?L") == b"1"
     assert peer.write_timeout == 0.01
-    assert timeouts == [(b"\r\n", 0.01), (b">", 0.01)]
+    assert all(0 < t <= 0.01 for t in timeouts)
+    assert set(timeouts) == {0.01}
+    assert clock[0] < 0.01
 
 
 def test_complete_frame_at_byte_limit_is_accepted(peer):
@@ -368,8 +373,8 @@ def test_primary_error_survives_failed_context_cleanup(peer):
     assert "close failure" in caught.value.__notes__[0]
 
 
-@pytest.mark.parametrize("reply", [b"SYSTEM OK", b"0", b"OK"])
-def test_unverified_active_clear_reply_blocks_writes(peer, reply):
+@pytest.mark.parametrize("reply", [b"0", b"OK", b"SYSTEM OK&30"])
+def test_invalid_active_fault_reply_blocks_writes(peer, reply):
     peer.responses.append(reply + b"\r\n")
     with VerdiController("FAKE-ONLY", allow_writes=True, prompt_enabled=False) as laser:
         with pytest.raises(VerdiError):
@@ -379,8 +384,8 @@ def test_unverified_active_clear_reply_blocks_writes(peer, reply):
     assert peer.writes == [b"?F\r\n"]
 
 
-def test_display_source_flag_cannot_enable_unverified_fault_parsing(peer):
-    peer.responses.append(b"SYSTEM OK\r\n")
+def test_display_source_flag_cannot_change_fault_parsing(peer):
+    peer.responses.append(b"OK\r\n")
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
         laser.is_simulated = True
         with pytest.raises(VerdiError):
@@ -388,12 +393,9 @@ def test_display_source_flag_cannot_enable_unverified_fault_parsing(peer):
     assert peer.writes == [b"?F\r\n"]
 
 
-@pytest.mark.parametrize("clear", ["SYSTEM OK", "0"])
-def test_verified_clear_reply_is_used_only_for_active_faults(peer, clear):
-    peer.responses.extend([clear.encode() + b"\r\n", b"SYSTEM OK\r\n", b"30&999\r\n"])
-    with VerdiController(
-        "FAKE-ONLY", active_fault_clear_reply=clear, prompt_enabled=False
-    ) as laser:
+def test_fault_queries_accept_system_ok_without_configuration(peer):
+    peer.responses.extend([b"SYSTEM OK\r\n", b"SYSTEM OK\r\n", b"30&999\r\n"])
+    with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
         assert laser.get_faults() == laser.get_faults(history=True) == []
         known, unknown = laser.get_faults()
         assert known == 30

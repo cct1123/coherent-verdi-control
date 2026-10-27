@@ -8,7 +8,7 @@ and tests.
 import os
 import re
 from datetime import UTC, datetime
-from math import isfinite
+from math import isfinite, ulp
 from threading import RLock
 from time import monotonic
 from types import TracebackType
@@ -18,6 +18,12 @@ from weakref import WeakValueDictionary
 BAUDRATES = (1200, 2400, 4800, 9600, 19200, 38400, 57600)
 _PORT_LOCK = RLock()
 _PORT_OWNERS: WeakValueDictionary[str, "VerdiController"] = WeakValueDictionary()
+# Observed before the first ?K reply after physical key ON (V2 firmware 6.05).
+_KEY_ON_NOTICE = b"min current set\r\n"
+# Seen before the power reply in lesson 07 (V2 firmware 6.05).
+_LEVEL0_NOTICE = b"level0 set!\r\n"
+_STATUS_NOTICES = (_KEY_ON_NOTICE, b"level1 set!\r\n", _LEVEL0_NOTICE)
+_MAX_STATUS_NOTICES = 8  # Software bound, in addition to the 4096-byte response ceiling.
 
 
 class Query(NamedTuple):
@@ -181,6 +187,18 @@ def finite_range(value: float, low: float, high: float, name: str) -> float:
     return float(value)
 
 
+def validate_power_w(power_w: float, limit_w: float) -> float:
+    """Validate a 0.01 W target without I/O; also shared by GUI queue admission."""
+    value = finite_range(power_w, 0, limit_w, "power_w")
+    stepped = round(value, 2)
+    # Allow binary float arithmetic noise, not sub-step power requests.
+    if abs(value - stepped) > 2 * ulp(value):
+        raise ValueError("power_w must be in 0.01 W increments")
+    if stepped > limit_w:
+        raise ValueError("rounded setpoint exceeds power_limit_w")
+    return stepped
+
+
 def _require_bool(value: Any, name: str) -> bool:
     if type(value) is not bool:
         raise ValueError(f"{name} must be a bool")
@@ -246,7 +264,14 @@ def _reply_prompts(model: str | None) -> tuple[bytes, ...]:
 def _response_payload(
     instruction: bytes, wire: bytes, model: str | None, *, strict: bool = False
 ) -> bytes:
-    """Remove response framing at the byte level; strict callers require one frame."""
+    """Remove bounded exact leading notices, then the normal response framing."""
+    for _ in range(_MAX_STATUS_NOTICES):
+        line, separator, remainder = wire.partition(b"\r\n")
+        if line + separator not in _STATUS_NOTICES:
+            break
+        wire = remainder
+    if strict and wire.startswith(_STATUS_NOTICES):
+        raise VerdiError(f"more than {_MAX_STATUS_NOTICES} status notices before reply")
     prompts = _reply_prompts(model)
     for prompt in prompts:
         if wire.endswith(b"\r\n" + prompt):
@@ -277,7 +302,8 @@ def decode_response(
 ) -> str | bytes:
     """Accept Table 5-1 layouts and the captured standalone terminal prompt.
 
-    Extra lines are errors, not discarded data; this prevents silent reply mixing.
+    Up to eight exact leading firmware notices are accepted before the reply.
+    Other extra lines are errors; this prevents silent reply mixing.
     Raw capture returns bytes. Other reads return ASCII text when possible and
     preserve non-ASCII payloads as bytes without guessing a character encoding.
     """
@@ -307,9 +333,8 @@ def decode_response(
     return text
 
 
-def parse_faults(payload: str, *, clear_reply: str | None = "SYSTEM OK") -> list[int]:
-    # The default clear text is documented for history only (Table 5-4).
-    if payload == clear_reply:
+def parse_faults(payload: str) -> list[int]:
+    if payload == "SYSTEM OK":
         return []
     if not re.fullmatch(r"[1-9][0-9]*(?:\s*&\s*[1-9][0-9]*)*", payload):
         raise VerdiError(f"invalid fault list {payload!r}")
@@ -326,9 +351,7 @@ def _parse_integer(payload: str) -> int:
         raise VerdiError("integer reply exceeds the supported conversion limit") from exc
 
 
-def parse_value(
-    query: str, payload: str | bytes, *, active_fault_clear_reply: str | None = None
-) -> float | int | str | bytes | list[int]:
+def parse_value(query: str, payload: str | bytes) -> float | int | str | bytes | list[int]:
     spec = QUERY_INFO[query]
     if spec.kind == "text":
         return payload
@@ -338,9 +361,7 @@ def parse_value(
         except UnicodeDecodeError as exc:
             raise VerdiError(f"{query}: invalid {spec.kind} payload {payload!r}") from exc
     if spec.kind == "faults":
-        return parse_faults(
-            payload, clear_reply=active_fault_clear_reply if query == "?F" else "SYSTEM OK"
-        )
+        return parse_faults(payload)
     if spec.kind in ("code", "baud"):
         valid = BAUDRATES if spec.kind == "baud" else range(len(spec.labels))
         code = _parse_integer(payload) if re.fullmatch(r"[0-9]+", payload) else -1
@@ -373,7 +394,6 @@ class VerdiController:
         timeout_s: float = 1.0,
         allow_writes: bool = False,
         power_limit_w: float | None = None,
-        active_fault_clear_reply: str | None = None,
         prompt_enabled: bool = True,
     ) -> None:
         if model not in ("V2", "V5", "V6"):
@@ -387,18 +407,6 @@ class VerdiController:
             if power_limit_w is None
             else finite_range(power_limit_w, 0, rated, "power_limit_w")
         )
-        reply = active_fault_clear_reply
-        if reply is not None and (
-            not isinstance(reply, str)
-            or not 1 <= len(reply) <= 128
-            or reply != reply.strip(" ")
-            or any(not 32 <= ord(c) <= 126 or c == "&" for c in reply)
-            or (reply.isdecimal() and int(reply) > 0)
-        ):
-            raise ValueError(
-                "active_fault_clear_reply must be verified ASCII text or 0, not a fault code"
-            )
-        self._active_fault_clear_reply = reply
         if not isinstance(port, str) or not port.strip() or "://" in port:
             raise ValueError("an explicit native port name is required; no discovery or URLs")
         if type(baudrate) is not int or baudrate not in BAUDRATES:
@@ -552,7 +560,21 @@ class VerdiController:
                     if self._stream.write(request) != len(request):
                         raise VerdiError("partial write; command outcome is unknown")
                     response = bytes(self._stream.read_until(b"\r\n", size=4096))
-                    if not response.endswith(b"\r\n"):
+                    reply = response
+                    notice_count = 0
+                    while reply in _STATUS_NOTICES:
+                        # Preserve each notice and require a separate reply. Both
+                        # the line count and total byte limit bound these reads.
+                        if notice_count == _MAX_STATUS_NOTICES:
+                            raise VerdiError(
+                                f"more than {_MAX_STATUS_NOTICES} status notices before reply"
+                            )
+                        notice_count += 1
+                        if len(response) == 4096:
+                            raise VerdiError("reply exceeds 4096 byte limit")
+                        reply = bytes(self._stream.read_until(b"\r\n", size=4096 - len(response)))
+                        response += reply
+                    if not reply.endswith(b"\r\n"):
                         if len(response) == 4096:
                             raise VerdiError("reply exceeds 4096 byte limit")
                         raise VerdiError(f"reply timed out or incomplete: {response!r}")
@@ -570,7 +592,10 @@ class VerdiController:
                         if prompt not in _reply_prompts(self.model):
                             if len(response) == 4096:
                                 raise VerdiError("reply exceeds 4096 byte limit")
-                            raise VerdiError(f"prompt timed out or unexpected: {prompt!r}")
+                            raise VerdiError(
+                                f"prompt timed out or unexpected: {prompt!r}; "
+                                f"full response: {response!r}"
+                            )
                     self._prompt_enabled = expects_prompt
                 record["outcome"] = "received"
                 return response
@@ -670,9 +695,7 @@ class VerdiController:
                 if capture or not query:
                     record["outcome"] = "captured" if capture else "acknowledged"
                     return payload
-                value = parse_value(
-                    instruction, payload, active_fault_clear_reply=self._active_fault_clear_reply
-                )
+                value = parse_value(instruction, payload)
                 if instruction in ("?D1SS", "?LBOSS") and (
                     (self.model == "V6" and value == 5) or (self.model == "V2" and value == 6)
                 ):
@@ -755,13 +778,9 @@ class VerdiController:
     # Named settings: power and emission.
 
     def set_power_w(self, power_w: float) -> None:
-        """Set light regulation, rounded to four decimals; no implicit laser enable."""
-        value = finite_range(power_w, 0, self._power_limit_w, "power_w")
-        # Check the serialized value too: rounding must not exceed a site ceiling.
-        encoded = f"{value:.4f}"
-        if float(encoded) > self._power_limit_w:
-            raise ValueError("rounded setpoint exceeds power_limit_w")
-        self.set_value(f"P={encoded}")
+        """Set light regulation in 0.01 W increments; no implicit laser enable."""
+        value = validate_power_w(power_w, self._power_limit_w)
+        self.set_value(f"P={value:.4f}")
 
     def set_laser_state(self, state: int) -> None:
         """0: standby, overriding key ON; 1: enable/reset faults and fault history.

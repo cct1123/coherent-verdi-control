@@ -15,13 +15,17 @@ from coherent_verdi.controller import QUERIES
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 DISCOVERY = "00_device_discovery.ipynb"
 # Lessons that connect; discovery only reads the operating system's port list.
-NOTEBOOKS = tuple(path.name for path in sorted(EXAMPLES.glob("0*.ipynb")) if path.name != DISCOVERY)
-WRITERS = ("05_set_power.ipynb", "06_controlled_session.ipynb")
+# The multi-point sweep has its own execution/abort tests in test_power_current_sweep_example.py.
+NOTEBOOKS = tuple(
+    path.name
+    for path in sorted(EXAMPLES.glob("0*.ipynb"))
+    if path.name not in (DISCOVERY, "07_power_current_sweep.ipynb")
+)
+WRITERS = ("05_set_power.ipynb", "06_key_on_and_run.ipynb")
 SETTINGS = dict(
     PORT="FAKE-ONLY",
     MODEL="V5",
     BAUDRATE=9600,
-    ACTIVE_FAULT_CLEAR_REPLY="SYSTEM OK",
     TARGET_W=0.25,
     POWER_LIMIT_W=0.5,
 )
@@ -32,15 +36,18 @@ def code_cells(name):
     return [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
 
 
+def perform_operator_step(name, cell):
+    """Test hook for establishing initial state or simulating external state changes."""
+
+
 def run(name, namespace=None, *, configure=True, **settings):
-    """Run every code cell in order, like Run All; settings replace the parameters cell."""
+    """Run code cells with external-state hooks; settings replace the parameters cell."""
     namespace = {} if namespace is None else namespace
     for cell in code_cells(name):
+        perform_operator_step(name, cell)
         exec(compile("".join(cell["source"]), name, "exec"), namespace)
         if configure and "parameters" in cell["metadata"].get("tags", ()):
             configured = dict(SETTINGS)
-            if name in WRITERS:
-                configured["ACTIVE_FAULT_CLEAR_REPLY"] = b"SYSTEM OK"
             namespace.update(configured, **settings)
     return namespace
 
@@ -66,11 +73,22 @@ def hardware(monkeypatch):
         ports=[],
         overrides={},
         fail_on=None,
+        silent_on=None,
         interrupt_on=None,
         startup_input=b"",
         purge_failure=None,
+        key_on=True,
+        key_on_laser_state=None,
     )
-    fixture.sim.set_key(True)
+    fixture.sim.set_key(False)
+
+    def operator_step(name, cell):
+        if name == "06_key_on_and_run.ipynb" and cell["id"] == "lesson06-parameters":
+            fixture.sim.set_key(fixture.key_on)
+            if fixture.key_on_laser_state is not None:
+                fixture.sim._laser = fixture.key_on_laser_state
+
+    monkeypatch.setattr(__import__(__name__), "perform_operator_step", operator_step)
 
     class Peer(SerialPeer):
         def __init__(self, **settings):
@@ -111,7 +129,10 @@ def hardware(monkeypatch):
             reply = self.sim._simulate_response(request)
             if request == fixture.interrupt_on:
                 raise KeyboardInterrupt()
-            self.pending.extend(fixture.overrides.get(request, reply))
+            reply = fixture.overrides.get(request, reply)
+            if request == fixture.silent_on:
+                return len(request)
+            self.pending.extend(reply)
             self.pending.extend(
                 {"V2": b"Verdi V-2>", "V5": b"Verdi V-5>", "V6": b"Verdi V-6>"}[self.sim.model]
             )
@@ -201,8 +222,6 @@ def test_connection_section_only_opens_port_and_reports_status(hardware, name):
         exec(compile("".join(cell["source"]), name, "exec"), namespace)
         if "parameters" in cell["metadata"].get("tags", ()):
             configured = dict(SETTINGS)
-            if name in WRITERS:
-                configured["ACTIVE_FAULT_CLEAR_REPLY"] = b"SYSTEM OK"
             namespace.update(configured)
         if "connection" in cell["metadata"].get("tags", ()):
             break
@@ -218,20 +237,21 @@ def test_connection_section_only_opens_port_and_reports_status(hardware, name):
 def test_tutorial_sequences_and_exact_write_scope(hardware, name):
     model = "V2"
     hardware.sim = FaultyVerdi(model)
-    hardware.sim.set_key(True)
+    hardware.sim.set_key(False)
     run(name, MODEL=model)
     assert hardware.sim.requests[0] == b"?SV\r\n"
     assert len(hardware.ports) == 1
     port = hardware.ports[0]
     assert port.port == "FAKE-ONLY" and port.settings["baudrate"] == 9600
     assert port.opens == port.closes == 1
+    assert not port.pending
     assert port.purges == ["tx", "rx"]
     assert port.events[:4] == ["open", "purge_tx", "purge_rx", b"?SV\r\n"]
     expected = (
         [b"P=0.2500\r\n"]
         if name == "05_set_power.ipynb"
-        else [b"P=0.2500\r\n", b"L=1\r\n", b"S=1\r\n", b"S=0\r\n", b"L=0\r\n"]
-        if name == "06_controlled_session.ipynb"
+        else [b"P=0.2500\r\n", b"L=1\r\n", b"S=1\r\n", b"S=0\r\n"]
+        if name == "06_key_on_and_run.ipynb"
         else []
     )
     assert writes(hardware) == expected
@@ -244,7 +264,7 @@ def test_tutorial_sequences_and_exact_write_scope(hardware, name):
         assert {request[:-2] for request in survey} == {
             query.encode("ascii") for query in QUERIES if query != "?DIOS"
         }
-    elif name == "04_pre_key_on_readiness.ipynb":
+    elif name == "04_check_readiness.ipynb":
         assert hardware.sim.requests[1:] == tuple(
             query + b"\r\n"
             for query in (
@@ -264,8 +284,23 @@ def test_tutorial_sequences_and_exact_write_scope(hardware, name):
     elif name in WRITERS:
         # Read the fixture directly; its real-controller connection is already closed.
         assert hardware.sim._simulate_response(b"?SP\r\n") == b"0.2500\r\n"
-        assert hardware.sim._simulate_response(b"?L\r\n") == b"0\r\n"
+        expected_state = b"1\r\n" if name == "06_key_on_and_run.ipynb" else b"0\r\n"
+        assert hardware.sim._simulate_response(b"?L\r\n") == expected_state
         assert hardware.sim._simulate_response(b"?S\r\n") == b"0\r\n"
+
+
+def test_api_tour_reads_typed_faults_and_status_without_configuration(hardware):
+    namespace = run("08_controller_api_ref.ipynb")
+    assert namespace["laser"].is_simulated is False  # Real controller through fake serial I/O.
+    assert namespace["fault_capture"]["payload"] == b"SYSTEM OK"
+    assert namespace["fault_capture"]["outcome"] == "captured"
+    assert namespace["diagnostics"]["software_version"] == "SIMULATOR"
+    assert namespace["status"]["faults"] == []
+    assert namespace["status"]["simulated"] is False
+    assert hardware.sim.requests.count(b"?F\r\n") == 3  # Capture, getter and status.
+    assert writes(hardware) == []
+    assert hardware.ports[0].closes == 1
+    assert not hardware.ports[0].pending
 
 
 @pytest.mark.parametrize("name", WRITERS)
@@ -302,11 +337,15 @@ def test_startup_purge_error_stops_before_any_query_or_setting(hardware, name, d
     assert hardware.ports[0].closes == 1
 
 
-def test_cancel_at_run_leaves_laser_in_standby(hardware, monkeypatch):
+@pytest.mark.parametrize("initial_state", [0, 1])
+def test_cancel_at_run_leaves_existing_laser_state_unchanged(hardware, monkeypatch, initial_state):
+    hardware.key_on_laser_state = initial_state
     monkeypatch.setattr("builtins.input", lambda prompt: "SET" if "SET" in prompt else "no")
-    with pytest.raises(RuntimeError, match="not enabled"):
-        run("06_controlled_session.ipynb")
+    with pytest.raises(RuntimeError, match="No emission commands sent"):
+        run("06_key_on_and_run.ipynb")
     assert writes(hardware) == [b"P=0.2500\r\n"]
+    assert hardware.sim._key and hardware.sim._laser == initial_state
+    assert hardware.sim._shutter is False
 
 
 @pytest.mark.parametrize("name", NOTEBOOKS)
@@ -337,6 +376,35 @@ def test_raw_status_stops_on_missing_prompt_and_preserves_evidence(hardware, cap
     assert hardware.ports[0].closes == 1
 
 
+def test_quick_status_retains_successful_version_and_exact_empty_power_reply(hardware, capsys):
+    hardware.sim = FaultyVerdi("V2")
+    hardware.overrides[b"?SV\r\n"] = b"6.05\r\n"
+    hardware.silent_on = b"?P\r\n"
+    namespace = {}
+    with pytest.raises(VerdiError, match="reply timed out or incomplete: b''"):
+        run("02_quick_status.ipynb", namespace, MODEL="V2")
+    assert namespace["version_reply"] == b"6.05"
+    assert namespace["laser"].last_transaction == {
+        "instruction": b"?P",
+        "request": b"?P\r\n",
+        "response": b"",
+        "payload": None,
+        "outcome": "failed",
+        "error": "VerdiError: reply timed out or incomplete: b''",
+    }
+    assert namespace["status"] == {}
+    with pytest.raises(VerdiError, match="failed"):
+        namespace["laser"].read(b"?P")
+    assert hardware.sim.requests == (b"?SV\r\n", b"?P\r\n")
+    evidence = next(
+        c for c in code_cells("02_quick_status.ipynb") if c["id"] == "lesson02-evidence"
+    )
+    exec("".join(evidence["source"]), namespace)
+    assert "'response': b''" in capsys.readouterr().out
+    run_disconnect_cell("02_quick_status.ipynb", namespace)
+    assert hardware.ports[0].closes == 1 and not writes(hardware)
+
+
 @pytest.mark.parametrize(
     "name,settings",
     [
@@ -348,13 +416,6 @@ def test_raw_status_stops_on_missing_prompt_and_preserves_evidence(hardware, cap
 def test_bad_connection_settings_rejected_before_open(hardware, name, settings):
     with pytest.raises(ValueError):
         run(name, **settings)
-    assert not hardware.ports and not hardware.sim.requests
-
-
-@pytest.mark.parametrize("name", WRITERS)
-def test_verified_fault_clear_text_required_before_open(hardware, name):
-    with pytest.raises(ValueError):
-        run(name, ACTIVE_FAULT_CLEAR_REPLY=None)
     assert not hardware.ports and not hardware.sim.requests
 
 
@@ -381,12 +442,24 @@ def test_bad_power_settings_rejected_before_open(hardware, name, settings):
 
 
 @pytest.mark.parametrize("name", WRITERS)
-@pytest.mark.parametrize("condition", ["on", "open_shutter", "fault"])
+@pytest.mark.parametrize("target", [0.002, 0.015, 0.010000000001])
+def test_power_lessons_reject_substep_target_before_open(hardware, name, target):
+    with pytest.raises(ValueError, match="0.01 W increments"):
+        run(name, TARGET_W=target)
+    assert not hardware.ports and not hardware.sim.requests
+
+
+@pytest.mark.parametrize(
+    "name,condition",
+    [(name, condition) for name in WRITERS for condition in ("open_shutter", "fault")]
+    + [("05_set_power.ipynb", "on")],
+)
 def test_wrong_starting_state_blocks_writes(hardware, name, condition):
     if condition == "fault":
         hardware.sim.set_faults(999)
     else:
         # Fixture state operations only; not tutorial commands.
+        hardware.sim.set_key(True)
         hardware.sim._apply("L=1")
         if condition == "open_shutter":
             hardware.sim._apply("S=1")
@@ -399,15 +472,141 @@ def test_wrong_starting_state_blocks_writes(hardware, name, condition):
 def test_every_temperature_servo_must_be_locked(hardware, query):
     hardware.overrides[query.encode() + b"\r\n"] = b"2\r\n"
     with pytest.raises(RuntimeError, match="not LOCKED"):
-        run("06_controlled_session.ipynb")
+        run("06_key_on_and_run.ipynb")
     assert writes(hardware) == []
 
 
-def test_controlled_session_requires_operator_key_configuration(hardware):
-    hardware.sim.set_key(False)
-    with pytest.raises(RuntimeError, match="key-ON"):
-        run("06_controlled_session.ipynb")
+def test_lesson05_requires_physical_key_off_even_in_remote_standby(hardware):
+    hardware.sim.set_key(True)  # Fixture remains laser state 0; key position is independent.
+    with pytest.raises(RuntimeError, match="key OFF"):
+        run("05_set_power.ipynb")
     assert writes(hardware) == []
+
+
+def test_controlled_session_requires_key_already_on_before_any_write(hardware):
+    hardware.key_on = False
+    with pytest.raises(RuntimeError, match="key already ON"):
+        run("06_key_on_and_run.ipynb")
+    assert writes(hardware) == []
+
+
+def test_lesson05_fault_off_with_clear_active_faults_allows_key_off_preparation(hardware):
+    # Reproduce the reported 6.05 combination without redefining state 2 as standby.
+    hardware.sim._laser = 2
+    hardware.sim._history = (5,)
+    hardware.overrides[b"?SV\r\n"] = b"6.05\r\n"
+    namespace = run("05_set_power.ipynb")
+    assert b"?FH\r\n" in hardware.sim.requests
+    assert namespace["before"][b"?L"] == namespace["after"][b"?L"] == b"2"
+    assert namespace["before"][b"?K"] == namespace["after"][b"?K"] == b"0"
+    assert namespace["before"][b"?FH"] == b"5"
+    assert hardware.sim._history == (5,)
+    assert writes(hardware) == [b"P=0.2500\r\n"]
+
+
+def test_controlled_session_rejects_fault_off_even_when_active_fault_reply_is_clear(hardware):
+    hardware.sim._laser = 2
+    hardware.sim._history = (5,)
+    with pytest.raises(RuntimeError, match="do not reset a faulted state"):
+        run("06_key_on_and_run.ipynb")
+    assert writes(hardware) == []
+    assert hardware.sim._history == (5,)
+
+
+def test_lesson05_key_on_during_set_confirmation_blocks_power_write(hardware, monkeypatch):
+    def confirm(prompt):
+        hardware.sim.set_key(True)  # Still remote standby, but key is no longer OFF.
+        return "SET"
+
+    monkeypatch.setattr("builtins.input", confirm)
+    with pytest.raises(RuntimeError, match="key OFF"):
+        run("05_set_power.ipynb")
+    assert writes(hardware) == []
+
+
+def test_already_enabled_laser_stays_on_during_preparation_and_skips_serial_enable(
+    hardware, monkeypatch
+):
+    hardware.key_on_laser_state = 1
+    hardware.sim._history = (5,)
+    confirmations = []
+
+    def confirm(prompt):
+        assert hardware.sim._key is True
+        assert hardware.sim._laser == 1 and hardware.sim._shutter is False
+        confirmations.append(prompt)
+        return "RUN" if "RUN" in prompt else "SET"
+
+    monkeypatch.setattr("builtins.input", confirm)
+    run("06_key_on_and_run.ipynb")
+    assert len(confirmations) == 2
+    assert writes(hardware) == [b"P=0.2500\r\n", b"S=1\r\n", b"S=0\r\n"]
+    assert hardware.sim._key is True
+    assert hardware.sim._laser == 1 and hardware.sim._shutter is False
+    assert hardware.sim._history == (5,)  # No L=1 reset was sent.
+
+
+@pytest.mark.parametrize("confirmation", ["SET", "RUN"])
+def test_key_change_during_confirmation_stops_before_emission(hardware, monkeypatch, confirmation):
+    def confirm(prompt):
+        response = "RUN" if "RUN" in prompt else "SET"
+        if response == confirmation:
+            hardware.sim.set_key(False)  # External state change; no notebook key operation.
+        return response
+
+    monkeypatch.setattr("builtins.input", confirm)
+    with pytest.raises(RuntimeError, match="key already ON"):
+        run("06_key_on_and_run.ipynb")
+    assert writes(hardware) == ([] if confirmation == "SET" else [b"P=0.2500\r\n"])
+
+
+def test_lesson06_instructions_require_no_physical_key_transition():
+    notebook = json.loads((EXAMPLES / "06_key_on_and_run.ipynb").read_text(encoding="utf-8"))
+    source = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
+    assert "key OFF" not in source
+    assert "key ON last" not in source
+    assert all(
+        "operator-key-on" not in cell["metadata"].get("tags", ()) for cell in notebook["cells"]
+    )
+
+
+@pytest.mark.parametrize("condition", ["key", "fault_off", "fault", "shutter", "servo", "power"])
+def test_final_readiness_changes_stop_before_emission_commands(hardware, monkeypatch, condition):
+    operator_step = perform_operator_step
+
+    def change_before_emission(name, cell):
+        operator_step(name, cell)
+        if "emission-sequence" not in cell["metadata"].get("tags", ()):
+            return
+        if condition == "key":
+            hardware.sim.set_key(False)
+        elif condition == "fault_off":
+            hardware.sim._laser = 2  # Even when ?F is clear, never enable from state 2.
+        elif condition == "fault":
+            hardware.sim.set_faults(5)
+        elif condition == "shutter":
+            hardware.sim._shutter = True
+        elif condition == "servo":
+            hardware.overrides[b"?LBOSS\r\n"] = b"2\r\n"
+        else:
+            hardware.sim._power = 0.3
+
+    monkeypatch.setattr(__import__(__name__), "perform_operator_step", change_before_emission)
+    namespace = {}
+    with pytest.raises(RuntimeError):
+        run("06_key_on_and_run.ipynb", namespace)
+    assert "final_payloads" not in namespace
+    assert writes(hardware) == [b"P=0.2500\r\n"]
+
+
+def test_each_shutter_cycle_requires_explicit_run_confirmation(hardware, monkeypatch):
+    namespace = run("06_key_on_and_run.ipynb")
+    requests = hardware.sim.requests
+    cell = next(c for c in code_cells("06_key_on_and_run.ipynb") if c["id"] == "lesson06-sequence")
+    monkeypatch.setattr("builtins.input", lambda prompt: "cancel")
+    with pytest.raises(RuntimeError, match="Cancelled"):
+        exec("".join(cell["source"]), namespace)
+    assert hardware.sim.requests == requests
 
 
 @pytest.mark.parametrize("name", WRITERS)
@@ -431,7 +630,7 @@ def test_run_rechecks_readiness_after_setpoint_is_stored(hardware, monkeypatch):
 
     monkeypatch.setattr("builtins.input", confirm)
     with pytest.raises(RuntimeError, match="no active faults"):
-        run("06_controlled_session.ipynb")
+        run("06_key_on_and_run.ipynb")
     assert writes(hardware) == [b"P=0.2500\r\n"]
 
 
@@ -440,8 +639,8 @@ def test_run_rechecks_readiness_after_setpoint_is_stored(hardware, monkeypatch):
     [
         ("05_set_power.ipynb", b"P=0.2500\r\n"),
         *(
-            ("06_controlled_session.ipynb", command + b"\r\n")
-            for command in [b"P=0.2500", b"L=1", b"S=1", b"S=0", b"L=0"]
+            ("06_key_on_and_run.ipynb", command + b"\r\n")
+            for command in [b"P=0.2500", b"L=1", b"S=1", b"S=0"]
         ),
     ],
 )
@@ -462,27 +661,36 @@ def test_setpoint_mismatch_stops_before_enable(hardware, name):
 
 
 @pytest.mark.parametrize("echo", [False, True])
-def test_raw_setpoint_uses_only_byte_api_and_preserves_replies(hardware, monkeypatch, echo):
+def test_setpoint_uses_power_setter_and_preserves_byte_readbacks(hardware, monkeypatch, echo):
     hardware.sim._echo = echo
+    acknowledgments = []
+    set_power = VerdiController.set_power_w
 
     def forbidden(*args, **kwargs):
-        raise AssertionError("lesson 5 must use only raw read/write exchanges")
+        raise AssertionError("lesson 5 state queries must retain their byte payloads")
 
-    for method in ("get_value", "get_status", "set_power_w"):
+    def record_set_power(laser, watts):
+        set_power(laser, watts)
+        acknowledgments.append(laser.last_transaction["response"])
+
+    for method in ("get_value", "get_status"):
         monkeypatch.setattr(VerdiController, method, forbidden)
+    monkeypatch.setattr(VerdiController, "set_power_w", record_set_power)
     namespace = run("05_set_power.ipynb")
-    assert namespace["acknowledgment"] == ((b"P=0.2500" if echo else b"") + b"\r\nVerdi V-5>")
+    assert acknowledgments == [(b"P=0.2500" if echo else b"") + b"\r\nVerdi V-5>"]
     assert namespace["after"][b"?SP"] == b"0.2500"
     assert writes(hardware) == [b"P=0.2500\r\n"]
-    assert hardware.sim.requests[-4:] == (b"?SP\r\n", b"?L\r\n", b"?S\r\n", b"?F\r\n")
+    assert hardware.sim.requests[-5:] == (b"?SP\r\n", b"?K\r\n", b"?L\r\n", b"?S\r\n", b"?F\r\n")
 
 
-def test_raw_setpoint_rejection_stops_without_verification_or_retry(hardware):
+def test_setpoint_rejection_stops_without_verification_or_retry(hardware):
     hardware.overrides[b"P=0.2500\r\n"] = b"RANGE ERROR: P=0.2500\r\n"
     namespace = {}
-    with pytest.raises(RuntimeError, match="Unexpected command acknowledgment"):
+    with pytest.raises(VerdiError, match="RANGE ERROR"):
         run("05_set_power.ipynb", namespace)
-    assert namespace["acknowledgment"] == b"RANGE ERROR: P=0.2500\r\nVerdi V-5>"
+    assert namespace["laser"].last_transaction["response"] == (
+        b"RANGE ERROR: P=0.2500\r\nVerdi V-5>"
+    )
     assert hardware.sim.requests[-1] == b"P=0.2500\r\n"
     assert writes(hardware) == [b"P=0.2500\r\n"]
     run_disconnect_cell("05_set_power.ipynb", namespace)
@@ -494,12 +702,13 @@ def test_raw_setpoint_detects_post_write_state_change_without_cleanup(hardware, 
     def change_state(request):
         reply = exchange(request)
         if request == b"P=0.2500\r\n":
+            hardware.sim.set_key(True)
             hardware.sim._apply("L=1")  # Simulate an external change, not a tutorial command.
         return reply
 
     monkeypatch.setattr(hardware.sim, "_simulate_response", change_state)
     namespace = {}
-    with pytest.raises(RuntimeError, match="State or faults changed"):
+    with pytest.raises(RuntimeError, match="key OFF"):
         run("05_set_power.ipynb", namespace)
     assert namespace["after"][b"?L"] == b"1"
     assert writes(hardware) == [b"P=0.2500\r\n"]
@@ -517,7 +726,7 @@ def test_unknown_fault_codes_are_preserved_without_reset(hardware):
 def test_health_check_skips_rejected_dios_and_keeps_remaining_raw_replies(hardware):
     hardware.overrides[b"?DIOS\r\n"] = b" Query Error:?DIOS\r\n"
     hardware.overrides[b"?D1PC\r\n"] = b"\x16\xe1\r\n"
-    namespace = run("03_health_check.ipynb", ACTIVE_FAULT_CLEAR_REPLY=None)
+    namespace = run("03_health_check.ipynb")
     health = namespace["health"]
     assert list(health) == [
         "Output and operating state",
@@ -632,7 +841,7 @@ def test_pre_key_on_readiness_preserves_warmup_readings_without_actuation(hardwa
             b"?LBOST\r\n": b"149.20\r\n",
         }
     )
-    namespace = run("04_pre_key_on_readiness.ipynb", ACTIVE_FAULT_CLEAR_REPLY=None)
+    namespace = run("04_check_readiness.ipynb")
     assert namespace["pre_key_on"][b"?LBOSS"] == b"2"
     assert namespace["pre_key_on"][b"?LBOT"] == b"118.25"
     assert namespace["pre_key_on"][b"?LBOST"] == b"149.20"
@@ -643,50 +852,69 @@ def test_pre_key_on_readiness_preserves_warmup_readings_without_actuation(hardwa
 def test_interrupt_after_enable_does_not_send_blind_cleanup(hardware):
     hardware.interrupt_on = b"L=1\r\n"
     with pytest.raises(KeyboardInterrupt):
-        run("06_controlled_session.ipynb")
+        run("06_key_on_and_run.ipynb")
     assert hardware.sim.requests[-1] == b"L=1\r\n"
 
 
 def test_fault_history_is_captured_before_enable(hardware):
-    namespace = run("06_controlled_session.ipynb")
+    namespace = run("06_key_on_and_run.ipynb")
     assert hardware.sim.requests.index(b"?FH\r\n") < hardware.sim.requests.index(b"L=1\r\n")
     assert namespace["history_before_enable"] == b"SYSTEM OK"
 
 
 def test_device_rejection_stops_the_sequence(hardware):
     hardware.overrides[b"P=0.2500\r\n"] = b"RANGE ERROR: P=0.2500\r\n"
-    with pytest.raises(RuntimeError, match="Unexpected command acknowledgment"):
-        run("06_controlled_session.ipynb")
+    with pytest.raises(VerdiError, match="RANGE ERROR"):
+        run("06_key_on_and_run.ipynb")
     assert writes(hardware) == [b"P=0.2500\r\n"]
 
 
 @pytest.mark.parametrize("echo", [False, True])
-def test_controlled_session_uses_raw_api_and_verifies_normal_completion(
-    hardware, monkeypatch, echo
-):
+def test_controlled_session_uses_power_setter_and_byte_state_checks(hardware, monkeypatch, echo):
     hardware.sim._echo = echo
+    setpoints = []
+    laser_states = []
+    shutter_states = []
+    set_power = VerdiController.set_power_w
+    set_laser_state = VerdiController.set_laser_state
+    set_shutter = VerdiController.set_shutter
+
+    def record_set_power(laser, watts):
+        setpoints.append(watts)
+        return set_power(laser, watts)
+
+    def record_set_laser_state(laser, state):
+        laser_states.append(state)
+        return set_laser_state(laser, state)
+
+    def record_set_shutter(laser, *, open):
+        shutter_states.append(open)
+        return set_shutter(laser, open=open)
 
     def forbidden(*args, **kwargs):
-        raise AssertionError("lesson 6 must use only raw read/write exchanges")
+        raise AssertionError("lesson 6 state checks must retain byte payloads")
 
     for method in (
         "get_value",
         "get_status",
-        "set_power_w",
-        "set_laser_state",
-        "set_value",
-        "set_shutter",
         "get_power_w",
         "get_faults",
         "get_laser_state",
     ):
         monkeypatch.setattr(VerdiController, method, forbidden)
-    namespace = run("06_controlled_session.ipynb")
-    expected = [b"P=0.2500", b"L=1", b"S=1", b"S=0", b"L=0"]
+    monkeypatch.setattr(VerdiController, "set_power_w", record_set_power)
+    monkeypatch.setattr(VerdiController, "set_laser_state", record_set_laser_state)
+    monkeypatch.setattr(VerdiController, "set_shutter", record_set_shutter)
+    namespace = run("06_key_on_and_run.ipynb")
+    assert setpoints == [0.25]
+    assert laser_states == [1]
+    assert shutter_states == [True, False]
+    expected = [b"P=0.2500", b"L=1", b"S=1", b"S=0"]
     assert [instruction for instruction, wire in namespace["acknowledgments"]] == expected
     assert writes(hardware) == [instruction + b"\r\n" for instruction in expected]
     assert namespace["final_payloads"] == {
-        b"?L": b"0",
+        b"?K": b"1",
+        b"?L": b"1",
         b"?S": b"0",
         b"?F": b"SYSTEM OK",
         b"?SP": b"0.2500",
@@ -696,33 +924,60 @@ def test_controlled_session_uses_raw_api_and_verifies_normal_completion(
     assert all(isinstance(wire, bytes) for query, wire in namespace["replies"])
 
 
-@pytest.mark.parametrize("instruction", [b"L=1", b"S=1", b"S=0", b"L=0"])
+def test_controlled_session_named_setters_use_current_notice_aware_parser(hardware):
+    hardware.overrides[b"L=1\r\n"] = b"min current set\r\n\r\n"
+    namespace = run("06_key_on_and_run.ipynb")
+    assert namespace["acknowledgments"][1] == (b"L=1", b"min current set\r\n\r\nVerdi V-5>")
+    assert namespace["final_payloads"][b"?L"] == b"1"
+    assert namespace["final_payloads"][b"?K"] == b"1"
+    assert writes(hardware).count(b"L=1\r\n") == 1
+
+
+@pytest.mark.parametrize("instruction", [b"L=1", b"S=1", b"S=0"])
 def test_rejected_sequence_command_stops_without_retry_or_cleanup(hardware, instruction):
     hardware.overrides[instruction + b"\r\n"] = b"Command Error: rejected\r\n"
     namespace = {}
-    with pytest.raises(RuntimeError, match="Unexpected command acknowledgment"):
-        run("06_controlled_session.ipynb", namespace)
+    with pytest.raises(VerdiError, match="Command Error"):
+        run("06_key_on_and_run.ipynb", namespace)
     assert hardware.sim.requests[-1] == instruction + b"\r\n"
     assert writes(hardware).count(instruction + b"\r\n") == 1
-    run_disconnect_cell("06_controlled_session.ipynb", namespace)
+    run_disconnect_cell("06_key_on_and_run.ipynb", namespace)
 
 
 def test_failed_enable_readback_prevents_shutter_open(hardware):
     hardware.overrides[b"?L\r\n"] = b"0\r\n"  # Standby even after the enable acknowledgment.
     namespace = {}
-    with pytest.raises(RuntimeError, match="ON with no faults"):
-        run("06_controlled_session.ipynb", namespace)
+    with pytest.raises(RuntimeError, match="Readback mismatch"):
+        run("06_key_on_and_run.ipynb", namespace)
     assert writes(hardware) == [b"P=0.2500\r\n", b"L=1\r\n"]
-    run_disconnect_cell("06_controlled_session.ipynb", namespace)
+    run_disconnect_cell("06_key_on_and_run.ipynb", namespace)
+
+
+@pytest.mark.parametrize("query,payload", [(b"?L", b"0"), (b"?S", b"1")])
+def test_final_readback_mismatch_does_not_send_standby(hardware, monkeypatch, query, payload):
+    exchange = hardware.sim._simulate_response
+
+    def override_after_close(request):
+        reply = exchange(request)
+        if request == b"S=0\r\n":
+            hardware.overrides[query + b"\r\n"] = payload + b"\r\n"
+        return reply
+
+    monkeypatch.setattr(hardware.sim, "_simulate_response", override_after_close)
+    namespace = {}
+    with pytest.raises(RuntimeError, match="Readback mismatch"):
+        run("06_key_on_and_run.ipynb", namespace)
+    assert writes(hardware) == [b"P=0.2500\r\n", b"L=1\r\n", b"S=1\r\n", b"S=0\r\n"]
+    run_disconnect_cell("06_key_on_and_run.ipynb", namespace)
 
 
 def test_fault_history_query_rejection_prevents_all_writes(hardware):
     hardware.overrides[b"?FH\r\n"] = b"Query Error:?FH\r\n"
     namespace = {}
     with pytest.raises(RuntimeError, match="Unexpected fault history reply"):
-        run("06_controlled_session.ipynb", namespace)
+        run("06_key_on_and_run.ipynb", namespace)
     assert writes(hardware) == []
-    run_disconnect_cell("06_controlled_session.ipynb", namespace)
+    run_disconnect_cell("06_key_on_and_run.ipynb", namespace)
 
 
 @pytest.mark.parametrize(

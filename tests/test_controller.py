@@ -7,7 +7,7 @@ import pytest
 from fakes import FaultyVerdi
 from fakes import RecordingVerdi as SimulatedVerdi
 
-from coherent_verdi import DeviceError, VerdiController, VerdiError
+from coherent_verdi import DeviceError, VerdiError
 from coherent_verdi.controller import QUERIES
 
 
@@ -62,12 +62,6 @@ def test_status_duration_includes_every_query(monkeypatch):
 def test_constructor_settings_are_runtime_validated(kwargs):
     with pytest.raises(ValueError):
         SimulatedVerdi(**kwargs)
-
-
-@pytest.mark.parametrize("reply", [True, "", " ", "1", "30", "1&2", "OK\r\n", "é", "X" * 129])
-def test_invalid_or_fault_code_clear_override_rejected(reply):
-    with pytest.raises(ValueError, match="active_fault_clear_reply"):
-        VerdiController("FAKE-ONLY", active_fault_clear_reply=reply, prompt_enabled=False)
 
 
 @pytest.mark.parametrize("history", ["False", "True", 0, 1, None])
@@ -175,11 +169,35 @@ def test_bad_setpoints_do_not_reach_transport(value):
 
 
 def test_site_ceiling_rounding():
-    sim = SimulatedVerdi(model="V5", allow_writes=True, power_limit_w=0.12346)
+    limit = 0.3 - 2**-54  # Immediately below 0.3; wire formatting would exceed it.
+    sim = SimulatedVerdi(model="V5", allow_writes=True, power_limit_w=limit)
     c = sim
     with pytest.raises(ValueError, match="rounded"):
-        c.set_power_w(0.12346)
+        c.set_power_w(limit)
     assert not sim.requests
+
+
+@pytest.mark.parametrize("value", [0.002, 0.001, 0.015, 0.12346, 0.010000000001])
+def test_substep_power_targets_rejected_without_io_or_replacing_evidence(value):
+    with SimulatedVerdi(allow_writes=True) as c:
+        c.get_power_w()
+        before, requests = c.last_transaction, c.requests
+        with pytest.raises(ValueError, match="0.01 W increments"):
+            c.set_power_w(value)
+        assert c.requests == requests
+        assert c.last_transaction == before
+        assert not c.failed
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [(0, 0), (0.01, 0.01), (0.29, 0.29), (0.1 + 0.2, 0.3), (0.1 * 3, 0.3)],
+)
+def test_power_steps_accept_float_arithmetic(value, expected):
+    with SimulatedVerdi(allow_writes=True) as c:
+        c.set_power_w(value)
+        assert c.requests == (f"P={expected:.4f}\r\n".encode(),)
+        assert c.get_value("?SP") == expected
 
 
 def test_default_read_only_and_no_implicit_state_changes():

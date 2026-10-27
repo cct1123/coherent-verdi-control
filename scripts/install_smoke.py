@@ -25,11 +25,11 @@ def run(args: list[str], *, cwd: str | None = None) -> subprocess.CompletedProce
     return result
 
 
-def main() -> None:
+def main(dist_dir: Path = ROOT / "dist") -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     stem = f"{project['name'].replace('-', '_')}-{project['version']}"
-    wheel = ROOT / "dist" / f"{stem}-py3-none-any.whl"
-    source = ROOT / "dist" / f"{stem}.tar.gz"
+    wheel = dist_dir / f"{stem}-py3-none-any.whl"
+    source = dist_dir / f"{stem}.tar.gz"
     with zipfile.ZipFile(wheel) as archive:
         modules = {Path(name).name for name in archive.namelist() if name.endswith(".py")}
     expected = {path.name for path in (ROOT / "src/coherent_verdi").glob("*.py")}
@@ -50,9 +50,8 @@ def main() -> None:
         "src/coherent_verdi/assets/panel.js",
         "src/coherent_verdi/assets/bootstrap.min.css",
     }
-    required.update(
-        p.relative_to(ROOT).as_posix() for p in (ROOT / "examples").glob("0[0-6]_*.ipynb")
-    )
+    required.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "examples").glob("0*.ipynb"))
+    required.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "examples/data").glob("*.json"))
     required.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md"))
     if missing := required - members:
         raise RuntimeError(f"source distribution lacks supporting files: {sorted(missing)}")
@@ -140,13 +139,20 @@ import builtins, json, sys
 from pathlib import Path
 from unittest.mock import patch
 import serial.tools.list_ports
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from coherent_verdi import SimulatedVerdi, VerdiController
-sim = SimulatedVerdi('V5', prompt=True)
-sim.set_key(True)
+lesson = Path(sys.argv[1]).name[:2]
+sim = SimulatedVerdi('V5', prompt=True, allow_writes=True, power_limit_w=0.5)
+sim.set_key(lesson in ('06', '07'))
+if lesson == '07':
+    with sim:
+        sim.set_laser_state(1)
 requests = []
 settings = dict(PORT='FAKE-ONLY', MODEL='V5', BAUDRATE=19200,
-    ACTIVE_FAULT_CLEAR_REPLY=(b'SYSTEM OK' if Path(sys.argv[1]).name.startswith(('05_', '06_'))
-        else 'SYSTEM OK'), TARGET_W=0.25, POWER_LIMIT_W=0.5)
+    TARGET_W=0.25, POWER_LIMIT_W=0.5, SETPOINTS_W=[0.01, 0.02],
+    SETTLING_SAMPLE_COUNT=2, SETTLING_SAMPLE_PAUSE_S=0.001, SWEEP_DWELL_S=0.001)
 cells = json.load(open(sys.argv[1], encoding='utf-8'))['cells']
 
 class NotebookPeer:
@@ -156,6 +162,7 @@ class NotebookPeer:
     def close(self):
         sim.disconnect()
     def write(self, request):
+        assert not self.pending, 'overlapping notebook transactions'
         requests.append(request)
         self.pending += sim._simulate_response(request)
         return len(request)
@@ -172,16 +179,40 @@ class NotebookPeer:
         self.pending = b""
 
 namespace = {}
+def confirm(prompt):
+    return next(word for word in ('STUDY', 'SWEEP', 'RUN', 'SET') if word in prompt)
+
+def prohibited(*args, **kwargs):
+    raise AssertionError('physical serial access prohibited in install smoke test')
+
 with patch.object(serial, 'Serial', lambda **kwargs: NotebookPeer()), \
+     patch.object(serial, 'serial_for_url', prohibited), \
      patch.object(serial.tools.list_ports, 'comports', lambda: []), \
-     patch.object(builtins, 'input', lambda p: 'RUN' if 'RUN' in p else 'SET'):
+     patch.object(serial.tools.list_ports, 'grep', prohibited), \
+     patch('time.sleep', lambda seconds: None), \
+     patch.object(plt, 'show', lambda: None), \
+     patch.object(builtins, 'input', confirm):
     for cell in (c for c in cells if c['cell_type'] == 'code'):
         exec(''.join(cell['source']), namespace)
         if 'parameters' in cell['metadata'].get('tags', ()):
             namespace.update(settings)
+plt.close('all')
 # Device discovery only lists ports; every other lesson starts with ?SV.
 discovery = Path(sys.argv[1]).name.startswith('00_')
 assert requests == [] if discovery else requests[0] == b'?SV\r\n'
+writes = [request for request in requests if not request.startswith(b'?')]
+expected = {
+    '05': [b'P=0.2500\r\n'],
+    '06': [b'P=0.2500\r\n', b'L=1\r\n', b'S=1\r\n', b'S=0\r\n'],
+    '07': [b'P=0.0100\r\n', b'S=1\r\n', b'S=0\r\n', b'S=1\r\n',
+           b'P=0.0100\r\n', b'P=0.0200\r\n', b'S=0\r\n'],
+}.get(lesson, [])
+assert writes == expected, (lesson, writes)
+if lesson == '07':
+    import csv
+    with namespace['csv_path'].open(newline='', encoding='utf-8') as handle:
+        rows = list(csv.DictReader(handle))
+    assert [row['stage'] for row in rows] == ['study', 'study', 'sweep', 'sweep']
 """
         for example in sorted((ROOT / "examples").glob("0*.ipynb")):
             run([str(executable), "-I", "-c", example_check, str(example)], cwd=directory)
@@ -337,7 +368,11 @@ def gui_smoke() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gui-smoke", action="store_true", help=argparse.SUPPRESS)
-    if parser.parse_args().gui_smoke:
+    parser.add_argument(
+        "--dist-dir", type=Path, default=ROOT / "dist", help="Built wheel/sdist folder"
+    )
+    args = parser.parse_args()
+    if args.gui_smoke:
         gui_smoke()
     else:
-        main()
+        main(args.dist_dir.resolve())

@@ -33,22 +33,30 @@ uv run verdi --port COM5 --model V2 --baudrate 19200 gui
 
 CLI connection options only prefill the form; they do not open a port. You can
 also start with `uv run verdi gui`, select Hardware and enter the known port,
-model and baud in the GUI. No automatic port discovery or model detection is used.
+model and baud in the GUI. The form also shows device prompt mode and serial
+timeout, initially filled from CLI options. No automatic port discovery or model
+detection is used.
+
+**Device prompt** describes the laser's existing mode; choosing Enabled or Disabled
+changes the reader configuration, not the instrument. When enabled, the reader
+consumes reply CR/LF and then the exact trailing prompt. **Timeout / s** configures
+serial write and receive waits (0.001–60 seconds). Reply lines, notices and the
+prompt use separate `read_until()` calls with that configured timeout.
 
 Click **Connect** to open the port without queries or settings. Monitoring remains
 paused. Select `?SV` and click **Capture bytes**, then inspect **Transaction evidence**.
-Capture `?F` separately and establish its exact no-active-fault payload with the
-operator. Disconnect, enter that verified text in the connection form, and reconnect
-before starting hardware monitoring. Capture is available only in read-only
+Capture `?F` separately and inspect its payload with the operator.
+Fault parsing accepts `SYSTEM OK` as an empty list and preserves positive codes.
+Capture is available only in read-only
 sessions and does not interpret fault clearance.
 
-For normal monitoring, configure the verified clear text before `gui`:
+For normal monitoring:
 
 ```sh
-uv run verdi --port COM5 --model V2 --baudrate 19200 --active-fault-clear-reply "<VERIFIED_TEXT>" gui --port 8051
+uv run verdi --port COM5 --model V2 --baudrate 19200 gui --port 8051
 ```
 
-This example prefills the verified text. Click Connect, then Start monitoring.
+Click Connect, then Start monitoring.
 Open port 8051 in the browser for this example. The global `--port COM5` selects
 the serial device; the `--port` after `gui` selects the HTTP listener. Keep one
 serial owner and close any notebook connection before launching the GUI.
@@ -68,6 +76,9 @@ the last completed overview. Power history is cleared on connection changes;
 the plot contains measured power and its setpoint.
 The connection button is disabled while connecting or disconnecting. Connecting
 sends no device instructions; monitoring still starts separately.
+All connection fields are locked while connected or changing connection. Disconnect
+before editing the prompt or timeout. Simulator connections use the selected
+prompt mode so echo and prompt behavior can be explored without hardware.
 
 Model labels, power limits and knob range follow the connected controller.
 Connection changes clear the readiness switch and reject requests sent from an
@@ -94,9 +105,12 @@ its meaning. Optional queries are issued only when selected; overview polling
 uses its own fixed set of 14 queries.
 
 The Python byte API returns formatted payloads from `read(b"?SV")`, for example
-`b"6.05"`; `write()` and `command()` return the full reply. Every transaction waits
-for CR/LF and the following prompt before the next instruction. The GUI uses
+`b"6.05"`; `write()` and `command()` return the full reply. Each transaction waits
+for reply CR/LF and, when enabled, the trailing prompt. The GUI uses
 explicit typed helpers for displayed values and named setters for commands.
+Recognized firmware notices and partial replies remain available in Transaction
+evidence. Long error text wraps within the view. The live overview displays diode
+current to 0.01 A so hundredths present in the readback are not hidden by rounding.
 
 ## Overview and front panel
 
@@ -114,7 +128,10 @@ state; neither measures optical output. Lamps are hollow when the overview is
 not live.
 
 POWER ADJUST edits the target only; **SET POWER** sends it. POWER LEVEL 1/2
-presets are stored in this browser. MENU UP/DOWN, SELECT and EXIT remain disabled:
+presets are stored in this browser. Targets, presets and knob edits use **0.01 W
+increments**. Finer targets are rejected before queueing or device I/O, including
+old browser presets. Knob edits stay at or below the configured ceiling; a ceiling
+between steps uses the highest valid step below it. MENU UP/DOWN, SELECT and EXIT remain disabled:
 the current menu and selection cannot be read over RS-232. Navigation actions,
 including KNOB DOWN, are unavailable in the Service menu and rejected by the GUI
 request queue. SHUTTER OPEN opens only
@@ -126,13 +143,13 @@ requests closure. Overview refreshes preserve unsent edits.
 Add write permission and your site-approved power ceiling after `gui`:
 
 ```sh
-uv run verdi --port COM5 --model V2 --baudrate 19200 --active-fault-clear-reply "<VERIFIED_TEXT>" gui --allow-writes --power-limit-w 0.5
+uv run verdi --port COM5 --model V2 --baudrate 19200 gui --allow-writes --power-limit-w 0.5
 ```
 
 The example ceiling is a software limit to replace for your setup. Changing a
 setpoint does not enable the laser or open its shutter. Start/reset faults and
 shutter-open require the operator readiness switch. Start also clears fault
-history; inspect it beforehand. Use [lesson 04](../examples/04_pre_key_on_readiness.ipynb)
+history; inspect it beforehand. Use [lesson 04](../examples/04_check_readiness.ipynb)
 and the [hardware procedure](HARDWARE.md) for preparation.
 
 Ordinary writes require a fresh overview. Standby and shutter-close can be
@@ -142,7 +159,8 @@ in progress. Service controls include heater, optimization, FLASH, chiller,
 panel-lock, baud, echo and prompt settings. Their availability is not a readiness
 check or confirmation that an operation completed physically.
 
-Acknowledged hardware baud and prompt changes are retained for the next Connect.
+Acknowledged hardware baud changes and acknowledged prompt-mode changes update
+the form and are retained for the next Connect.
 The connection form reflects the updated baud. If another application changes
 the link settings, establish the current settings independently before reconnecting.
 

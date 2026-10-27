@@ -24,7 +24,9 @@
 
     function setTarget(knob, value) {
         const max = Number(knob.dataset.max) || 0;
-        const clamped = Math.min(max, Math.max(0, Math.round(value * 1e4) / 1e4));
+        let maxSteps = Math.round(max * 100);
+        if (maxSteps / 100 > max) maxSteps -= 1;
+        const clamped = Math.min(maxSteps, Math.max(0, Math.round(value * 100))) / 100;
         if (window.dash_clientside && window.dash_clientside.set_props) {
             window.dash_clientside.set_props("target-power", {value: clamped});
             pending = {value: clamped, at: performance.now()};
@@ -52,11 +54,15 @@
     });
     document.addEventListener("pointermove", function (event) {
         if (!drag) return;
+        if (!knobAt(drag.knob)) { drag = null; return; }
         const now = angle(drag.knob, event);
         const turn = ((now - drag.angle + 540) % 360) - 180;
         drag.angle = now;
         // 270 degrees of travel spans the full power ceiling, like the scale on the knob.
-        drag.value = setTarget(drag.knob, drag.value + turn / 270 * Number(drag.knob.dataset.max));
+        const max = Number(drag.knob.dataset.max) || 0;
+        // Accumulate small movements before rounding; slow drags must still advance a step.
+        drag.value = Math.min(max, Math.max(0, drag.value + turn / 270 * max));
+        setTarget(drag.knob, drag.value);
     });
     document.addEventListener("pointerup", function () { drag = null; });
     document.addEventListener("pointercancel", function () { drag = null; });

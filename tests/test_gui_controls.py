@@ -751,7 +751,7 @@ def test_front_panel_keys_queue_documented_commands_and_presets():
         assert record is None and "preset" in message
         for trigger, wire, state in (
             ("panel-level-2", b"P=0.3000\r\n", {"panel-level-2-value": 0.3}),
-            ("panel-apply-power", b"P=0.1250\r\n", {"target-power": 0.125}),
+            ("panel-apply-power", b"P=0.1200\r\n", {"target-power": 0.12}),
         ):
             before = len(laser.requests)
             _, record = panel_click(app, monitor, trigger, **state)
@@ -759,6 +759,64 @@ def test_front_panel_keys_queue_documented_commands_and_presets():
             monitor.poll_once()
             assert laser.requests[before] == wire
             assert result(monitor.controls, record["id"])["state"] in ("acknowledged", "verified")
+
+
+@pytest.mark.parametrize("target", [0.002, 0.125])
+@pytest.mark.parametrize(
+    "trigger,field",
+    [
+        ("apply-power", "target-power"),
+        ("panel-apply-power", "target-power"),
+        ("panel-level-1", "panel-level-1-value"),
+        ("panel-level-2", "panel-level-2-value"),
+    ],
+)
+def test_gui_rejects_finer_targets_and_stored_presets_before_queueing(trigger, field, target):
+    with RecordingVerdi(allow_writes=True, power_limit_w=0.5) as laser:
+        monitor = Monitor(laser)
+        app = create_app(monitor)
+        monitor.poll_once()
+        before = laser.requests
+        message, record = panel_click(app, monitor, trigger, **{field: target})
+        assert "0.01 W increments" in message
+        assert record is None
+        assert not monitor.controls.snapshot()["pending"]
+        assert laser.requests == before
+
+
+@pytest.mark.parametrize(
+    "ceiling,maximum", [(0.29, 0.29), (0.12346, 0.12), (0.009, 0), (0.3 - 2**-54, 0.29)]
+)
+def test_gui_power_steps_and_knob_limits_stay_below_ceiling(ceiling, maximum):
+    def components(node):
+        if isinstance(node, dict):
+            props = node.get("props", {})
+            if "id" in props:
+                yield props["id"], props
+            for child in node.values():
+                yield from components(child)
+        elif isinstance(node, list):
+            for child in node:
+                yield from components(child)
+
+    with RecordingVerdi(allow_writes=True, power_limit_w=ceiling) as laser:
+        monitor = Monitor(laser)
+        app = create_app(monitor)
+        client = app.server.test_client()
+        layout = dict(components(client.get("/_dash-layout").json))
+        names = ("target-power", "panel-level-1-value", "panel-level-2-value")
+        for name in names:
+            assert layout[name]["step"] == 0.01
+            assert layout[name]["max"] == maximum <= ceiling
+        assert layout["panel-knob"]["data-max"] == maximum
+        response = client.post(
+            "/_dash-update-component", json=callback_request(app, "query-results")
+        )
+        assert response.status_code == 200, response.data
+        updated = response.json["response"]
+        assert all(updated[name]["max"] == maximum for name in names)
+        assert updated["panel-knob"] == {"aria-valuemax": maximum, "data-max": maximum}
+        assert not laser.requests
 
 
 @pytest.mark.parametrize("writable", [False, True])

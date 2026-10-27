@@ -250,9 +250,9 @@ def serial_cli(monkeypatch):
     sim.disconnect()
 
 
-def test_cli_hardware_status_and_watch_use_verified_fault_reply(serial_cli, capsys):
+def test_cli_hardware_status_and_watch_without_fault_configuration(serial_cli, capsys):
     sim, opened = serial_cli
-    settings = ["--port", "FAKE-ONLY", "--model", "V5", "--active-fault-clear-reply", "SYSTEM OK"]
+    settings = ["--port", "FAKE-ONLY", "--model", "V5"]
     assert main([*settings, "status"]) == 0
     assert json.loads(capsys.readouterr().out)["simulated"] is False
     assert main([*settings, "watch", "--count", "2", "--interval", "0.001"]) == 0
@@ -285,8 +285,6 @@ def test_cli_hardware_gui_separates_serial_and_http_ports(serial_cli, monkeypatc
                 "FAKE-ONLY",
                 "--model",
                 "V5",
-                "--active-fault-clear-reply",
-                "SYSTEM OK",
                 "gui",
                 "--port",
                 "8051",
@@ -297,11 +295,11 @@ def test_cli_hardware_gui_separates_serial_and_http_ports(serial_cli, monkeypatc
     assert opened[0]._connected is False
 
 
-def test_cli_hardware_status_rejects_unverified_clear_reply(serial_cli, capsys):
+def test_cli_hardware_status_preserves_active_faults(serial_cli, capsys):
     sim, _ = serial_cli
-    assert main(["--port", "FAKE-ONLY", "--model", "V5", "status"]) == 2
-    assert "invalid fault list" in json.loads(capsys.readouterr().err)["error"]
-    assert sim.requests[-1] == b"?F\r\n"
+    sim.set_faults(30, 999)
+    assert main(["--port", "FAKE-ONLY", "--model", "V5", "status"]) == 0
+    assert json.loads(capsys.readouterr().out)["faults"] == [30, 999]
 
 
 def test_cli_watch_jsonlines_and_invalid_interval(capsys):

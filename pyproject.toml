@@ -8,7 +8,10 @@ version = "0.5.0"
 description = "Python RS-232 controller for Coherent Verdi V-2, V-5 and V-6 lasers"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["pyserial>=3.5,<4"]
+dependencies = [
+    "matplotlib>=3.11.2",
+    "pyserial>=3.5,<4",
+]
 
 [project.urls]
 Repository = "https://github.com/cct1123/coherent-verdi-control"

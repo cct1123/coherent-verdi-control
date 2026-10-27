@@ -8,6 +8,32 @@ import pytest
 from coherent_verdi import DeviceError, VerdiController, VerdiError
 
 
+@pytest.mark.parametrize("method", ["get_power_w", "get_value", "read", "command", "get_capture"])
+def test_captured_sweep_reply_with_consecutive_notices_is_fully_consumed(peer, method):
+    # Exact failed ?P response saved in lesson 07, V2 firmware 6.05.
+    wire = b"level1 set!\r\nlevel0 set!\r\n0.114\r\nVerdi V-2>"
+    peer.responses.extend([wire, b"11.83\r\nVerdi V-2>"])
+    with VerdiController("FAKE-ONLY", model="V2") as laser:
+        if method == "get_power_w":
+            value = laser.get_power_w()
+        else:
+            instruction = b"?P" if method in ("read", "command") else "?P"
+            value = getattr(laser, method)(instruction)
+        if method == "command":
+            assert value == wire
+        elif method == "read":
+            assert value == b"0.114"
+        elif method == "get_capture":
+            assert value["payload"] == b"0.114" and value["response"] == wire
+        else:
+            assert value == 0.114
+        assert laser.last_transaction["response"] == wire
+        assert not laser.failed and not peer.pending
+        assert laser.get_value("?D1C") == 11.83
+        assert not peer.pending
+    assert peer.writes == [b"?P\r\n", b"?D1C\r\n"]
+
+
 def test_byte_api_names_are_distinct_from_typed_helpers():
     from coherent_verdi import SimulatedVerdi
 
@@ -50,6 +76,193 @@ def test_read_removes_framing_without_interpreting_payload(peer, wire, payload):
         assert laser.read(b"?SV") == payload
         assert laser.last_transaction["response"] == wire
         assert not laser.failed
+
+
+@pytest.mark.parametrize("method", ["command", "read", "get_value", "get_capture"])
+@pytest.mark.parametrize("prompt_enabled", [False, True])
+@pytest.mark.parametrize("reply", [b"1\r\n", b"?K 1\r\n"])
+def test_key_on_notice_precedes_reply_without_losing_evidence_or_alignment(
+    peer, method, prompt_enabled, reply
+):
+    # Exact leading notice captured in lesson 06 on V2 firmware 6.05.
+    prompt = b"Verdi V-2>" if prompt_enabled else b""
+    wire = b"min current set\r\n" + reply + prompt
+    peer.responses.extend([wire, b"1\r\n" + prompt])
+    with VerdiController("FAKE-ONLY", model="V2", prompt_enabled=prompt_enabled) as laser:
+        instruction = b"?K" if method in ("command", "read") else "?K"
+        value = getattr(laser, method)(instruction)
+        if method == "command":
+            assert value == wire  # Raw transport retains the notice.
+        elif method == "read":
+            assert value == b"1"
+        elif method == "get_value":
+            assert value == 1
+        else:
+            assert value["payload"] == b"1"
+            assert value["response"] == wire
+        assert laser.last_transaction["response"] == wire
+        assert not laser.failed and not peer.pending
+        assert laser.read(b"?L") == b"1"  # Following query remains aligned.
+    assert peer.writes == [b"?K\r\n", b"?L\r\n"]
+
+
+@pytest.mark.parametrize("prompt_enabled", [False, True])
+def test_key_on_notice_without_reply_still_retires_session(peer, prompt_enabled):
+    wire = b"min current set\r\n"
+    peer.responses.append(wire)
+    with VerdiController("FAKE-ONLY", model="V2", prompt_enabled=prompt_enabled) as laser:
+        with pytest.raises(VerdiError, match="timed out") as caught:
+            laser.read(b"?K")
+        assert caught.value.transaction["response"] == wire
+        assert laser.failed
+        with pytest.raises(VerdiError, match="failed"):
+            laser.read(b"?K")
+    assert peer.writes == [b"?K\r\n"]
+
+
+@pytest.mark.parametrize(
+    "prefix", [b"unknown status\r\n", b"MIN CURRENT SET\r\n", b"min current set \r\n"]
+)
+def test_unrecognized_status_lines_are_not_silently_skipped(peer, prefix):
+    wire = prefix + b"1\r\nVerdi V-2>"
+    peer.responses.append(wire)
+    with VerdiController("FAKE-ONLY", model="V2") as laser:
+        with pytest.raises(VerdiError, match="prompt timed out or unexpected") as caught:
+            laser.read(b"?K")
+        assert caught.value.transaction["response"] == wire
+        assert laser.failed
+    assert peer.writes == [b"?K\r\n"]
+
+
+@pytest.mark.parametrize("prompt_enabled", [False, True])
+def test_repeated_key_on_notices_are_not_an_unbounded_skip_loop(peer, prompt_enabled):
+    prefix = b"min current set\r\n" * 9
+    peer.responses.append(prefix + b"1\r\nVerdi V-2>")
+    with VerdiController("FAKE-ONLY", model="V2", prompt_enabled=prompt_enabled) as laser:
+        with pytest.raises(VerdiError, match="more than 8 status notices") as caught:
+            laser.read(b"?K")
+        assert caught.value.transaction["response"] == prefix
+        assert laser.failed
+    assert peer.writes == [b"?K\r\n"]
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [b"min current set\r\n", b"level0 set!\r\n", b"level1 set!\r\nlevel0 set!\r\n"],
+)
+def test_status_notice_counts_toward_total_response_limit(peer, prefix):
+    wire = prefix + b"1" * 4096 + b"\r\nVerdi V-2>"
+    peer.responses.append(wire)
+    with VerdiController("FAKE-ONLY", model="V2") as laser:
+        with pytest.raises(VerdiError, match="4096 byte limit") as caught:
+            laser.read(b"?K")
+        assert caught.value.transaction["response"] == wire[:4096]
+        assert laser.failed
+    assert peer.writes == [b"?K\r\n"]
+
+
+@pytest.mark.parametrize("method", ["command", "read", "get_value", "get_capture"])
+@pytest.mark.parametrize(
+    "prefix,prompt_enabled",
+    [
+        (b"level0 set!\r\n", False),
+        (b"level0 set!\r\n", True),
+        (b"level1 set!\r\nlevel0 set!\r\n", False),
+        (b"level0 set!\r\n" * 8, True),
+    ],
+)
+def test_level0_notice_keeps_power_reply_and_next_exchange_aligned(
+    peer, method, prefix, prompt_enabled
+):
+    prompt = b"Verdi V-2>" if prompt_enabled else b""
+    wire = prefix + b"0.114\r\n" + prompt
+    peer.responses.extend([wire, b"11.88\r\n" + prompt])
+    with VerdiController("FAKE-ONLY", model="V2", prompt_enabled=prompt_enabled) as laser:
+        instruction = b"?P" if method in ("command", "read") else "?P"
+        value = getattr(laser, method)(instruction)
+        if method == "command":
+            assert value == wire
+        elif method == "read":
+            assert value == b"0.114"
+        elif method == "get_value":
+            assert value == 0.114
+        else:
+            assert value["payload"] == b"0.114" and value["response"] == wire
+        assert laser.last_transaction["response"] == wire
+        assert not laser.failed and not peer.pending
+        assert laser.get_value("?D1C") == 11.88
+    assert peer.writes == [b"?P\r\n", b"?D1C\r\n"]
+
+
+@pytest.mark.parametrize(
+    "wire",
+    [
+        b"level0 set!\r\n",
+        b"level0 set!\r\n" * 9 + b"0.114\r\nVerdi V-2>",
+        b"\r\nlevel0 set!\r\nlevel0 set!\r\n0.114\r\nVerdi V-2>",
+        b"\r\nlevel0 set!\r\n0.114\r\n0.115\r\nVerdi V-2>",
+        b"\r\nlevel0 set!\r\n0.114\r\nVerdi V-5>",
+        b"\r\nlevel0 set!\r\n0.114\r\n",  # Missing prompt.
+        b"\r\nlevel0 set!\r\nVerdi V-2>",  # Missing reply.
+        b"\r\nlevel0 set! \r\n0.114\r\nVerdi V-2>",
+        b"\r\nlevel1 set!\r\n0.114\r\nVerdi V-2>",
+        b"level1 set!\r\nlevel0 set!\r\n",  # Notices without a reply.
+        b"level1 set!\r\nlevel0 set!\r\n0.114\r\n",  # Missing prompt.
+        b"level1 set!\r\nlevel0 set!\r\n0.114\r\n0.115\r\nVerdi V-2>",
+        b"level1 set!\r\nlevel2 set!\r\n0.114\r\nVerdi V-2>",
+        b"level1 set!\r\nlevel0 set!\r\n0.114\r\nVerdi V-5>",
+        b"unknown\r\nlevel0 set!\r\n0.114\r\nVerdi V-2>",
+    ],
+)
+def test_level0_notice_does_not_hide_missing_or_extra_frames(peer, wire):
+    peer.responses.append(wire)
+    with VerdiController("FAKE-ONLY", model="V2") as laser:
+        with pytest.raises(VerdiError) as caught:
+            laser.get_value("?P")
+        assert caught.value.transaction["response"] == laser.last_transaction["response"]
+        assert wire.startswith(caught.value.transaction["response"])
+        assert laser.failed
+        with pytest.raises(VerdiError, match="failed"):
+            laser.get_value("?P")
+    assert peer.writes == [b"?P\r\n"]
+
+
+def test_unrecognized_first_line_is_preserved_in_saved_error_text(peer):
+    wire = b"unknown first line\r\nlevel0 set!\r\n0.114\r\nVerdi V-2>"
+    peer.responses.append(wire)
+    with VerdiController("FAKE-ONLY", model="V2") as laser:
+        with pytest.raises(VerdiError, match="full response:") as caught:
+            laser.get_power_w()
+        assert repr(wire) in str(caught.value)
+        assert caught.value.transaction["response"] == wire
+
+
+def test_level0_notice_preserves_device_rejection_and_next_query_alignment(peer):
+    wire = b"level1 set!\r\nlevel0 set!\r\nQuery Error: ?P\r\nVerdi V-2>"
+    peer.responses.extend([wire, b"11.88\r\nVerdi V-2>"])
+    with VerdiController("FAKE-ONLY", model="V2") as laser:
+        with pytest.raises(DeviceError):
+            laser.get_power_w()
+        assert laser.last_transaction["response"] == wire
+        assert laser.last_transaction["outcome"] == "rejected"
+        assert not laser.failed and not peer.pending
+        assert laser.get_value("?D1C") == 11.88
+
+
+@pytest.mark.parametrize("prompt_enabled", [False, True])
+def test_level0_notice_requires_separate_command_acknowledgment(peer, prompt_enabled):
+    prompt = b"Verdi V-2>" if prompt_enabled else b""
+    wire = b"level0 set!\r\n\r\n" + prompt
+    peer.responses.extend([wire, b"0.100\r\n" + prompt])
+    with VerdiController(
+        "FAKE-ONLY", model="V2", prompt_enabled=prompt_enabled, allow_writes=True
+    ) as laser:
+        laser.set_power_w(0.1)
+        assert laser.last_transaction["response"] == wire
+        assert laser.last_transaction["outcome"] == "acknowledged"
+        assert not peer.pending
+        assert laser.get_value("?SP") == 0.1
+    assert peer.writes == [b"P=0.1000\r\n", b"?SP\r\n"]
 
 
 def test_next_query_waits_for_the_prompt(peer, monkeypatch):

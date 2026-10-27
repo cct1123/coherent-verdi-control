@@ -21,7 +21,8 @@ uv build
 uv run scripts/install_smoke.py
 ```
 
-Node.js is needed only for the dashboard watchdog test. Tests replace physical
+Node.js runs the dashboard watchdog, knob and browser power-validation tests.
+Tests replace physical
 serial access with fakes; these checks do not establish hardware timing, optical
 safety or bench readiness. The [simulator reference](SIMULATOR.md) describes
 synthetic operation and its limits.
@@ -34,6 +35,13 @@ commit `uv.lock` with `pyproject.toml`.
 
 Source distributions include the manual, tutorial notebooks and tests; wheels
 contain the controller package.
+
+The installation smoke check runs all nine notebooks against an installed wheel
+with fake serial ports and explicit fixture inputs. It checks their write scopes,
+uses a headless plotting backend, and verifies lesson 07's combined CSV inside its
+temporary test directory. Notebook hardware outputs and repository data are not
+regenerated. To check a build in another folder, use
+`python scripts/install_smoke.py --dist-dir <folder>`.
 
 ## Follow one request
 

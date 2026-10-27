@@ -17,12 +17,37 @@ text decoding or numeric conversion. `write` and `command` return unchanged wire
 bytes. The complete reply always remains in `last_transaction["response"]`;
 `read` also stores its byte payload in `last_transaction["payload"]`.
 
-With the default `prompt_enabled=True`, completion means a CR/LF reply followed
-by the exact `Verdi>` or selected model's `Verdi V-N>` prompt, even if the prompt
-arrives after the RX queue becomes empty. The lock covers the entire exchange.
-Set `prompt_enabled=False` only when the instrument prompt is already disabled;
-then CR/LF completes a reply. Opening does not change instrument settings.
-Explicit prompt commands update the expected framing for subsequent requests.
+V2 firmware 6.05 was observed sending `min current set\r\n` before the first
+query reply after physical key ON. Lesson 07 also captured the consecutive lines
+`level1 set!\r\nlevel0 set!\r\n` before a power reply. The driver accepts up to
+eight exact leading notice lines from these three recognized messages, then
+requires a separate reply and the configured prompt. Notice bytes count toward
+the 4096-byte response ceiling. `read()` and typed helpers exclude notices from
+the payload; `command()`, `write()` and transaction `response` retain all consumed
+bytes. Unknown lines, more than eight notices, extra readings and missing prompts
+still fail. This handling does not establish readiness or explain the physical
+meaning of the messages.
+
+The full lesson 07 capture supersedes the earlier inferred leading blank line;
+that special case is no longer accepted. Prompt-framing errors include the full
+consumed response in their text so saved tracebacks retain this evidence after
+kernel shutdown.
+
+The native transport uses `read_until()` to receive each CR/LF-terminated notice
+and the reply line, then `read_until(b">")` for the enabled trailing prompt.
+With `prompt_enabled=False`, CR/LF completes the reply. This flag describes the
+existing device mode; construction and connection send no mode changes.
+Matching instruction echo is removed from payloads. Explicit successful `PROMPT`
+commands update the expected prompt for their acknowledgment and subsequent
+requests; a device rejection retains the previous prompt mode.
+
+The transaction lock covers the exchange. Serial write and receive waits use the
+configured `timeout_s`; each `read_until()` has its own timeout rather than one
+combined transaction deadline. There are no per-byte timeout assignments, queue
+polling, extra sleeps or retries. Bytes returned by completed serial reads,
+including partial lines returned at timeout, remain in transaction evidence.
+If a serial read raises before returning, bytes internal to that interrupted read
+are not available to the controller; previously completed reads remain recorded.
 
 Canonical byte writes use `NAME=value`, enforce write permission and the power
 ceiling, and preserve the supplied instruction. Use `set_baudrate()` for baud
@@ -56,8 +81,7 @@ The package exports `VerdiController`, `SimulatedVerdi`, `VerdiError` and `Devic
 
 ```text
 VerdiController(port, *, model="V5", baudrate=19200, timeout_s=1.0,
-                allow_writes=False, power_limit_w=None, active_fault_clear_reply=None,
-                prompt_enabled=True)
+                allow_writes=False, power_limit_w=None, prompt_enabled=True)
 SimulatedVerdi(model="V5", *, allow_writes=False, power_limit_w=None,
                echo=False, prompt=False)
 ```
@@ -66,11 +90,12 @@ Select the actual model: `"V2"`, `"V5"` or `"V6"`. Model ratings provide default
 software ceilings of 2/5/6 W. An explicit ceiling must be finite, nonnegative and
 no larger; neither establishes a safe site limit. Boolean arguments require booleans.
 Serial settings are 8N1 with no flow control and 1200/2400/4800/9600/19200/38400/57600
-baud. The finite `timeout_s` of 0.001–60 s applies separately to each write/read
-stage; consumed replies are bounded at 4096 bytes in total. These are software limits.
+baud. The finite `timeout_s` of 0.001–60 s configures serial write and receive waits;
+consumed replies are bounded at 4096 bytes in total. These are software limits.
 
-Physical clear-fault text must be independently verified before configuring
-`active_fault_clear_reply`. There is no device discovery or automatic setup.
+Fault queries interpret `SYSTEM OK` as an empty list and preserve positive fault
+codes, including unknown codes. Other payloads raise `VerdiError`. There is no
+device discovery or automatic setup.
 
 | Method | Result / behavior |
 | --- | --- |
@@ -86,7 +111,7 @@ Physical clear-fault text must be independently verified before configuring
 | `get_faults(history=False)` | Fresh list of positive fault codes, including unknown codes |
 | `get_diagnostics()` | Software version, head/power-supply/diode hours and fault history |
 | `get_status()` | Dictionary from 14 sequential queries; fields below |
-| `set_power_w(watts)` | Four-decimal light-regulation setpoint |
+| `set_power_w(watts)` | Light-regulation setpoint in 0.01 W increments; finer targets raise `ValueError` before I/O |
 | `set_laser_state(1)` / `set_laser_state(0)` | `L=1` enable/reset faults/clear history / `L=0` standby override |
 | `set_shutter(open=bool)` | Safety-shutter operation; never periodic modulation |
 | `set_echo(enabled=bool)` | Explicit `E=0/1` |
@@ -100,6 +125,11 @@ Physical clear-fault text must be independently verified before configuring
 | `set_lbo_optimization()` | `LBOOPT=1`, initiate optimization without waiting for completion |
 | `set_front_panel_lock(value)` | `LFP=n`, integer operand; manual does not define valid values/unlock mapping |
 | `set_menu_down()` / `set_menu_select()` / `set_menu_up()` | `MENUDN=1` / `SELECT=1` / `MENUUP=1` |
+
+`set_power_w()` rejects targets outside 0.01 W increments rather than silently
+rounding them. It tolerates binary floating-point arithmetic noise, such as
+`0.1 + 0.2`, and still transmits four decimal places. That wire formatting does
+not imply finer setting resolution. The site power ceiling remains enforced.
 
 For example, `get_value("PRINT LIGHT")` and `get_value("?LIGHT")` both transmit `?P`.
 Text queries such as `?SV` return a string for printable ASCII or the undecoded
@@ -194,7 +224,7 @@ updates so every controller uses the current implementation.
 `purge_buffers()` aborts/discards queued output and discards received input.
 It does not wait for transmission, retry a query or wait for incoming bytes to stop.
 
-## Setting power in standby
+## Setting power with the physical key OFF
 
 Use the [hardware procedure](HARDWARE.md#controlled-writes) and
 [set-power notebook](../examples/05_set_power.ipynb) for readiness and operator checks.
@@ -213,7 +243,6 @@ laser = VerdiController(
     baudrate=19200,
     allow_writes=True,
     power_limit_w=CEILING_W,
-    active_fault_clear_reply="<VERIFIED_CLEAR_TEXT>",
 )
 print("Serial port open:", laser.connect())
 ```
@@ -222,16 +251,29 @@ After confirming the connection, run the checks and setting separately:
 
 ```python
 try:
-    if laser.get_laser_state() != 0 or laser.get_value("?S") != 0 or laser.get_faults():
-        raise RuntimeError("Require standby, shutter closed and no active faults")
+    history = laser.read(b"?FH")  # Preserve for review; do not reset it.
+    print("Fault history:", repr(history))
+    if (
+        laser.get_value("?K") != 0
+        or laser.get_laser_state() not in (0, 2)
+        or laser.get_value("?S") != 0
+        or laser.get_faults()
+    ):
+        raise RuntimeError(
+            "Require physical key OFF, laser OFF, shutter closed and no active faults"
+        )
     laser.set_power_w(TARGET_W)
     print("Setpoint:", laser.get_value("?SP"), "W")
 finally:
     laser.disconnect()
 ```
 
-The setpoint remains stored. Disconnecting releases communication without changing
-laser state. `set_laser_state(1)` enables the laser and clears faults and fault history;
+The setpoint remains stored. State 2 retains its documented fault-off meaning;
+review history and the front panel before key ON. Key ON belongs at the final
+operator step after preparation and can itself enable the laser. The notebook
+adds confirmation and post-write checks to this short API example.
+Disconnecting releases communication without changing laser state.
+`set_laser_state(1)` enables the laser and clears faults and fault history;
 capture them first and complete the physical readiness procedure before enabling.
 `set_laser_state(0)` enters standby; full shutdown follows the manual's heater/cooling procedure.
 
@@ -281,7 +323,7 @@ It enforces one CR/LF frame, removes documented echo/prompt decoration,
 and returns a byte payload, including empty, non-ASCII and control bytes.
 It bypasses value, state and fault interpretation;
 documented device errors still raise `DeviceError`. Capturing an empty or
-clear-looking `?F` reply does not establish no faults or configure its clear token.
+clear-looking `?F` reply does not establish physical readiness.
 Normal `get_value()` and `get_status()` retain their parsing requirements.
 
 ```powershell
@@ -296,8 +338,7 @@ communication error with exit code 2. Byte payloads are also encoded in
 `payload_hex`; `payload` contains ASCII text when decodable, otherwise null.
 The CLI's ordinary query/diagnostics output and GUI cache represent byte-valued
 results as `{"bytes_hex": "..."}`. This preserves bytes without text conversion.
-Commissioning needs no fault-clear configuration;
-interpreting and verifying captured data remains the operator's responsibility.
+Interpreting and verifying captured data remains the operator's responsibility.
 
 ## Optional monitoring
 

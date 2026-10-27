@@ -16,7 +16,7 @@ def session_action(session, action, value=None):
 
 
 def hardware_session():
-    return GuiSession(port="FAKE-ONLY", model="V2", baudrate=19200, clear_reply="SYSTEM OK")
+    return GuiSession(port="FAKE-ONLY", model="V2", baudrate=19200)
 
 
 def test_connect_is_passive_then_monitor_pause_interval_and_disconnect(v2_serial, v2_replies):
@@ -54,18 +54,20 @@ def test_connect_is_passive_then_monitor_pause_interval_and_disconnect(v2_serial
     assert all(request.startswith(b"?") for request in v2_serial.writes)
 
 
-def test_monitoring_requires_verified_clear_text_but_capture_does_not(v2_serial):
+def test_monitoring_and_capture_work_without_fault_configuration(v2_serial):
     session = GuiSession(port="FAKE-ONLY", model="V2")
     session.submit("connect")
     session.step()
     session_action(session, "polling", True)
     session.step()
-    assert not v2_serial.writes
-    assert not session.monitor.controls.polling
-    assert "verify" in session.monitor.controls.snapshot()["actions"][-1]["error"]
+    assert session.monitor.controls.polling
+    assert session.monitor.latest()["status"]["faults"] == []
+    session_action(session, "polling", False)
+    session.step()
+    count = len(v2_serial.writes)
     session_action(session, "capture", "?F")
     session.step()
-    assert v2_serial.writes == [b"?F\r\n"]
+    assert v2_serial.writes[count:] == [b"?F\r\n"]
     session.submit("close")
     session.step()
 
@@ -133,14 +135,14 @@ def test_close_application_waits_for_current_exchange_before_stopping_server(
 ):
     session = hardware_session()
     entered, release, stopped = Event(), Event(), Event()
-    read_until = v2_serial.read_until
+    read = v2_serial.read
 
-    def blocked_read(expected, size=None):
+    def blocked_read(size):
         entered.set()
         assert release.wait(3)
-        return read_until(expected, size)
+        return read(size)
 
-    monkeypatch.setattr(v2_serial, "read_until", blocked_read)
+    monkeypatch.setattr(v2_serial, "read", blocked_read)
 
     class Server:
         server_port = 8051
@@ -186,7 +188,8 @@ def test_dash_connection_toggle_only_enqueues_the_displayed_action(v2_serial):
         "connection-port": "FAKE-ONLY",
         "connection-model": "V2",
         "connection-baud": 19200,
-        "connection-clear": "SYSTEM OK",
+        "connection-prompt": "enabled",
+        "connection-timeout": 1.0,
     }
 
     def click(label, count):
@@ -469,7 +472,7 @@ def test_reconnection_clears_readiness_and_rejects_actions_from_the_old_view(cal
 
 
 def test_acknowledged_hardware_link_changes_survive_gui_reconnect(peer, v2_replies, monkeypatch):
-    session = GuiSession(port="FAKE-ONLY", model="V2", clear_reply="SYSTEM OK", allow_writes=True)
+    session = GuiSession(port="FAKE-ONLY", model="V2", allow_writes=True)
     app = create_app(session.monitor, session=session)
     old_settings = session.snapshot()["settings"]
     link = {"baudrate": 19200, "prompt": True}
@@ -513,15 +516,169 @@ def test_acknowledged_hardware_link_changes_survive_gui_reconnect(peer, v2_repli
     assert response.status_code == 200, response.data
     data = response.json["response"]
     assert data["connection-baud"]["value"] == 9600
+    assert data["connection-prompt"]["value"] == "disabled"
     session.submit("disconnect")
     session.step()
     session.submit("connect")
     session.step()
     assert peer.settings["baudrate"] == 9600
+    assert session.snapshot()["settings"]["prompt_enabled"] is False
     session_action(session, "read", "?SV")
     session.step()
     result = session.monitor.controls.snapshot()["actions"][-1]
     assert result["state"] == "read" and result["result"] == "6.05"
+    session.submit("close")
+    session.step()
+
+
+@pytest.mark.parametrize("prompt", [False, True])
+def test_connection_form_selects_prompt_and_timeout_without_device_setup(peer, prompt):
+    session = GuiSession(port="FAKE-ONLY", model="V2")
+    app = create_app(session.monitor, session=session)
+    client = app.server.test_client()
+    state = {
+        "connection-toggle": "Connect",
+        "connection-source": "hardware",
+        "connection-port": "FAKE-ONLY",
+        "connection-model": "V2",
+        "connection-baud": 19200,
+        "connection-prompt": "enabled" if prompt else "disabled",
+        "connection-timeout": 0.75,
+    }
+    response = client.post(
+        "/_dash-update-component",
+        json=callback_request(app, "connection-message", trigger="connection-toggle", state=state),
+    )
+    assert response.status_code == 200, response.data
+    assert peer.opens == 0 and not peer.writes
+    session.step()
+    assert session.snapshot()["state"] == "CONNECTED" and not peer.writes
+    wire = b"6.05\r\n" + (b"Verdi V-2>" if prompt else b"")
+    peer.responses.append(wire)
+    session_action(session, "capture", "?SV")
+    session.step()
+    result = session.monitor.controls.snapshot()["actions"][-1]
+    assert result["state"] == "captured"
+    assert result["result"]["response_hex"] == wire.hex()
+    assert peer.writes == [b"?SV\r\n"] and not peer.pending
+    assert peer.write_timeout == 0.75
+    response = client.post(
+        "/_dash-update-component", json=callback_request(app, "connection-state")
+    )
+    fields = response.json["response"]
+    for name in ("prompt", "timeout"):
+        assert fields[f"connection-{name}"]["disabled"]
+    assert fields["connection-prompt"]["value"] == ("enabled" if prompt else "disabled")
+    assert fields["connection-timeout"]["value"] == 0.75
+    session.submit("disconnect")
+    session.step()
+    response = client.post(
+        "/_dash-update-component", json=callback_request(app, "connection-state")
+    )
+    assert all(
+        not response.json["response"][f"connection-{name}"]["disabled"]
+        for name in ("prompt", "timeout")
+    )
+
+
+@pytest.mark.parametrize("label", ["Connect", "Disconnect"])
+def test_bad_form_values_refuse_connect_but_do_not_prevent_disconnect(peer, label):
+    session = GuiSession(port="FAKE-ONLY", model="V2")
+    if label == "Disconnect":
+        session.submit("connect")
+        session.step()
+    app = create_app(session.monitor, session=session)
+    response = app.server.test_client().post(
+        "/_dash-update-component",
+        json=callback_request(
+            app,
+            "connection-message",
+            trigger="connection-toggle",
+            state={"connection-toggle": label},
+        ),
+    )
+    message = response.json["response"]["connection-message"]["children"]
+    if label == "Connect":
+        assert "select Enabled or Disabled" in message
+        assert not peer.opens
+    else:
+        assert message == "Disconnect requested."
+        session.step()
+        assert peer.closes == 1
+    assert not peer.writes and session.snapshot()["state"] == "DISCONNECTED"
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"prompt_enabled": None},
+        {"timeout_s": 0},
+        {"timeout_s": float("nan")},
+        {"timeout_s": 61},
+    ],
+)
+@pytest.mark.parametrize("source", ["hardware", "simulator"])
+def test_invalid_link_settings_never_open_a_port(peer, settings, source):
+    session = GuiSession(port="FAKE-ONLY", model="V2")
+    session.submit("connect", session.snapshot()["settings"] | {"source": source} | settings)
+    session.step()
+    assert session.snapshot()["state"] == "ERROR"
+    assert not session.snapshot()["connected"]
+    assert not peer.opens and not peer.writes
+
+
+def test_simulator_uses_visible_prompt_setting_and_retains_prompt_changes():
+    session = GuiSession(prompt_enabled=True, allow_writes=True)
+    session.submit("connect")
+    session.step()
+    session_action(session, "read", "?SV")
+    session.step()
+    result = session.monitor.controls.snapshot()["actions"][-1]
+    assert result["state"] == "read"
+    assert bytes.fromhex(result["transaction"]["response_hex"]).endswith(b"\r\nVerdi>")
+    session_action(session, "polling", True)
+    session.step()
+    session_action(session, "polling", False)
+    session.step()
+    session_action(session, "prompt_off")
+    session.step()
+    assert session.monitor.controls.snapshot()["actions"][-1]["state"] == "acknowledged"
+    assert session.snapshot()["settings"]["prompt_enabled"] is False
+    session.submit("disconnect")
+    session.step()
+    session.submit("connect")
+    session.step()
+    assert session.monitor.controller._prompt_enabled is False
+    session.submit("close")
+    session.step()
+
+
+def test_overview_preserves_hundredths_of_an_ampere(monkeypatch):
+    session = GuiSession()
+    session.submit("connect")
+    session.step()
+    laser = session.monitor.controller
+    query = laser._query
+    monkeypatch.setattr(laser, "_query", lambda q: "12.83" if q == "?D1C" else query(q))
+    session_action(session, "polling", True)
+    session.step()
+    app = create_app(session.monitor, session=session)
+    response = app.server.test_client().post(
+        "/_dash-update-component", json=callback_request(app, "sample")
+    )
+    assert response.status_code == 200
+
+    def components(tree):
+        if isinstance(tree, dict):
+            yield tree.get("props", {})
+            for value in tree.values():
+                yield from components(value)
+        elif isinstance(tree, list):
+            for value in tree:
+                yield from components(value)
+
+    fields = {item.get("id"): item for item in components(response.json)}
+    assert fields["current"]["children"] == "12.83"
     session.submit("close")
     session.step()
 

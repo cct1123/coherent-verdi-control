@@ -10,7 +10,7 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
 
-from .controller import BAUDRATES, QUERY_INFO, VerdiController, VerdiError
+from .controller import BAUDRATES, QUERY_INFO, VerdiController, VerdiError, finite_range
 from .monitor import (
     ACTIONS,
     BUTTONS,
@@ -27,6 +27,16 @@ FRESH_BUTTONS = ("apply-power", "start", "shutter-open", "service") + tuple(
     name for name in PANEL_BUTTONS if name != "panel-shutter"
 )
 LCD_WIDTH = 20
+
+
+def _power_input_limit(limit_w: float) -> float:
+    """Highest 0.01 W setting at or below the configured ceiling."""
+    steps = round(limit_w * 100)
+    if steps / 100 > limit_w:
+        steps -= 1
+    return steps / 100
+
+
 # Fieldsets the server (and the browser watchdog) disable together.
 WRITE_GROUPS = ("write-controls", "front-panel", "service-controls")
 # Bootstrap colour for each action record state.
@@ -49,24 +59,29 @@ class GuiSession:
         timeout_s: float = 1.0,
         allow_writes: bool = False,
         power_limit_w: float | None = None,
-        clear_reply: str | None = None,
         prompt_enabled: bool = True,
     ) -> None:
+        if type(prompt_enabled) is not bool:
+            raise ValueError("prompt_enabled must be a bool")
         self.settings: dict[str, Any] = dict(
             source="hardware" if port else "simulator",
             port=port or "",
             model=model,
             baudrate=baudrate,
-            clear_reply=clear_reply,
-        )
-        self.options: dict[str, Any] = dict(
-            timeout_s=timeout_s,
-            allow_writes=allow_writes,
-            power_limit_w=power_limit_w,
+            timeout_s=finite_range(timeout_s, 0.001, 60, "timeout_s"),
             prompt_enabled=prompt_enabled,
         )
+        self.options: dict[str, Any] = dict(
+            allow_writes=allow_writes,
+            power_limit_w=power_limit_w,
+        )
         self.monitor = Monitor(
-            SimulatedVerdi(model, allow_writes=allow_writes, power_limit_w=power_limit_w)
+            SimulatedVerdi(
+                model,
+                allow_writes=allow_writes,
+                power_limit_w=power_limit_w,
+                prompt=prompt_enabled,
+            )
         )
         self.monitor.session = self
         self.monitor.controls.close()
@@ -103,7 +118,7 @@ class GuiSession:
                 raise PermissionError("disconnect before opening another connection")
             if action != "close" and self._pending is not None:
                 raise PermissionError("a connection action is already pending")
-            self._pending = action, dict(settings or self.settings)
+            self._pending = action, self.settings | (settings or {})
             self._state = {
                 "connect": "CONNECTING",
                 "disconnect": "DISCONNECTING",
@@ -117,18 +132,14 @@ class GuiSession:
         state = self.snapshot()
         if not state["connected"]:
             raise PermissionError("connect before starting monitoring")
-        if state["settings"]["source"] == "hardware" and not state["settings"]["clear_reply"]:
-            raise ValueError("capture ?F, verify its clear text, then reconnect with that text")
 
     def remember_link_settings(self, instruction: bytes) -> None:
         """Retain acknowledged hardware link changes for the form and next connection."""
-        if self.monitor.controller.is_simulated:
-            return
         with self._lock:
-            if instruction.startswith(b"B="):
+            if instruction.startswith(b"B=") and not self.monitor.controller.is_simulated:
                 self.settings["baudrate"] = int(instruction[2:])
             elif instruction in (b"PROMPT=0", b"PROMPT=1"):
-                self.options["prompt_enabled"] = instruction == b"PROMPT=0"
+                self.settings["prompt_enabled"] = instruction == b"PROMPT=0"
 
     def step(self) -> None:
         """One worker iteration; useful in tests without a background thread."""
@@ -146,12 +157,18 @@ class GuiSession:
                 if action == "connect":
                     if settings.get("source") not in ("hardware", "simulator"):
                         raise ValueError("select Hardware or Simulator")
+                    settings["timeout_s"] = finite_range(
+                        settings["timeout_s"], 0.001, 60, "timeout_s"
+                    )
+                    if type(settings["prompt_enabled"]) is not bool:
+                        raise ValueError("prompt_enabled must be a bool")
                     if settings["source"] == "hardware":
                         controller = VerdiController(
                             settings["port"],
                             model=settings["model"],
                             baudrate=settings["baudrate"],
-                            active_fault_clear_reply=settings.get("clear_reply") or None,
+                            timeout_s=settings["timeout_s"],
+                            prompt_enabled=settings["prompt_enabled"],
                             **self.options,
                         )
                     else:
@@ -159,6 +176,7 @@ class GuiSession:
                             settings["model"],
                             allow_writes=self.options["allow_writes"],
                             power_limit_w=self.options["power_limit_w"],
+                            prompt=settings["prompt_enabled"],
                         )
                     controller.connect(override=False)
                     with self._lock:
@@ -243,7 +261,7 @@ READINGS: list[tuple[str, str, str, Callable[[dict[str, Any]], str] | None]] = [
     ("Safety shutter", "shutter", "UNKNOWN", lambda s: "OPEN" if s["shutter_open"] else "CLOSED"),
     ("Configured model", "model", "", None),
     ("Keyswitch", "keyswitch", "UNKNOWN", lambda s: "ON" if s["keyswitch_on"] else "OFF"),
-    ("Diode current / A", "current", "—", lambda s: f"{s['diode_current_a']:.1f}"),
+    ("Diode current / A", "current", "—", lambda s: f"{s['diode_current_a']:.2f}"),
     ("LBO servo", "servo", "—", lambda s: display_value("?LBOSS", s["lbo_servo"])),
     ("Reported faults", "faults", "Unknown", lambda s: display_value("?F", s["faults"])),
 ] + [
@@ -428,7 +446,7 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
         "yaxis": axis | {"title": {"text": "W"}, "rangemode": "tozero"},
     }
     ready = [{"label": "Beam path, cooling and interlocks checked", "value": "ready"}]
-    limit = settings["power_limit_w"]
+    limit = _power_input_limit(settings["power_limit_w"])
     operate = locked(
         "write-controls",
         [
@@ -450,7 +468,7 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
             dbc.InputGroup(
                 [
                     dbc.Input(
-                        id="target-power", type="number", min=0, max=limit, step=0.0001, value=0
+                        id="target-power", type="number", min=0, max=limit, step=0.01, value=0
                     ),
                     dbc.InputGroupText("W"),
                     button("Apply", "apply-power", tone="primary", solid=True),
@@ -458,6 +476,7 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                 size="sm",
             ),
             dbc.FormText(
+                "Power targets and presets use 0.01 W increments. "
                 "Start and Open need the readiness switch. Start resets faults and clears "
                 "fault history; read diagnostics first."
             ),
@@ -518,7 +537,7 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                 pushbutton(
                     f"panel-level-{number}",
                     f"POWER LEVEL {number}",
-                    f"Apply preset {number}; presets are stored in this browser, not the laser",
+                    f"Apply preset {number} in 0.01 W increments; stored in this browser",
                     led(f"panel-level-{number}-led"),
                 ),
                 html.Label(
@@ -531,7 +550,7 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                     type="number",
                     min=0,
                     max=limit,
-                    step=0.0001,
+                    step=0.01,
                     placeholder="W",
                     persistence=True,
                     persistence_type="local",
@@ -638,8 +657,8 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                                 className="knob",
                                 role="slider",
                                 tabIndex="0",
-                                title="Drag, scroll or use arrow keys (Shift ×10) to edit "
-                                "the target; SET POWER sends it",
+                                title="Drag, scroll or use arrow keys in 0.01 W steps "
+                                "(Shift ×10) to edit the target; SET POWER sends it",
                                 **attrs(
                                     aria_label="Power adjust: target power / W",
                                     aria_valuemin=0,
@@ -749,14 +768,35 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                 ],
                 className="g-3",
             ),
-            field(
-                "Verified no-active-fault ?F text (needed for hardware monitoring)",
-                "connection-clear",
-            ),
-            dbc.Input(
-                id="connection-clear",
-                value=initial["clear_reply"] or "",
-                placeholder="Verified payload text",
+            dbc.Row(
+                [
+                    dbc.Col(
+                        [
+                            field("Device prompt", "connection-prompt"),
+                            dropdown(
+                                "connection-prompt",
+                                {"enabled": "Enabled", "disabled": "Disabled"},
+                                "enabled" if initial["prompt_enabled"] else "disabled",
+                            ),
+                        ],
+                        md=6,
+                    ),
+                    dbc.Col(
+                        [
+                            field("Timeout / s", "connection-timeout"),
+                            dbc.Input(
+                                id="connection-timeout",
+                                type="number",
+                                min=0.001,
+                                max=60,
+                                step="any",
+                                value=initial["timeout_s"],
+                            ),
+                        ],
+                        md=6,
+                    ),
+                ],
+                className="g-3",
             ),
             row(
                 button("Connect", "connection-toggle", tone="primary"),
@@ -767,6 +807,10 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
             dbc.FormText(
                 "Connect only opens the port. Start monitoring separately. Disconnect "
                 "and Close application release communication; they do not shut down the laser."
+            ),
+            dbc.FormText(
+                "Match the existing device prompt setting; no modes are changed automatically. "
+                "Timeout applies to serial write and receive waits."
             ),
         )
 
@@ -1147,11 +1191,11 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
             f"Writes enabled · ≤ {ceiling:g} W"
             if data["allow_writes"]
             else "Read-only · launch with --allow-writes",
-            *([ceiling] * 5),
+            *([_power_input_limit(ceiling)] * 5),
         )
 
     if session is not None:
-        connection_fields = ("source", "port", "model", "baud", "clear")
+        connection_fields = ("source", "port", "model", "baud", "prompt", "timeout")
 
         @app.callback(
             Output("connection-message", "children"),
@@ -1169,7 +1213,8 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
             port: str,
             model: str,
             baud: int,
-            clear: str,
+            prompt_mode: str,
+            timeout_s: float,
         ) -> str:
             try:
                 if ctx.triggered_id == "close-application":
@@ -1180,16 +1225,19 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                     # Follow the displayed action, so delayed/duplicate Connect clicks
                     # cannot disconnect a connection that just finished opening.
                     action = toggle_label.lower()
-                session.submit(
-                    action,
-                    dict(
+                requested = None
+                if action == "connect":
+                    if prompt_mode not in ("enabled", "disabled"):
+                        raise ValueError("select Enabled or Disabled for the device prompt")
+                    requested = dict(
                         source=source,
                         port=port,
                         model=model,
                         baudrate=baud,
-                        clear_reply=clear or None,
-                    ),
-                )
+                        prompt_enabled=prompt_mode == "enabled",
+                        timeout_s=timeout_s,
+                    )
+                session.submit(action, requested)
                 return (
                     "Closing application; communication will be released."
                     if action == "close"
@@ -1234,7 +1282,8 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
                 settings["port"],
                 settings["model"],
                 settings["baudrate"],
-                settings["clear_reply"] or "",
+                "enabled" if settings["prompt_enabled"] else "disabled",
+                settings["timeout_s"],
             ]
             return (
                 label,
@@ -1263,11 +1312,15 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
         """
         function (value, max) {
             const ok = typeof value === "number" && isFinite(value);
+            const stepped = Math.round(value * 100) / 100;
+            const valid = ok && value >= 0 && value <= max &&
+                Math.abs(value - stepped) <= 2 * Number.EPSILON * Math.abs(value);
             const fraction = ok && max > 0 ? Math.min(1, Math.max(0, value / max)) : 0;
             return [
                 {"--level": fraction},
                 ok ? value : 0,
-                ok ? "TARGET " + value.toFixed(4) + " W" : "TARGET —",
+                valid ? "TARGET " + stepped.toFixed(2) + " W"
+                      : ok ? "TARGET INVALID" : "TARGET —",
             ];
         }
         """,
@@ -1279,11 +1332,13 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
     )
     clientside(
         """
-        function (setpoint, first, second) {
-            // Lit while the reported setpoint matches the preset at the wire's 4 decimals.
+        function (setpoint, first, second, max) {
+            // Only valid presets can match the stored-setpoint readback.
             return [first, second].map(function (preset) {
-                if (typeof setpoint !== "number") return "led unknown";
-                if (typeof preset !== "number") return "led";
+                if (typeof setpoint !== "number" || !isFinite(setpoint)) return "led unknown";
+                if (typeof preset !== "number" || !isFinite(preset) || preset < 0 ||
+                    preset > max || Math.abs(preset - Math.round(preset * 100) / 100) >
+                    2 * Number.EPSILON * Math.abs(preset)) return "led";
                 return Math.abs(setpoint - preset) < 5e-5 ? "led on" : "led";
             });
         }
@@ -1293,6 +1348,7 @@ def create_app(monitor: Monitor, *, session: GuiSession | None = None) -> Any:
         Input("panel-setpoint", "data"),
         Input("panel-level-1-value", "value"),
         Input("panel-level-2-value", "value"),
+        Input("target-power", "max"),
     )
 
     return app

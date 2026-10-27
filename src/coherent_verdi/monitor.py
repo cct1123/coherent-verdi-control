@@ -25,6 +25,7 @@ from .controller import (
     normalize_query,
     status_value,
     transaction_evidence,
+    validate_power_w,
 )
 
 if TYPE_CHECKING:
@@ -205,6 +206,8 @@ class RequestQueue:
                 raise PermissionError("controller session failed; use a new session")
             if write and not self.controller.allow_writes:
                 raise PermissionError("writes disabled; launch gui --allow-writes explicitly")
+            if action == "power":
+                value = validate_power_w(value, self.controller.power_limit_w)
             if write and not urgent and self._pending(writes=True):
                 raise PermissionError("another write is pending; wait for its result")
             if action == "capture" and self.controller.allow_writes:

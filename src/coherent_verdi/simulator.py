@@ -59,7 +59,6 @@ class SimulatedVerdi(VerdiController):
             model=model,
             allow_writes=allow_writes,
             power_limit_w=power_limit_w,
-            active_fault_clear_reply="SYSTEM OK",
             prompt_enabled=prompt,
         )
         self._echo = echo
@@ -204,7 +203,8 @@ class SimulatedVerdi(VerdiController):
             if payload:
                 parts.append(payload)
             self._prompt_enabled = self._prompt
-            return (" ".join(parts) + "\r\n").encode("ascii") + (b"Verdi>" if self._prompt else b"")
+            line = (" ".join(parts) + "\r\n").encode("ascii")
+            return line + (b"Verdi>" if self._prompt else b"")
 
     def _open(self) -> None:
         pass  # Keep fixture state across an explicit reconnect.
