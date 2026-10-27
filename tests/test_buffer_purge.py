@@ -5,12 +5,12 @@ from threading import Event
 
 import pytest
 import serial
-from test_serial import FakeSerial
+from fakes import SerialPeer
 
 from coherent_verdi import SimulatedVerdi, VerdiController, VerdiError
 
 
-class PurgeSerial(FakeSerial):
+class PurgeSerial(SerialPeer):
     def __init__(self):
         super().__init__()
         self.tx_pending = bytearray()
@@ -121,11 +121,11 @@ def test_purge_waits_for_transaction_lock(peer):
 
 def test_simulator_purge_has_no_device_effect_and_retains_failure_state(monkeypatch):
     with SimulatedVerdi() as laser:
-        before = laser.status()
+        before = laser.get_status()
         evidence = laser.last_transaction
         laser.purge_buffers()
         assert laser.last_transaction == evidence and not laser.failed
-        after = laser.status()
+        after = laser.get_status()
         assert {k: v for k, v in before.items() if k not in ("sampled_at", "duration_s")} == {
             k: v for k, v in after.items() if k not in ("sampled_at", "duration_s")
         }

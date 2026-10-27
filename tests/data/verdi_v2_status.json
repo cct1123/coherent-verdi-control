@@ -1,0 +1,173 @@
+{
+  "source": "examples/03_health_check.ipynb, saved run 2026-10-26",
+  "framing_source": "examples/01_connect.ipynb, saved raw ?SV reply",
+  "model": "V2",
+  "baudrate": 19200,
+  "version_wire_hex": "362e30350d0a566572646920562d323e",
+  "responses": [
+    {
+      "query": "?P",
+      "payload_hex": "302e303130"
+    },
+    {
+      "query": "?SP",
+      "payload_hex": "302e30313030"
+    },
+    {
+      "query": "?L",
+      "payload_hex": "30"
+    },
+    {
+      "query": "?S",
+      "payload_hex": "30"
+    },
+    {
+      "query": "?K",
+      "payload_hex": "30"
+    },
+    {
+      "query": "?M",
+      "payload_hex": "31"
+    },
+    {
+      "query": "?LRS",
+      "payload_hex": "32"
+    },
+    {
+      "query": "?C",
+      "payload_hex": "302e3030"
+    },
+    {
+      "query": "?F",
+      "payload_hex": "53595354454d204f4b"
+    },
+    {
+      "query": "?FH",
+      "payload_hex": "53595354454d204f4b"
+    },
+    {
+      "query": "?SV",
+      "payload_hex": "362e3035"
+    },
+    {
+      "query": "?B",
+      "payload_hex": "3139323030"
+    },
+    {
+      "query": "?HH",
+      "payload_hex": "323639332e3632"
+    },
+    {
+      "query": "?PSH",
+      "payload_hex": "323639332e3632"
+    },
+    {
+      "query": "?D1H",
+      "payload_hex": "323339303132322e3235"
+    },
+    {
+      "query": "?BT",
+      "payload_hex": "32302e3234"
+    },
+    {
+      "query": "?LBOT",
+      "payload_hex": "3134392e3234"
+    },
+    {
+      "query": "?LBOST",
+      "payload_hex": "3134392e3230"
+    },
+    {
+      "query": "?LBOSS",
+      "payload_hex": "31"
+    },
+    {
+      "query": "?LBOD",
+      "payload_hex": "363735302e3532"
+    },
+    {
+      "query": "?LBOH",
+      "payload_hex": "31"
+    },
+    {
+      "query": "?LBOOS",
+      "payload_hex": "30"
+    },
+    {
+      "query": "?ET",
+      "payload_hex": "36392e3939"
+    },
+    {
+      "query": "?EST",
+      "payload_hex": "37302e3030"
+    },
+    {
+      "query": "?ESS",
+      "payload_hex": "31"
+    },
+    {
+      "query": "?ED",
+      "payload_hex": "343439352e3739"
+    },
+    {
+      "query": "?VT",
+      "payload_hex": "33352e3030"
+    },
+    {
+      "query": "?VST",
+      "payload_hex": "33352e3030"
+    },
+    {
+      "query": "?VSS",
+      "payload_hex": "31"
+    },
+    {
+      "query": "?VD",
+      "payload_hex": "313431332e3833"
+    },
+    {
+      "query": "?D1C",
+      "payload_hex": "302e3038"
+    },
+    {
+      "query": "?D1T",
+      "payload_hex": "32372e3837"
+    },
+    {
+      "query": "?D1ST",
+      "payload_hex": "32372e3837"
+    },
+    {
+      "query": "?D1SS",
+      "payload_hex": "31"
+    },
+    {
+      "query": "?D1TD",
+      "payload_hex": "3139352e3431"
+    },
+    {
+      "query": "?D1HST",
+      "payload_hex": "32332e3630"
+    },
+    {
+      "query": "?D1PC",
+      "payload_hex": "302e3031"
+    },
+    {
+      "query": "?D1RCF",
+      "payload_hex": "302e3032"
+    },
+    {
+      "query": "?D1RCM",
+      "payload_hex": "32322e3431"
+    },
+    {
+      "query": "?D15V",
+      "payload_hex": "352e3030"
+    },
+    {
+      "query": "?ACAD",
+      "payload_hex": "302e3038302e30"
+    }
+  ]
+}

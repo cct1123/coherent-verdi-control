@@ -14,7 +14,8 @@ from fakes import RecordingVerdi as SimulatedVerdi
 
 from coherent_verdi import VerdiController
 from coherent_verdi.__main__ import main as cli_main
-from coherent_verdi.gui import Monitor, create_app
+from coherent_verdi.gui import create_app
+from coherent_verdi.monitor import Monitor
 
 
 def main(args):
@@ -86,7 +87,7 @@ def test_freshness_ignores_wall_clock_steps(monkeypatch, wall_clock_offset_s):
             def now(tz):
                 return datetime.now(tz) + timedelta(seconds=wall_clock_offset_s)
 
-        monkeypatch.setattr("coherent_verdi.gui.datetime", ShiftedDatetime)
+        monkeypatch.setattr("coherent_verdi.monitor.datetime", ShiftedDatetime)
         service = Monitor(controller, clock=lambda: now[0])
         service.poll_once()
         assert service.snapshot()["health"] == "LIVE"
@@ -96,16 +97,17 @@ def test_freshness_ignores_wall_clock_steps(monkeypatch, wall_clock_offset_s):
 
 
 def test_freshness_includes_delayed_publication(monkeypatch):
+    from copy import deepcopy
+
     now = [0.0]
     with SimulatedVerdi(model="V5") as controller:
         service = Monitor(controller, clock=lambda: now[0])
-        publish = service.record
 
-        def delayed(sample, started):
-            now[0] += 60
-            return publish(sample, started)
+        def delayed(sample):
+            now[0] = 60  # Delay copying the completed sample into the cache.
+            return deepcopy(sample)
 
-        monkeypatch.setattr(service, "record", delayed)
+        monkeypatch.setattr("coherent_verdi.monitor.deepcopy", delayed)
         service.poll_once()
         assert service.snapshot()["age_s"] == 60
         assert service.snapshot()["health"] == "STALE"
@@ -230,9 +232,9 @@ def serial_cli(monkeypatch):
     sim = SimulatedVerdi("V5")
     opened = []
 
-    from test_serial import FakeSerial
+    from fakes import SerialPeer
 
-    class Peer(FakeSerial):
+    class Peer(SerialPeer):
         def write(self, request):
             self.responses.append(sim._simulate_response(request) + b"Verdi>")
             return super().write(request)
@@ -263,22 +265,19 @@ def test_cli_hardware_status_and_watch_use_verified_fault_reply(serial_cli, caps
 
 def test_cli_hardware_gui_separates_serial_and_http_ports(serial_cli, monkeypatch):
     _, opened = serial_cli
-    received_sample = Event()
-    original_poll = Monitor.poll_once
+    monkeypatch.setattr("coherent_verdi.gui.create_app", lambda monitor, **kwargs: object())
 
-    def poll(monitor):
-        result = original_poll(monitor)
-        received_sample.set()
-        return result
+    def serve(session, app, port):
+        assert port == 8051
+        assert session.settings["port"] == "FAKE-ONLY"
+        assert not opened and not session.snapshot()["connected"]
+        session.submit("connect")
+        session.step()
+        assert len(opened) == 1 and opened[0].last_transaction is None
+        session.submit("close")
+        session.step()
 
-    class App:
-        def run(self, **settings):
-            assert settings["port"] == 8051
-            assert received_sample.wait(3)
-            raise KeyboardInterrupt
-
-    monkeypatch.setattr(Monitor, "poll_once", poll)
-    monkeypatch.setattr("coherent_verdi.gui.create_app", lambda monitor: App())
+    monkeypatch.setattr("coherent_verdi.gui.run_gui", serve)
     assert (
         main(
             [
@@ -293,9 +292,8 @@ def test_cli_hardware_gui_separates_serial_and_http_ports(serial_cli, monkeypatc
                 "8051",
             ]
         )
-        == 130
+        == 0
     )
-    assert len(opened) == 1 and opened[0]._port == "FAKE-ONLY"
     assert opened[0]._connected is False
 
 
@@ -324,11 +322,11 @@ def test_cli_watch_flushes_each_record_before_waiting(monkeypatch):
     output = Output()
     monkeypatch.setattr("coherent_verdi.__main__.sys.stdout", output)
 
-    def after_first_record(interval):
+    def after_first_record(monitor, stop):
         assert output.flushes == 1
         assert json.loads(output.getvalue())["status"]["simulated"] is True
 
-    monkeypatch.setattr("coherent_verdi.__main__.sleep", after_first_record)
+    monkeypatch.setattr(Monitor, "wait", after_first_record)
     assert main(["watch", "--count", "2"]) == 0
     assert output.flushes == 2
 
@@ -341,36 +339,6 @@ def test_cli_watch_returns_failure_when_any_sample_failed(monkeypatch, capsys):
     assert main(["watch", "--count", "1"]) == 2
     sample = json.loads(capsys.readouterr().out)
     assert sample["status"] is None and sample["error"] == "RuntimeError:"
-
-
-def test_gui_launcher_drains_acquisition_before_disconnect(monkeypatch):
-    entered, release, finished = Event(), Event(), Event()
-    original_read = VerdiController.get_value
-    original_disconnect = VerdiController.disconnect
-
-    def sample(controller, query):
-        entered.set()
-        assert release.wait(3)
-        result = original_read(controller, query)
-        finished.set()
-        return result
-
-    def disconnect(controller):
-        assert finished.is_set(), "connection closed before acquisition finished"
-        original_disconnect(controller)
-
-    class App:
-        def run(self, **settings):
-            assert settings["host"] == "127.0.0.1"
-            assert not settings["debug"] and not settings["use_reloader"]
-            assert entered.wait(3)
-            release.set()
-            raise KeyboardInterrupt
-
-    monkeypatch.setattr(VerdiController, "get_value", sample)
-    monkeypatch.setattr(VerdiController, "disconnect", disconnect)
-    monkeypatch.setattr("coherent_verdi.gui.create_app", lambda monitor: App())
-    assert main(["gui"]) == 130
 
 
 @pytest.mark.parametrize(

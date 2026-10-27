@@ -65,7 +65,7 @@ They do not replace the lab's operating procedure.
 
 ### Clear serial buffers before the first query
 
-After updating the package, restart the notebook kernel to load the purge API.
+After updating the package, restart the notebook kernel to load the current API.
 Open the port in its own cell:
 
 ```python
@@ -76,14 +76,13 @@ print("Serial port open:", connected)
 `override=True` closes an older controller-owned connection to the same port in
 this Python process before opening the new one. It cannot take a port from a raw
 `ser` handle, another kernel or another application; close that owner first.
-A failed controller still needs a fresh controller object. Restart the kernel once
-after this driver update so later controller connections can be tracked.
+A failed controller still needs a fresh controller object.
 
 After inspecting the result, start communication in a separate section and cell:
 
 ```python
 laser.purge_buffers()  # Explicit host TX/RX discard, separate from connection
-reply = laser.get(b"?SV")
+reply = laser.read(b"?SV")
 print(repr(reply))
 ```
 
@@ -94,15 +93,23 @@ It does not reset the laser's command parser or clear a controller's failure lat
 Save evidence before discarding bytes after an error; purging does not make a
 failed controller reusable. No lesson purges or retries automatically after a failure.
 
-All connecting lessons use `laser.get(b"?SV")` and display byte payloads without echo, CR/LF or prompt,
-including CR/LF and the following prompt. They wait for the complete exchange
-before sending another query. They require the instrument prompt to be enabled
+All connecting lessons use `laser.read(b"?SV")`. The method consumes the full
+CR/LF reply and terminal prompt before returning the payload bytes, with echo
+and framing removed. The full wire reply stays in `laser.last_transaction["response"]`.
+The lessons require the instrument prompt to be enabled
 and do not change its echo/prompt settings. No fault-clear text is needed to
-capture raw status bytes. Lesson 5 uses `set(b"P=...")` and compares byte payloads explicitly to verify
+capture raw status bytes. Lesson 5 uses `write(b"P=...")` and compares byte payloads explicitly to verify
 the stored setpoint, standby, closed shutter and the verified no-fault reply.
-Lesson 6 also uses raw `get()`/`set()` calls, explicitly comparing byte
+Lesson 6 also uses raw `read()`/`write()` calls, explicitly comparing byte
 payloads before enabling, opening, closing and returning to standby. Replies
 and command acknowledgments remain available as raw byte records.
+
+Saved outputs remain unchanged from the original hardware runs. In lessons 01–02,
+the saved replies include framing and the transaction records contain historical
+fields; current `read()` returns only the payload and current records use the
+[documented six fields](../docs/API.md#transaction-evidence-and-errors).
+Lessons 05–06 have no saved hardware outputs. Software checks replay all lessons
+with simulated serial peers; they do not regenerate or replace the hardware evidence.
 
 ### Before writing in lessons 5–6: establish the fault-clear payload
 

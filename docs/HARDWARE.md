@@ -2,8 +2,10 @@
 
 The controller implements the RS-232 interface from the supplied
 [Coherent Verdi V-2/V-5/V-6 Operator's Manual](../verdi.manual_v5.pdf),
-part 0171-750-00 Rev IB, sections 1, 3, 4 and 5. Physical communication, timing,
-optical behavior and calibration remain unverified. Use a qualified operator and
+part 0171-750-00 Rev IB, sections 1, 3, 4 and 5. Read-only communication on V2
+firmware 6.05 was exercised in notebooks 01-03 on 2026-10-26. Emission control,
+physical timing guarantees, optical behavior and calibration remain unverified.
+For dashboard startup and byte capture, see the [GUI guide](GUI.md). Use a qualified operator and
 the site's laser procedure for setup, emission and shutdown.
 
 ## Connection
@@ -79,7 +81,7 @@ have side effects on the actual firmware, revise the procedure before issuing it
 uv run verdi --port COM5 --model V2 --baudrate 19200 commission --query ?F > active-fault.jsonl
 ```
 
-`commission` uses the read-only `capture()` API. It validates single-line
+`commission` uses the read-only `get_capture()` API. It validates single-line
 framing and preserves byte payloads, including non-ASCII data, without guessing
 an encoding. It leaves values and faults uninterpreted. Empty and unknown payloads
 are evidence to inspect; a captured exchange does not establish a healthy laser.
@@ -88,7 +90,7 @@ device rejection, framing or communication failure. Use repeated
 `--query` options only for the specific sequence you intend to inspect.
 
 Set `active_fault_clear_reply` to the exact verified text in the controller
-constructor before using `read_faults()` or `status()`. The default deliberately
+constructor before using `get_faults()` or `get_status()`. The default deliberately
 rejects unverified clear-looking replies. Empty replies remain unsupported by
 normal fault parsing; positive fault codes cannot be configured as clear. The
 simulator's `SYSTEM OK` convention does not establish physical compatibility.
@@ -105,11 +107,11 @@ setting `allow_writes=True`. Model ratings are software ceilings, not site limit
 Stop monitoring and release the read-only controller before opening a write-enabled
 controller on the same port. No state or commands are replayed on connection.
 
-1. Verify `stop()` / `?L` gives standby under the operator's procedure.
+1. Verify `set_laser_state(0)` / `?L` gives standby under the operator's procedure.
 2. With shutter closed and no active faults, set one conservative site-approved
    power and compare `?SP` with the request and front panel. Record quantization;
    the setpoint remains stored. No automatic ramp or reset is performed.
-3. Before `start()`, complete LBO warmup and verify key/standby configuration and
+3. Before `set_laser_state(1)`, complete LBO warmup and verify key/standby configuration and
    LOCKED diode, LBO, etalon and vanadate temperature servos (manual pp. 4-2–4-3).
    The keyswitch itself can enable emission; its operation belongs to the operator.
    Confirm the shutter is closed. Capture fault history first: `L=1` resets it.
@@ -134,7 +136,7 @@ No undocumented calibration or temperature-tuning commands are added.
 
 ## Monitoring and communication failure
 
-Choose polling cadence and transaction timeout from observed latency. `status()`
+Choose polling cadence and transaction timeout from observed latency. `get_status()`
 is 14 sequential queries, not simultaneous acquisition. Record sample duration,
 failed samples, drift and dashboard staleness over the required run duration.
 Python applications can record `last_transaction` after each operation and

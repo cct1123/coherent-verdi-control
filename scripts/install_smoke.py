@@ -41,6 +41,7 @@ def main() -> None:
         "scripts/install_smoke.py",
         "scripts/test_watchdog.cjs",
         "tests/conftest.py",
+        "tests/data/verdi_v2_status.json",
         "README.md",
         "examples/README.md",
         "verdi.manual_v5.pdf",
@@ -60,8 +61,11 @@ def main() -> None:
         run([UV, "venv", "--quiet", "--python", sys.executable, str(env_path)])
         executable = env_path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         install = [UV, "pip", "install", "--quiet", "--python", str(executable)]
-        # Refresh guarantees the freshly built wheel, not a cached one, is installed.
-        run([*install, "--refresh-package", project["name"], str(wheel)])
+        # A unique local path selects this build and also works with UV_OFFLINE=1.
+        # --refresh-package conflicts with offline mode, even for a local wheel.
+        fresh_wheel = Path(directory) / wheel.name
+        shutil.copyfile(wheel, fresh_wheel)
+        run([*install, str(fresh_wheel)])
         run([UV, "pip", "check", "--python", str(executable)])
         # CWD outside source and isolated mode prove this imports the installed wheel.
         check = run(
@@ -81,6 +85,23 @@ def main() -> None:
             cwd=directory,
         )
         run([str(executable), "-I", "-c", "import serial; assert serial.VERSION"], cwd=directory)
+        api_check = """
+from coherent_verdi import SimulatedVerdi, VerdiController
+for cls in (VerdiController, SimulatedVerdi):
+    assert callable(cls.read) and callable(cls.write)
+    assert not hasattr(cls, 'get') and not hasattr(cls, 'set')
+    assert not hasattr(cls, '_request')
+with SimulatedVerdi(allow_writes=True, power_limit_w=0.5) as laser:
+    assert laser.read(b'?SV') == b'SIMULATOR'
+    assert laser.write(b'P=0.25') == b'\\r\\n'
+    assert laser.get_value('?SP') == 0.25
+    laser.set_value('P=0.2')
+    assert laser.last_transaction['outcome'] == 'acknowledged'
+    assert laser.get_value('?SP') == 0.2
+    laser.set_power_w(0.1)
+    assert laser.get_value('?SP') == 0.1
+"""
+        run([str(executable), "-I", "-c", api_check], cwd=directory)
         cli = run([str(executable), "-I", "-m", "coherent_verdi", "status"], cwd=directory)
         data = json.loads(cli.stdout)
         assert data["simulated"] is True and data["power_w"] == 0.0
@@ -177,7 +198,7 @@ assert requests == [] if discovery else requests[0] == b'?SV\r\n'
         assert missing_gui.returncode == 2
         assert json.loads(missing_gui.stderr)["type"] == "ModuleNotFoundError"
         print(f"PASS: isolated controller wheel, assets, CLI, examples; {check.stdout.strip()}")
-        run([*install, f"{wheel}[gui]"])
+        run([*install, f"{fresh_wheel}[gui]"])
         run([UV, "pip", "check", "--python", str(executable)])
         smoke = run(
             [str(executable), "-I", str(Path(__file__).resolve()), "--gui-smoke"], cwd=directory
@@ -192,7 +213,8 @@ def gui_smoke() -> None:
     import serial.tools.list_ports
 
     from coherent_verdi import SimulatedVerdi
-    from coherent_verdi.gui import Monitor, create_app
+    from coherent_verdi.gui import GuiSession, create_app
+    from coherent_verdi.monitor import Monitor
 
     def prohibited(*args: object, **kwargs: object) -> None:
         raise AssertionError("physical serial access/discovery prohibited in GUI smoke test")
@@ -227,7 +249,10 @@ def gui_smoke() -> None:
             ],
             "inputs": [{"id": "refresh", "property": "n_intervals", "value": 1}],
             "changedPropIds": ["refresh.n_intervals"],
-            "state": [{"id": "history-cursor", "property": "data", "value": 0}],
+            "state": [
+                {"id": "history-cursor", "property": "data", "value": 0},
+                {"id": "connection-generation", "property": "data", "value": 0},
+            ],
         }
 
         def refresh(expected: str) -> dict:
@@ -282,9 +307,29 @@ def gui_smoke() -> None:
         assert action["state"] == "verified" and action["readback"]["actual"] == 0.25
         assert controls_app.server.test_client().get("/_dash-layout").status_code == 200
         controls_monitor.close()
+    runtime = GuiSession(model="V2")
+    lifecycle_app = create_app(runtime.monitor, session=runtime)
+    layout = lifecycle_app.server.test_client().get("/_dash-layout").data
+    assert all(
+        name.encode() in layout
+        for name in ("connection-toggle", "close-application", "monitoring-interval")
+    )
+    runtime.submit("connect")
+    runtime.step()
+    assert (
+        runtime.snapshot()["connected"]
+        and runtime.monitor.controls.controller.last_transaction is None
+    )
+    control = runtime.monitor.controls
+    control.submit(control.new_client(), "resume-polling", 1, "polling", True)
+    runtime.step()
+    assert runtime.monitor.latest()["health"] == "LIVE"
+    runtime.submit("close")
+    runtime.step()
+    assert runtime.stop.is_set() and not runtime.snapshot()["connected"]
     print(
         "PASS: installed GUI assets, NO DATA/LIVE/FAULT/ERROR callbacks, "
-        "bounded cache, queued power control with readback, no callback acquisition; "
+        "bounded cache, queued power control, explicit connection and monitoring lifecycle; "
         f"Dash {version('dash')}, Plotly {version('plotly')}, pySerial {version('pyserial')}"
     )
 

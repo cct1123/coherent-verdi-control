@@ -48,5 +48,5 @@ strict = true
 files = ["src/coherent_verdi"]
 
 [[tool.mypy.overrides]]
-module = ["dash.*", "dash_bootstrap_components.*"]
+module = ["dash.*", "dash_bootstrap_components.*", "werkzeug.*"]
 ignore_missing_imports = true

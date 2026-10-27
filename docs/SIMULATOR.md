@@ -12,16 +12,17 @@ from coherent_verdi import SimulatedVerdi
 with SimulatedVerdi("V5", allow_writes=True) as laser:
     laser.set_key(True)  # Local fixture control, never an RS-232 command.
     laser.set_power_w(0.5)
-    laser.start()
+    laser.set_laser_state(1)
     laser.set_shutter(open=True)
-    assert laser.read_power_w() == 0.5
+    assert laser.get_power_w() == 0.5
     laser.set_faults(2, 999)  # Preserve unknown positive fault codes.
-    assert laser.read_faults() == [2, 999]
+    assert laser.get_faults() == [2, 999]
 ```
 
 The fixture supplies all 42 queries and every Table 5-3 write operation emitted
-by the controller, CR/LF framing and echo/prompt layouts. Long/short input aliases
-are normalized by the public controller API before reaching the fixture.
+by the controller, CR/LF framing and echo/prompt layouts. `get_value()` normalizes
+long/short query aliases before reaching the fixture; byte `read()`/`write()` calls
+preserve the supplied instructions and use canonical short setting commands.
 `echo` and `prompt` constructor options select initial reply formatting.
 `last_transaction` provides the latest
 exchange record, as on the serial controller. Disconnecting does not change fixture state.
@@ -39,8 +40,9 @@ Its simple state rules are deliberate test policies:
 - `SYSTEM OK` for no active faults is a simulator convention. The manual only
   specifies this text for history. Physical controllers require independently
   verified `active_fault_clear_reply` configuration.
-- Baud writes change the fixture's `?B` and controller baud setting. The fixture
-  acknowledges at the old rate; it does not establish physical transition timing.
+- Baud writes change the fixture's `?B`. The typed `set_baudrate()` helper also
+  changes the controller baud setting; raw `write(b"B=9600")` does not change the host.
+  The fixture acknowledges at the old rate; it does not establish physical transition timing.
 - LBO heater writes change `?LBOH`; no cooling/heating, interlock or fault behavior
   is synthesized. LBO optimization and FLASH only record initiation; servo and
   optical transients or completion are not modeled.
@@ -55,3 +57,7 @@ fixture values. They establish no physical performance or calibration claim.
 Malformed replies, timeouts, partial writes and queued bytes are exercised by
 test doubles in `tests/`, outside the installed package. They use the real serial
 transaction path without opening physical ports.
+
+The [GUI guide](GUI.md) describes starting the simulated dashboard. The saved
+V2 reference tests use recorded payloads independently of this simulator; see
+[notebook reference tests](DEVELOPMENT.md#notebook-reference-tests).

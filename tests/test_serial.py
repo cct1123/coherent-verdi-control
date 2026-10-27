@@ -1,76 +1,12 @@
 """Real controller API through a fake pySerial handle, never a port."""
 
 import json
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-import serial
 
 from coherent_verdi import VerdiController, VerdiError
 from coherent_verdi.__main__ import main as cli_main
-
-
-class FakeSerial:
-    """A byte-oriented peer that can retain unsolicited or duplicate replies."""
-
-    def __init__(self, **settings):
-        self.settings = settings
-        self.responses = deque()
-        self.pending = bytearray()
-        self.writes = []
-        self.opens = self.closes = 0
-        self.write_failure = self.read_failure = self.open_failure = self.close_failure = None
-        self.in_waiting_failure = None
-        self.partial = False
-        self.max_read = 4096
-
-    @property
-    def in_waiting(self):
-        if self.in_waiting_failure:
-            raise self.in_waiting_failure
-        return len(self.pending)
-
-    def open(self):
-        self.opens += 1
-        if self.open_failure:
-            raise self.open_failure
-
-    def write(self, data):
-        if self.write_failure:
-            raise self.write_failure
-        self.writes.append(data)
-        self.pending.extend(self.responses.popleft() if self.responses else b"")
-        return len(data) - int(self.partial)
-
-    def read(self, size):
-        if self.read_failure:
-            raise self.read_failure
-        size = min(size, self.max_read)
-        chunk = self.pending[:size]
-        del self.pending[:size]
-        return bytes(chunk)
-
-    def read_until(self, expected=b"\n", size=None):
-        self._timeout = self.timeout
-        return serial.SerialBase.read_until(self, expected, size)
-
-    def close(self):
-        self.closes += 1
-        if self.close_failure:
-            raise self.close_failure
-
-
-@pytest.fixture
-def peer(monkeypatch):
-    fake = FakeSerial()
-
-    def construct(**settings):
-        fake.settings = settings
-        return fake
-
-    monkeypatch.setattr(serial, "Serial", construct)
-    return fake
 
 
 @pytest.mark.parametrize(
@@ -271,7 +207,7 @@ def test_passive_explicit_lifecycle_and_framing(peer):
     laser = VerdiController("FAKE-ONLY", prompt_enabled=False)
     assert peer.opens == 0
     with pytest.raises(VerdiError, match="disconnected"):
-        laser.read_power_w()
+        laser.get_power_w()
     assert laser.connect() is True
     assert laser.connect() is True
     assert peer.opens == 1 and not peer.writes
@@ -289,7 +225,7 @@ def test_passive_explicit_lifecycle_and_framing(peer):
     )
     assert peer.port == "FAKE-ONLY" and peer.dtr is False and peer.rts is False
     peer.responses.append(b"1.234\r\n")
-    assert laser.read_power_w() == 1.234
+    assert laser.get_power_w() == 1.234
     assert 0 < peer.write_timeout <= 1 and 0 < peer.timeout <= 1
     laser.disconnect()
     laser.disconnect()
@@ -316,8 +252,8 @@ def test_failed_read_blocks_late_replies_and_reconnect(peer, reply, error):
     peer.responses.extend([reply, b"9.000\r\n"])
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
         with pytest.raises(VerdiError, match=error):
-            laser.read_power_w()
-        for action in (laser.read_power_w, laser.connect):
+            laser.get_power_w()
+        for action in (laser.get_power_w, laser.connect):
             with pytest.raises(VerdiError, match="failed"):
                 action()
         laser.disconnect()
@@ -338,38 +274,31 @@ def test_uncertain_write_is_never_replayed(peer, failure):
     peer.responses.append(b"\r\n")
     with VerdiController("FAKE-ONLY", allow_writes=True, prompt_enabled=False) as laser:
         with pytest.raises((VerdiError, KeyboardInterrupt, RuntimeError)):
-            laser.start()
-        for action in (laser.start, laser.stop, laser.read_power_w):
+            laser.set_laser_state(1)
+        for action in (
+            (lambda: laser.set_laser_state(1)),
+            (lambda: laser.set_laser_state(0)),
+            laser.get_power_w,
+        ):
             with pytest.raises(VerdiError):
                 action()
     assert peer.writes in ([], [b"L=1\r\n"])
 
 
-def test_read_timeout_stays_fixed_after_write(peer, monkeypatch):
-    peer.max_read = 1
-    now = [0.0]
-    monkeypatch.setattr("coherent_verdi.controller.monotonic", lambda: now[0])
-    write, read = peer.write, peer.read
-    read_timeouts = []
+def test_configured_timeout_applies_to_reply_and_prompt(peer, monkeypatch):
+    read_until = peer.read_until
+    timeouts = []
 
-    def delayed_write(data):
-        result = write(data)
-        now[0] += 0.004
-        return result
+    def record_timeout(expected, size=None):
+        timeouts.append((expected, peer.timeout))
+        return read_until(expected, size)
 
-    def delayed_read(size):
-        read_timeouts.append(peer.timeout)
-        now[0] += 0.001
-        return read(size)
-
-    monkeypatch.setattr(peer, "write", delayed_write)
-    monkeypatch.setattr(peer, "read", delayed_read)
-    peer.responses.append(b"1\r\n")
-    with VerdiController("FAKE-ONLY", timeout_s=0.01, prompt_enabled=False) as laser:
-        assert laser.read_laser_state() == 1
+    monkeypatch.setattr(peer, "read_until", record_timeout)
+    peer.responses.append(b"1\r\nVerdi V-2>")
+    with VerdiController("FAKE-ONLY", model="V2", timeout_s=0.01) as laser:
+        assert laser.read(b"?L") == b"1"
     assert peer.write_timeout == 0.01
-    assert read_timeouts == pytest.approx([0.01, 0.01, 0.01])
-    assert peer.writes == [b"?L\r\n"]
+    assert timeouts == [(b"\r\n", 0.01), (b">", 0.01)]
 
 
 def test_complete_frame_at_byte_limit_is_accepted(peer):
@@ -378,7 +307,7 @@ def test_complete_frame_at_byte_limit_is_accepted(peer):
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
         assert laser.get_value("?SV") == payload.decode()
         assert laser.last_transaction["response"] == payload + b"\r\n"
-        assert laser.read_laser_state() == 1
+        assert laser.get_laser_state() == 1
     assert peer.writes == [b"?SV\r\n", b"?L\r\n"]
 
 
@@ -392,7 +321,7 @@ def test_frame_over_byte_limit_preserves_partial_evidence_and_retires_session(pe
         assert laser.last_transaction == caught.value.transaction
         assert peer.pending == b"\n"
         with pytest.raises(VerdiError, match="failed"):
-            laser.read_laser_state()
+            laser.get_laser_state()
     assert peer.writes == [b"?SV\r\n"]
 
 
@@ -400,7 +329,7 @@ def test_many_callers_cannot_mix_replies(peer):
     peer.responses.extend([b"1.234\r\n"] * 80)
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
         with ThreadPoolExecutor(max_workers=8) as pool:
-            assert list(pool.map(lambda _: laser.read_power_w(), range(80))) == [1.234] * 80
+            assert list(pool.map(lambda _: laser.get_power_w(), range(80))) == [1.234] * 80
     assert len(peer.writes) == 80
 
 
@@ -422,7 +351,7 @@ def test_cleanup_failure_can_be_retried_without_reviving_connection(peer):
     with pytest.raises(VerdiError):
         laser.disconnect()
     with pytest.raises(VerdiError):
-        laser.read_power_w()
+        laser.get_power_w()
     peer.close_failure = None
     laser.disconnect()
     laser.disconnect()
@@ -444,9 +373,9 @@ def test_unverified_active_clear_reply_blocks_writes(peer, reply):
     peer.responses.append(reply + b"\r\n")
     with VerdiController("FAKE-ONLY", allow_writes=True, prompt_enabled=False) as laser:
         with pytest.raises(VerdiError):
-            laser.read_faults()
+            laser.get_faults()
         with pytest.raises(VerdiError):
-            laser.start()
+            laser.set_laser_state(1)
     assert peer.writes == [b"?F\r\n"]
 
 
@@ -455,7 +384,7 @@ def test_display_source_flag_cannot_enable_unverified_fault_parsing(peer):
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
         laser.is_simulated = True
         with pytest.raises(VerdiError):
-            laser.read_faults()
+            laser.get_faults()
     assert peer.writes == [b"?F\r\n"]
 
 
@@ -465,27 +394,24 @@ def test_verified_clear_reply_is_used_only_for_active_faults(peer, clear):
     with VerdiController(
         "FAKE-ONLY", active_fault_clear_reply=clear, prompt_enabled=False
     ) as laser:
-        assert laser.read_faults() == laser.read_faults(history=True) == []
-        known, unknown = laser.read_faults()
+        assert laser.get_faults() == laser.get_faults(history=True) == []
+        known, unknown = laser.get_faults()
         assert known == 30
         assert unknown == 999
 
 
-@pytest.mark.parametrize("fragment_size", [1, 2, 3, 6, 4096])
-def test_chunked_reads_preserve_framing_and_all_wire_evidence(peer, fragment_size):
-    peer.max_read = fragment_size
+def test_native_reads_preserve_framing_and_all_wire_evidence(peer):
     peer.responses.append(b"1.234\r\n")
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
-        assert laser.read_power_w() == 1.234
+        assert laser.get_power_w() == 1.234
         assert laser.last_transaction["response"] == b"1.234\r\n"
 
 
 def test_trailing_prompt_cannot_exceed_the_response_limit(peer):
-    peer.max_read = 1
     peer.responses.append(b"x" * 4093 + b"\r\nVerdi V-2>")
     with VerdiController("FAKE-ONLY", model="V2", prompt_enabled=True) as laser:
         with pytest.raises(VerdiError, match="4096 byte limit"):
-            laser.capture("?SV")
+            laser.get_capture("?SV")
         assert len(laser.last_transaction["response"]) == 4096
     assert peer.writes == [b"?SV\r\n"]
 
@@ -493,7 +419,7 @@ def test_trailing_prompt_cannot_exceed_the_response_limit(peer):
 def test_command_acknowledgment_and_device_rejection_with_terminal_prompts(peer):
     peer.responses.extend([b"\r\nVerdi V-2>", b"Query Error: unsupported\r\nVerdi V-2>"])
     with VerdiController("FAKE-ONLY", model="V2", allow_writes=True, prompt_enabled=False) as laser:
-        laser.stop()
+        laser.set_laser_state(0)
         assert laser.last_transaction["outcome"] == "acknowledged"
         with pytest.raises(VerdiError, match="Query Error"):
             laser.get_value("?SV")

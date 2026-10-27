@@ -5,7 +5,7 @@ from threading import Event
 
 import pytest
 import serial
-from test_serial import FakeSerial
+from fakes import SerialPeer
 
 from coherent_verdi import VerdiController, VerdiError
 
@@ -15,7 +15,7 @@ def ports(monkeypatch):
     handles, events = [], []
     active = [None]
 
-    class Peer(FakeSerial):
+    class Peer(SerialPeer):
         def __init__(self, **settings):
             super().__init__(**settings)
             self.index = len(handles)
@@ -48,7 +48,7 @@ def test_connect_replaces_previous_controller_without_sending_commands(ports):
         assert events == [("open", 0), ("close", 0), ("open", 1)]
         assert active[0] is handles[1]
         with pytest.raises(VerdiError, match="disconnected"):
-            first.get(b"?SV")
+            first.read(b"?SV")
         first.disconnect()  # Must not unregister or close the replacement.
         third = VerdiController("COM5")
         with pytest.raises(VerdiError, match="another controller"):
@@ -79,7 +79,7 @@ def test_new_controller_can_release_failed_previous_session_without_replay(ports
     try:
         first.connect()
         with pytest.raises(VerdiError, match="timed out"):
-            first.get(b"?SV")
+            first.read(b"?SV")
         evidence = first.last_transaction
         assert second.connect() is True
         assert first.failed and first.last_transaction == evidence
@@ -124,7 +124,7 @@ def test_override_waits_for_in_flight_transaction(ports, monkeypatch):
 
         monkeypatch.setattr(handles[0], "read", read)
         with ThreadPoolExecutor(max_workers=2) as pool:
-            query = pool.submit(first.get, b"?SV")
+            query = pool.submit(first.read, b"?SV")
             try:
                 assert waiting.wait(2)
                 connection = pool.submit(replace)
@@ -142,7 +142,7 @@ def test_override_waits_for_in_flight_transaction(ports, monkeypatch):
 
 
 def test_external_owner_error_explains_override_limit(monkeypatch):
-    class Denied(FakeSerial):
+    class Denied(SerialPeer):
         def open(self):
             raise PermissionError(13, "Access is denied")
 

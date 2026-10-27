@@ -1,55 +1,11 @@
 """Commissioning and failure evidence through an in-memory serial peer only."""
 
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-import serial
 
 from coherent_verdi import DeviceError, VerdiController, VerdiError
 from coherent_verdi.controller import transaction_evidence
-
-
-class DiagnosticPeer:
-    """A serial byte queue; writes append replies without discarding queued input."""
-
-    def __init__(self):
-        self.responses = deque()
-        self.pending = bytearray()
-        self.writes = []
-        self.partial = False
-        self.opens = self.closes = 0
-
-    @property
-    def in_waiting(self):
-        return len(self.pending)
-
-    def open(self):
-        self.opens += 1
-
-    def read_until(self, expected=b"\n", size=None):
-        self._timeout = self.timeout
-        return serial.SerialBase.read_until(self, expected, size)
-
-    def close(self):
-        self.closes += 1
-
-    def write(self, request):
-        self.writes.append(request)
-        self.pending.extend(self.responses.popleft() if self.responses else b"")
-        return len(request) - int(self.partial)
-
-    def read(self, count):
-        data = self.pending[:count]
-        del self.pending[:count]
-        return bytes(data)
-
-
-@pytest.fixture
-def peer(monkeypatch):
-    fake = DiagnosticPeer()
-    monkeypatch.setattr(serial, "Serial", lambda **settings: fake)
-    return fake
 
 
 def test_capture_preserves_exact_minimal_transaction(peer):
@@ -60,7 +16,7 @@ def test_capture_preserves_exact_minimal_transaction(peer):
     ) as laser:
         assert peer.writes == []
         assert laser.last_transaction is None
-        captured = laser.capture("?SV")
+        captured = laser.get_capture("?SV")
         latest = laser.last_transaction
     assert captured == latest
     assert captured is not latest
@@ -78,7 +34,7 @@ def test_capture_preserves_exact_minimal_transaction(peer):
 def test_normal_read_updates_latest_wire_evidence(peer):
     peer.responses.append(b"?P 0.125\r\n")
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
-        assert laser.read_power_w() == 0.125
+        assert laser.get_power_w() == 0.125
         record = laser.last_transaction
     assert record["request"] == b"?P\r\n"
     assert record["response"] == b"?P 0.125\r\n"
@@ -90,7 +46,7 @@ def test_standalone_prompt_is_preserved_in_json_evidence(peer):
     peer.pending.extend(b"Verdi V-2>")
     peer.responses.append(b"?SV6.05\r\n")
     with VerdiController("FAKE-ONLY", model="V2", prompt_enabled=False) as laser:
-        record = laser.capture("?SV")
+        record = laser.get_capture("?SV")
     encoded = transaction_evidence(record)
     assert "preamble_hex" not in encoded
     assert encoded["response_hex"] == b"Verdi V-2>?SV6.05\r\n".hex()
@@ -101,7 +57,7 @@ def test_capture_preserves_all_payload_byte_values_without_an_encoding(peer):
     reply = b"?SV" + payload + b"\r\nVerdi V-2>"
     peer.responses.append(reply)
     with VerdiController("FAKE-ONLY", model="V2", prompt_enabled=True) as laser:
-        record = laser.capture("?SV")
+        record = laser.get_capture("?SV")
         assert record["payload"] == payload
         assert record["response"] == reply
         assert record["outcome"] == "captured" and not laser.failed
@@ -119,7 +75,7 @@ def test_text_query_retains_non_ascii_bytes_and_keeps_ascii_text_compatible(peer
         assert laser.get_value("?SV") == expected
         assert laser.last_transaction["payload"] == expected
         assert not laser.failed
-        assert laser.read_power_w() == 1.25
+        assert laser.get_power_w() == 1.25
     assert peer.writes == [b"?SV\r\n", b"?P\r\n"]
 
 
@@ -127,7 +83,7 @@ def test_text_query_retains_non_ascii_bytes_and_keeps_ascii_text_compatible(peer
 def test_binary_numeric_or_fault_payload_can_be_captured_but_is_not_a_valid_value(peer, query):
     peer.responses.extend([b"\x961\r\n", b"\x961\r\n"])
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
-        assert laser.capture(query)["payload"] == b"\x961"
+        assert laser.get_capture(query)["payload"] == b"\x961"
         assert not laser.failed
         with pytest.raises(VerdiError, match="invalid .* payload"):
             laser.get_value(query)
@@ -139,17 +95,17 @@ def test_binary_numeric_or_fault_payload_can_be_captured_but_is_not_a_valid_valu
 def test_fault_capture_does_not_establish_an_unverified_clear_convention(peer, reply):
     peer.responses.extend([reply, reply, b"1.000\r\n"])
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
-        captured = laser.capture("?F")
+        captured = laser.get_capture("?F")
         assert captured["response"] == reply
         assert captured["payload"] == reply[:-2]
         assert captured["outcome"] == "captured"
         with pytest.raises(VerdiError) as caught:
-            laser.read_faults()
+            laser.get_faults()
         assert caught.value.transaction["instruction"] == b"?F"
         assert caught.value.transaction["response"] == reply
         assert caught.value.transaction["outcome"] == "failed"
         with pytest.raises(VerdiError, match="failed"):
-            laser.read_power_w()
+            laser.get_power_w()
     assert peer.writes == [b"?F\r\n", b"?F\r\n"]
 
 
@@ -158,7 +114,7 @@ def test_capture_allowlist_rejects_before_io_and_leaves_session_usable(peer, que
     peer.responses.append(b"TEST\r\n")
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
         with pytest.raises(ValueError, match="unknown query"):
-            laser.capture(query)
+            laser.get_capture(query)
         assert not peer.writes
         assert laser.get_value("?SV") == "TEST"
     assert peer.writes == [b"?SV\r\n"]
@@ -168,10 +124,10 @@ def test_capture_requires_read_only_controller_before_io(peer):
     peer.responses.append(b"0.125\r\n")
     with VerdiController("FAKE-ONLY", allow_writes=True, prompt_enabled=False) as laser:
         with pytest.raises(PermissionError, match="read-only"):
-            laser.capture("?F")
+            laser.get_capture("?F")
         assert not peer.writes
         assert laser.last_transaction is None
-        assert laser.read_power_w() == 0.125
+        assert laser.get_power_w() == 0.125
 
 
 @pytest.mark.parametrize(
@@ -183,25 +139,24 @@ def test_capture_preserves_typed_malformed_payload_without_claiming_validity(
 ):
     peer.responses.extend([reply, reply])
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
-        assert laser.capture(query)["payload"] == payload.encode("ascii")
+        assert laser.get_capture(query)["payload"] == payload.encode("ascii")
         with pytest.raises(VerdiError):
             laser.get_value(query)
         with pytest.raises(VerdiError, match="failed"):
-            laser.capture("?SV")
+            laser.get_capture("?SV")
 
 
-@pytest.mark.parametrize("reply", [b"missing-cr\n"])
-def test_capture_still_enforces_framing_and_retires_malformed_sessions(peer, reply):
-    peer.responses.append(reply)
+def test_capture_still_enforces_framing_and_retires_malformed_sessions(peer):
+    peer.responses.append(b"missing-cr\n")
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
         with pytest.raises(VerdiError) as caught:
-            laser.capture("?SV")
+            laser.get_capture("?SV")
         assert caught.value.transaction["instruction"] == b"?SV"
         assert caught.value.transaction["request"] == b"?SV\r\n"
         assert caught.value.transaction["response"]
         record = laser.last_transaction
         with pytest.raises(VerdiError, match="failed"):
-            laser.capture("?SV")
+            laser.get_capture("?SV")
     assert record["outcome"] == "failed"
     assert len(peer.writes) == 1
 
@@ -211,7 +166,7 @@ def test_device_rejection_has_context_and_leaves_session_reusable(peer, capture)
     reply = b"Query Error: unsupported\r\n"
     peer.responses.extend([reply, b"TEST\r\n"])
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
-        action = laser.capture if capture else laser.get_value
+        action = laser.get_capture if capture else laser.get_value
         with pytest.raises(DeviceError) as caught:
             action("?F")
         error = caught.value
@@ -233,12 +188,12 @@ def test_command_rejection_is_distinct_from_unknown_write_outcome(peer):
     peer.responses.extend([reply, b"0\r\n"])
     with VerdiController("FAKE-ONLY", allow_writes=True, prompt_enabled=False) as laser:
         with pytest.raises(DeviceError) as caught:
-            laser.start()
+            laser.set_laser_state(1)
         assert caught.value.transaction["request"] == b"L=1\r\n"
         assert caught.value.transaction["response"] == reply
         assert caught.value.transaction["outcome"] == "rejected"
         record = laser.last_transaction
-        assert laser.read_laser_state() == 0
+        assert laser.get_laser_state() == 0
     assert record["outcome"] == "rejected"
 
 
@@ -252,7 +207,7 @@ def test_query_error_for_different_instruction_invalidates_session(peer, capture
     with VerdiController(
         "FAKE-ONLY", model="V2", allow_writes=not capture, prompt_enabled=False
     ) as laser:
-        action = laser.capture if capture else laser.get_value
+        action = laser.get_capture if capture else laser.get_value
         with pytest.raises(VerdiError, match="device rejected a different query") as caught:
             action("?SV")
         assert not isinstance(caught.value, DeviceError)
@@ -264,7 +219,7 @@ def test_query_error_for_different_instruction_invalidates_session(peer, capture
             laser.get_value("?SV")
         if not capture:
             with pytest.raises(VerdiError, match="failed"):
-                laser.start()
+                laser.set_laser_state(1)
     assert peer.writes == [b"?SV\r\n"]
 
 
@@ -283,7 +238,7 @@ def test_partial_timeout_retains_exact_bytes_and_outcome(peer, command):
     peer.responses.append(b"partial")
     with VerdiController("FAKE-ONLY", allow_writes=command, prompt_enabled=False) as laser:
         with pytest.raises(VerdiError, match="timed out") as caught:
-            laser.start() if command else laser.get_value("?SV")
+            laser.set_laser_state(1) if command else laser.get_value("?SV")
         error = caught.value
         assert error.transaction["instruction"] == (b"L=1" if command else b"?SV")
         assert error.transaction["request"] == (b"L=1\r\n" if command else b"?SV\r\n")
@@ -298,7 +253,7 @@ def test_partial_command_write_retains_unknown_outcome_and_no_replay(peer):
     peer.partial = True
     with VerdiController("FAKE-ONLY", allow_writes=True, prompt_enabled=False) as laser:
         with pytest.raises(VerdiError, match="partial write") as caught:
-            laser.stop()
+            laser.set_laser_state(0)
         error = caught.value
         assert error.transaction["instruction"] == b"L=0"
         assert error.transaction["request"] == b"L=0\r\n"
@@ -306,7 +261,7 @@ def test_partial_command_write_retains_unknown_outcome_and_no_replay(peer):
         assert error.transaction["outcome"] == "unknown"
         record = laser.last_transaction
         with pytest.raises(VerdiError, match="failed"):
-            laser.stop()
+            laser.set_laser_state(0)
     assert record["outcome"] == "unknown"
     assert peer.writes == [b"L=0\r\n"]
 
@@ -325,7 +280,7 @@ def test_capture_and_read_are_serialized_under_concurrent_callers(peer, monkeypa
         def read_or_capture(index):
             query = ("?SV", "?P", "?L")[index % 3]
             if index % 2:
-                record = laser.capture(query)
+                record = laser.get_capture(query)
                 assert record["instruction"] == query.encode("ascii")
                 assert record["request"] == (query + "\r\n").encode()
                 assert record["response"] == replies[query]
@@ -344,7 +299,7 @@ def test_capture_and_read_are_serialized_under_concurrent_callers(peer, monkeypa
 def test_acknowledged_command_keeps_its_wire_evidence(peer):
     peer.responses.append(b"\r\n")
     with VerdiController("FAKE-ONLY", allow_writes=True, prompt_enabled=False) as laser:
-        laser.stop()
+        laser.set_laser_state(0)
         record = laser.last_transaction
     assert record["outcome"] == "acknowledged"
     assert record["request"] == b"L=0\r\n"
@@ -354,7 +309,7 @@ def test_acknowledged_command_keeps_its_wire_evidence(peer):
 def test_returned_records_cannot_mutate_latest_evidence(peer):
     peer.responses.append(b"TEST\r\n")
     with VerdiController("FAKE-ONLY", prompt_enabled=False) as laser:
-        captured = laser.capture("?SV")
+        captured = laser.get_capture("?SV")
         latest = laser.last_transaction
         captured.clear()
         latest["response"] = b"changed"
@@ -379,9 +334,9 @@ def test_local_validation_preserves_previous_transaction(peer):
         laser.get_value("?SV")
         previous = laser.last_transaction
         with pytest.raises(ValueError):
-            laser.capture("?BAD")
+            laser.get_capture("?BAD")
         with pytest.raises(PermissionError):
-            laser.start()
+            laser.set_laser_state(1)
         assert laser.last_transaction == previous
     assert peer.writes == [b"?SV\r\n"]
 
@@ -399,7 +354,7 @@ def test_disconnected_and_failed_refusals_preserve_previous_transaction(peer):
         failed = laser.last_transaction
         assert failed == caught.value.transaction
         with pytest.raises(VerdiError, match="failed") as refused:
-            laser.capture("?SV")
+            laser.get_capture("?SV")
         assert refused.value.transaction is None
         assert laser.last_transaction == failed
     with pytest.raises(VerdiError):

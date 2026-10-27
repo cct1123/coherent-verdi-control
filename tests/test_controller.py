@@ -17,7 +17,7 @@ def test_invalid_queries_are_rejected_before_io(query):
         with pytest.raises(ValueError):
             laser.get_value(query)
         assert laser.requests == ()
-        assert laser.read_power_w() == 0
+        assert laser.get_power_w() == 0
 
 
 def test_plain_results_are_json_ready_and_cannot_change_device_state():
@@ -25,14 +25,14 @@ def test_plain_results_are_json_ready_and_cannot_change_device_state():
 
     with SimulatedVerdi() as laser:
         laser.set_faults(2, 999)
-        status = laser.status()
+        status = laser.get_status()
         assert json.loads(json.dumps(status, allow_nan=False)) == status
         status["faults"].clear()
         status["power_w"] = 100
-        faults = laser.read_faults()
+        faults = laser.get_faults()
         faults.append(30)
-        assert laser.status()["faults"] == [2, 999]
-        assert laser.read_power_w() == 0
+        assert laser.get_status()["faults"] == [2, 999]
+        assert laser.get_power_w() == 0
 
 
 def test_status_duration_includes_every_query(monkeypatch):
@@ -46,7 +46,7 @@ def test_status_duration_includes_every_query(monkeypatch):
 
     sim = TimedSimulator(model="V5")
     with sim as laser:
-        status = laser.status()
+        status = laser.get_status()
     assert len(sim.requests) == 14
     assert status["duration_s"] == 1.75
 
@@ -75,9 +75,9 @@ def test_fault_selector_rejects_nonboolean_before_querying(history):
     sim = SimulatedVerdi()
     with sim as laser:
         with pytest.raises(ValueError, match="history must be a bool"):
-            laser.read_faults(history=history)
+            laser.get_faults(history=history)
         assert sim.requests == ()
-        assert laser.read_faults() == []  # Local rejection leaves the session usable.
+        assert laser.get_faults() == []  # Local rejection leaves the session usable.
         assert sim.requests == (b"?F\r\n",)
 
 
@@ -90,7 +90,7 @@ def test_model_specific_servo_codes_reject_invalid_firmware_data(query, model, i
         with pytest.raises(VerdiError, match="not documented"):
             c.get_value(query)
         with pytest.raises(VerdiError):
-            c.read_power_w()
+            c.get_power_w()
     assert len(sim.requests) == 1
 
 
@@ -137,14 +137,14 @@ def test_closed_shutter_idle_is_not_diode_off_and_fault_cuts_current():
     c.connect()
     with c:
         c.set_key(True)
-        c.start()
+        c.set_laser_state(1)
         assert c.get_value("?S") == 0
         assert c.get_value("?D1C") > 0  # Magnitude is a fixture, not a hardware claim.
         assert c.get_value("?C") == c.get_value("?D1C")
         c.set_faults(30)
         assert c.get_value("?D1C") == 0
         assert c.get_value("?S") == 0
-        assert c.read_laser_state() == 2
+        assert c.get_laser_state() == 2
 
 
 @pytest.mark.parametrize("options", [{"echo": "0"}, {"prompt": "0"}])
@@ -161,7 +161,7 @@ def test_model_ceiling_and_units(model, limit):
     assert c.get_value("?SP") == limit
     with pytest.raises(ValueError):
         c.set_power_w(limit + 0.0001)
-    assert c.status()["model"] == model
+    assert c.get_status()["model"] == model
     assert b"P=" + f"{limit:.4f}".encode() + b"\r\n" in c.requests
 
 
@@ -187,59 +187,59 @@ def test_default_read_only_and_no_implicit_state_changes():
     c.connect()
     assert not c.requests
     with pytest.raises(PermissionError):
-        c.start()
+        c.set_laser_state(1)
     with pytest.raises(PermissionError):
-        c.stop()
+        c.set_laser_state(0)
     assert not c.requests
-    assert c.status()["laser_state"] == 0
+    assert c.get_status()["laser_state"] == 0
     assert all(r.startswith(b"?") for r in c.requests)
     before = c.requests
     c.disconnect()
     c.disconnect()
     assert c.requests == before
     with pytest.raises(VerdiError):
-        c.read_power_w()
+        c.get_power_w()
 
 
 def test_fault_history_enable_and_key_semantics():
     c = SimulatedVerdi(allow_writes=True)
     c.connect()
-    c.start()
-    assert c.read_laser_state() == 0
+    c.set_laser_state(1)
+    assert c.get_laser_state() == 0
     c.set_key(True)
-    c.start()
+    c.set_laser_state(1)
     c.set_power_w(1.5)
     c.set_shutter(open=True)
-    assert c.read_power_w() == 1.5
+    assert c.get_power_w() == 1.5
     c.set_faults(2, 8, 999)
-    assert c.read_laser_state() == 2
-    assert c.read_faults()[-1] == 999
+    assert c.get_laser_state() == 2
+    assert c.get_faults()[-1] == 999
     c.set_faults()
-    assert c.read_laser_state() == 2  # no automatic re-enable on fault clearing
-    assert len(c.read_faults(history=True)) == 3
-    c.start()
-    assert c.read_faults(history=True) == []
-    assert c.read_laser_state() == 1
-    c.stop()
-    assert c.read_laser_state() == 0
+    assert c.get_laser_state() == 2  # no automatic re-enable on fault clearing
+    assert len(c.get_faults(history=True)) == 3
+    c.set_laser_state(1)
+    assert c.get_faults(history=True) == []
+    assert c.get_laser_state() == 1
+    c.set_laser_state(0)
+    assert c.get_laser_state() == 0
 
 
 def test_warm_fixture_requires_explicit_key_enable_and_shutter():
     with SimulatedVerdi(allow_writes=True) as laser:
-        initial = laser.status()
+        initial = laser.get_status()
         assert initial["lbo_servo"] == 1
         assert initial["lbo_temp_c"] == 148
         laser.set_power_w(0.5)
-        laser.start()
-        assert laser.read_laser_state() == 0  # Key is still OFF.
+        laser.set_laser_state(1)
+        assert laser.get_laser_state() == 0  # Key is still OFF.
         laser.set_key(True)
-        assert laser.read_laser_state() == 0
-        laser.start()
-        assert laser.read_power_w() == 0  # Shutter is still closed.
+        assert laser.get_laser_state() == 0
+        laser.set_laser_state(1)
+        assert laser.get_power_w() == 0  # Shutter is still closed.
         laser.set_shutter(open=True)
-        assert laser.read_power_w() == 0.5
+        assert laser.get_power_w() == 0.5
         laser.set_key(False)
-        assert laser.read_laser_state() == 0
+        assert laser.get_laser_state() == 0
         assert laser.get_value("?S") == 0
 
 
@@ -248,10 +248,10 @@ def test_explicit_echo_and_reversed_prompt_setting():
     c.connect()
     c.set_echo(enabled=True)
     c.set_prompt(enabled=True)
-    assert c.read_power_w() == 0
+    assert c.get_power_w() == 0
     c.set_prompt(enabled=False)
     c.set_echo(enabled=False)
-    assert c.read_power_w() == 0
+    assert c.get_power_w() == 0
     assert b"PROMPT=0\r\n" in c.requests
     assert b"PROMPT=1\r\n" in c.requests
 
@@ -262,7 +262,7 @@ def test_every_query_through_simulated_protocol(model):
     c.connect()
     for query in QUERIES:
         c.get_value(query)
-    assert c.read_diagnostics()["software_version"].startswith("SIMULATOR")
+    assert c.get_diagnostics()["software_version"].startswith("SIMULATOR")
 
 
 def test_applied_command_with_lost_acknowledgment_is_not_replayed():
@@ -271,9 +271,9 @@ def test_applied_command_with_lost_acknowledgment_is_not_replayed():
     c.set_key(True)
     c.inject_timeout(after_apply=True)
     with pytest.raises(VerdiError):
-        c.start()
+        c.set_laser_state(1)
     with pytest.raises(VerdiError):
-        c.read_laser_state()
+        c.get_laser_state()
     # Inspect the independent fixture only: production code cannot reuse the failed session.
     assert c._simulate_response(b"?L\r\n") == b"1\r\n"
     assert c.requests.count(b"L=1\r\n") == 1
@@ -285,7 +285,7 @@ def test_device_rejection_leaves_complete_session_usable():
         sim.inject(b"RANGE ERROR: P=1.0000\r\n")
         with pytest.raises(DeviceError):
             c.set_power_w(1)
-        assert c.read_power_w() == 0
+        assert c.get_power_w() == 0
 
 
 def test_malformed_reply_requires_retiring_the_session():
@@ -293,15 +293,15 @@ def test_malformed_reply_requires_retiring_the_session():
     c.connect()
     c.inject(b"nan\r\n")
     with pytest.raises(VerdiError):
-        c.read_power_w()
+        c.get_power_w()
     with pytest.raises(VerdiError):
-        c.read_power_w()
+        c.get_power_w()
     fresh = SimulatedVerdi()
     c.disconnect()
     c = fresh
     c.connect()
     assert fresh.requests == ()
-    assert c.read_laser_state() == 0
+    assert c.get_laser_state() == 0
 
 
 @pytest.mark.parametrize("query", ["?L", "?B", "?F", "?FH"])
@@ -318,7 +318,7 @@ def test_integer_conversion_limit_invalidates_session(query):
                 controller.get_value(query)
             before = sim.requests
             with pytest.raises(VerdiError):
-                controller.read_laser_state()
+                controller.get_laser_state()
             assert sim.requests == before
         finally:
             sys.set_int_max_str_digits(original_limit)
@@ -328,14 +328,14 @@ def test_integer_conversion_limit_invalidates_session(query):
         controller = replacement
         controller.connect()
         assert replacement.requests == ()
-        assert controller.read_power_w() == 0
+        assert controller.get_power_w() == 0
 
 
 def test_compound_snapshot_not_interleaved_with_commands():
     c = SimulatedVerdi(allow_writes=True)
     c.connect()
     with ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(lambda n: c.status() if n % 2 else c.stop(), range(20)))
+        list(pool.map(lambda n: c.get_status() if n % 2 else c.set_laser_state(0), range(20)))
     requests = c.requests
     for start in (i for i, request in enumerate(requests) if request == b"?L\r\n"):
         assert all(r.startswith(b"?") for r in requests[start : start + 14])

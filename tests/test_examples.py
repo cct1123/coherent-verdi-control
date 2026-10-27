@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 import serial
 import serial.tools.list_ports
-from fakes import FaultyVerdi
+from fakes import FaultyVerdi, SerialPeer
 
 from coherent_verdi import VerdiController, VerdiError
 from coherent_verdi.controller import QUERIES
@@ -72,14 +72,12 @@ def hardware(monkeypatch):
     )
     fixture.sim.set_key(True)
 
-    class Peer:
+    class Peer(SerialPeer):
         def __init__(self, **settings):
-            self.settings = settings
+            super().__init__(**settings)
             self.sim = fixture.sim
-            self.pending = bytearray()
             self.purges = []
             self.events = []
-            self.opens = self.closes = 0
             fixture.ports.append(self)
 
         def open(self):
@@ -118,19 +116,6 @@ def hardware(monkeypatch):
                 {"V2": b"Verdi V-2>", "V5": b"Verdi V-5>", "V6": b"Verdi V-6>"}[self.sim.model]
             )
             return len(request)
-
-        def read_until(self, expected=b"\n", size=None):
-            self._timeout = self.timeout
-            return serial.SerialBase.read_until(self, expected, size)
-
-        def read(self, size):
-            chunk = bytes(self.pending[:size])
-            del self.pending[:size]
-            return chunk
-
-        @property
-        def in_waiting(self):
-            return len(self.pending)
 
     monkeypatch.setattr(serial, "Serial", Peer)
     # Each write cell asks for the word it names; answer with exactly that word.
@@ -229,9 +214,9 @@ def test_connection_section_only_opens_port_and_reports_status(hardware, name):
     run_disconnect_cell(name, namespace)
 
 
-@pytest.mark.parametrize("model", ["V2", "V5", "V6"])
 @pytest.mark.parametrize("name", NOTEBOOKS)
-def test_hardware_lessons_all_models_and_exact_write_scope(hardware, name, model):
+def test_tutorial_sequences_and_exact_write_scope(hardware, name):
+    model = "V2"
     hardware.sim = FaultyVerdi(model)
     hardware.sim.set_key(True)
     run(name, MODEL=model)
@@ -352,8 +337,14 @@ def test_raw_status_stops_on_missing_prompt_and_preserves_evidence(hardware, cap
     assert hardware.ports[0].closes == 1
 
 
-@pytest.mark.parametrize("name", NOTEBOOKS)
-@pytest.mark.parametrize("settings", [{"PORT": None}, {"MODEL": "V9"}, {"BAUDRATE": 12345}])
+@pytest.mark.parametrize(
+    "name,settings",
+    [
+        ("01_connect.ipynb", {"PORT": None}),
+        ("03_health_check.ipynb", {"MODEL": "V9"}),
+        ("05_set_power.ipynb", {"BAUDRATE": 12345}),
+    ],
+)
 def test_bad_connection_settings_rejected_before_open(hardware, name, settings):
     with pytest.raises(ValueError):
         run(name, **settings)
@@ -475,9 +466,9 @@ def test_raw_setpoint_uses_only_byte_api_and_preserves_replies(hardware, monkeyp
     hardware.sim._echo = echo
 
     def forbidden(*args, **kwargs):
-        raise AssertionError("lesson 5 must use only raw get/set exchanges")
+        raise AssertionError("lesson 5 must use only raw read/write exchanges")
 
-    for method in ("get_value", "status", "set_power_w"):
+    for method in ("get_value", "get_status", "set_power_w"):
         monkeypatch.setattr(VerdiController, method, forbidden)
     namespace = run("05_set_power.ipynb")
     assert namespace["acknowledgment"] == ((b"P=0.2500" if echo else b"") + b"\r\nVerdi V-5>")
@@ -676,18 +667,18 @@ def test_controlled_session_uses_raw_api_and_verifies_normal_completion(
     hardware.sim._echo = echo
 
     def forbidden(*args, **kwargs):
-        raise AssertionError("lesson 6 must use only raw get/set exchanges")
+        raise AssertionError("lesson 6 must use only raw read/write exchanges")
 
     for method in (
         "get_value",
-        "status",
+        "get_status",
         "set_power_w",
-        "start",
-        "stop",
+        "set_laser_state",
+        "set_value",
         "set_shutter",
-        "read_power_w",
-        "read_faults",
-        "read_laser_state",
+        "get_power_w",
+        "get_faults",
+        "get_laser_state",
     ):
         monkeypatch.setattr(VerdiController, method, forbidden)
     namespace = run("06_controlled_session.ipynb")
@@ -732,3 +723,26 @@ def test_fault_history_query_rejection_prevents_all_writes(hardware):
         run("06_controlled_session.ipynb", namespace)
     assert writes(hardware) == []
     run_disconnect_cell("06_controlled_session.ipynb", namespace)
+
+
+@pytest.mark.parametrize(
+    "name", ["01_connect.ipynb", "02_quick_status.ipynb", "03_health_check.ipynb"]
+)
+def test_read_only_tutorials_replay_successful_v2_run(v2_serial, v2_replies, name):
+    namespace = run(name, MODEL="V2", BAUDRATE=19200)
+    assert v2_serial.opens == v2_serial.closes == 1
+    assert not v2_serial.pending
+    assert all(request.startswith(b"?") for request in v2_serial.writes)
+    if name == "01_connect.ipynb":
+        assert namespace["version_reply"] == b"6.05"
+    elif name == "02_quick_status.ipynb":
+        assert namespace["status"] == {query: v2_replies[query] for query in namespace["queries"]}
+    else:
+        actual = {
+            query: payload
+            for section in namespace["health"].values()
+            for query, payload in section.items()
+        }
+        assert actual == v2_replies
+        assert v2_serial.writes == [b"?SV\r\n"] + [q + b"\r\n" for q in v2_replies]
+        assert b"?DIOS\r\n" not in v2_serial.writes

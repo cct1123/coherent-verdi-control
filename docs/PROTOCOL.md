@@ -11,8 +11,12 @@ Printed section 5 corresponds to PDF pages 49–58. No newer firmware behavior i
   ASCII response layouts. Table 5-2 specifies 8 data bits, no parity and one stop
   bit, with no flow control. Eight data bits do not specify an extended character
   set. The manual identifies no cp1252, Latin-1 or UTF-8 response encoding.
-  The supplied V2 firmware 6.05 captures of `?SV` (`6.05`) and `?F` (`SYSTEM OK`)
-  contain only ASCII bytes. These sources support ASCII as the decoding baseline.
+  The saved V2 firmware 6.05 read-only notebooks contain only ASCII-compatible
+  replies. The [health survey](../examples/03_health_check.ipynb) records 41
+  distinct query payloads (184 bytes); `?DIOS` was not captured. No saved receive
+  byte has its high bit set. These observations support ASCII as the decoding
+  baseline but do not distinguish encodings that share the ASCII subset or
+  establish every possible firmware reply.
   Unknown high-bit payloads remain bytes; they are
   neither decoded using a guessed code page nor modified by stripping high bits.
   Raw capture always
@@ -20,9 +24,9 @@ Printed section 5 corresponds to PDF pages 49–58. No newer firmware behavior i
 - Section 5, pp. 5-1–5-4: ASCII instruction terminated by CR/LF or semicolon;
   this library emits **CR/LF only**, one instruction per transaction.
 - `PRINT ` and `?` are equivalent query prefixes; `:` and `=` are equivalent
-  command delimiters (p. 5-3). `get_value()`/`capture()` accept short queries and
+  command delimiters (p. 5-3). `get_value()`/`get_capture()` accept short queries and
   `PRINT`/`?` long names and normalize them to short queries.
-  Byte `get()`/`set()`/`command()` calls preserve supplied bytes; settings use
+  Byte `read()`/`write()`/`command()` calls preserve supplied bytes; settings use
   canonical short names and `=`. Named setters construct these canonical forms.
   Instructions omit terminators; batching is rejected.
 - Replies end in CR/LF; wait for a complete reply before the next instruction.
@@ -67,8 +71,10 @@ With an explicitly configured prompt-disabled instrument, `prompt_enabled=False`
 completes at CR/LF. No connection-time mode writes, sleeps or automatic purges
 are used. There is no input-queue polling or automatic pre-transmission read.
 
-The byte API performs no encoding, decoding or numeric conversion. `get` removes
-framing and the echoed query, returning payload bytes. `set` and `command` return
+The byte API returns replies without text decoding or numeric conversion.
+Write operands are validated while the supplied instruction bytes are preserved.
+`read` removes
+framing and the echoed query, returning payload bytes. `write` and `command` return
 unchanged wire replies. `last_transaction["response"]` always retains the full
 wire reply. `get_value` and named helpers explicitly opt into text/value interpretation.
 Raw byte commands use canonical short names and `=`. A raw `B=n` leaves the
@@ -89,23 +95,23 @@ write permission and failure policy as the typed methods below.
 | API | Wire form | Source / meaning |
 | --- | --- | --- |
 | `set_power_w(watts)` | `P=nn.nnnn` | Table 5-3, pp. 5-5–5-6; light regulation in W |
-| `stop()` | `L=0` | p. 5-5; STANDBY overrides the ON keyswitch |
-| `start()` | `L=1` | p. 5-5; key must be ON; resets faults and clears fault history |
+| `set_laser_state(0)` | `L=0` | p. 5-5; STANDBY overrides the ON keyswitch |
+| `set_laser_state(1)` | `L=1` | p. 5-5; key must be ON; resets faults and clears fault history |
 | `set_shutter(open=...)` | `S=0/1` | p. 5-6; closes/opens the head shutter |
 | `set_echo(enabled=...)` | `E=0/1` | p. 5-5; change applies to the following command |
 | `set_prompt(enabled=...)` | `PROMPT=0/1` | p. 5-6; **0 enables, 1 disables** prompt; `>=n` is its alternate spelling |
 | `set_baudrate(baudrate)` | `B=n` | p. 5-5 and pp. 5-3–5-4; persistent device setting, followed by host reconfiguration |
-| `chiller_on()` | `CHILLER=ON` | p. 5-5; only for Coherent chiller part 1037271 |
+| `set_chiller_on()` | `CHILLER=ON` | p. 5-5; only for Coherent chiller part 1037271 |
 | `set_chiller_temperature_c(celsius)` | `CHILLER=XX.X` | p. 5-5; rounded to one decimal; physical range unspecified |
-| `exit_screen()` | `EXIT=1` | p. 5-5; EXIT button |
-| `flash()` | `FL=1` | p. 5-5; flash below lasing threshold for etalon recentering |
-| `knob_down()` | `KNOBDN=1` | p. 5-5; KNOB DOWN button |
+| `set_exit_screen()` | `EXIT=1` | p. 5-5; EXIT button |
+| `set_flash()` | `FL=1` | p. 5-5; flash below lasing threshold for etalon recentering |
+| `set_knob_down()` | `KNOBDN=1` | p. 5-5; KNOB DOWN button |
 | `set_lbo_heater(enabled=...)` | `LBOH=0/1` | p. 5-5; cool down / heating |
-| `optimize_lbo()` | `LBOOPT=1` | p. 5-5; initiate optimization |
+| `set_lbo_optimization()` | `LBOOPT=1` | p. 5-5; initiate optimization |
 | `set_front_panel_lock(value)` | `LFP=n` | p. 5-5; integer operand, valid values and unlock mapping unspecified |
-| `menu_down()` | `MENUDN=1` | p. 5-5; MENU DOWN button |
-| `menu_select()` | `SELECT=1` | p. 5-5; MENU SELECT button |
-| `menu_up()` | `MENUUP=1` | p. 5-5; MENU UP button |
+| `set_menu_down()` | `MENUDN=1` | p. 5-5; MENU DOWN button |
+| `set_menu_select()` | `SELECT=1` | p. 5-5; MENU SELECT button |
+| `set_menu_up()` | `MENUUP=1` | p. 5-5; MENU UP button |
 
 Writes require `VerdiController(..., allow_writes=True)`. Construction, connection,
 disconnection and automatic monitoring never issue commands. The optional GUI can
@@ -113,9 +119,12 @@ queue explicit writes only when launched with `--allow-writes`. Mode writes are 
 operations; they are not connection prerequisites. `disconnect()` only releases the
 communication handle and **does not place the laser in STANDBY**.
 
-`set(b"LBOH=1")` returns the raw reply. `set_lbo_heater(enabled=True)`
+`write(b"LBOH=1")` returns the raw reply. `set_lbo_heater(enabled=True)`
 uses the same byte transport and explicitly interprets the acknowledgment.
-Text command aliases and the separate text-command parser have been removed.
+`set_value("LBOH=1")` uses `write()` and validates the acknowledgment. Named
+`set_...` helpers use `set_value()`; named `get_...` helpers use `get_value()`
+and the byte `read()` method. Both paths use `command()` for the single exchange.
+Text command aliases are not normalized.
 
 Baud changes send `B=n` and receive the acknowledgment at the original baud,
 then update the host port under the same lock. The manual specifies host
@@ -141,7 +150,7 @@ Direct parsing groups in [controller.py](../src/coherent_verdi/controller.py) di
 raw text, documented integer codes and decimal numbers. Source pages are below;
 independent test vectors retain units and long names as manual reference data.
 
-For commissioning, `capture()` accepts the same query catalogue only on a
+For commissioning, `get_capture()` accepts the same query catalogue only on a
 read-only controller. It enforces a single CR/LF frame, permits an empty
 payload, and removes documented echo/prompt decoration at the byte level without interpreting
 values or faults. Documented device errors are still rejected and recorded.
